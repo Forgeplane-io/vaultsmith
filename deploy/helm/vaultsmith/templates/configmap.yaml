@@ -1,0 +1,15 @@
+{{- include "vaultsmith.validate" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vaultsmith.fullname" . }}
+  labels:
+    {{- include "vaultsmith.labels" . | nindent 4 }}
+data:
+  profiles.json: |-
+    [
+    {{- range $index, $profile := .Values.profiles }}
+      {{- if $index }},{{ end }}
+      {"id": {{ toJson $profile.id }}, "label": {{ toJson $profile.label }}, "passwordEnv": {{ toJson $profile.passwordEnv }}}
+    {{- end }}
+    ]

@@ -1,0 +1,16 @@
+{{- include "vaultsmith.validate" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vaultsmith.fullname" . }}
+  labels:
+    {{- include "vaultsmith.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "vaultsmith.selectorLabels" . | nindent 4 }}

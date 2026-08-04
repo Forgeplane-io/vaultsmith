@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+!.env.example
+frontend/node_modules
+backend/web/dist/assets
+.hermes
+.tmp
+coverage.out
+*.test

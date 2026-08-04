@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "replicaCount": { "type": "integer", "minimum": 1 },
+    "image": {
+      "type": "object",
+      "required": ["repository", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
+        "tag": { "type": "string" },
+        "digest": { "type": "string", "pattern": "^$|^sha256:[a-f0-9]{64}$" }
+      }
+    },
+    "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "passwordEnv", "passwordSecretKey"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+          "label": { "type": "string", "minLength": 1 },
+          "passwordEnv": { "type": "string", "pattern": "^[A-Z_][A-Z0-9_]*$" },
+          "passwordSecretKey": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" }
+        },
+        "not": {
+          "properties": {
+            "passwordEnv": { "enum": ["VAULT_PROFILES_JSON", "HTTP_ADDR"] }
+          }
+        }
+      }
+    },
+    "secret": {
+      "type": "object",
+      "properties": {
+        "existingSecret": { "type": "string" }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "automountServiceAccountToken": { "type": "boolean", "const": false }
+      }
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "ingress": { "type": "object" },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "allowedIngress": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "namespaceSelector": { "type": "object", "minProperties": 1 },
+              "podSelector": { "type": "object", "minProperties": 1 }
+            },
+            "additionalProperties": false,
+            "minProperties": 1
+          }
+        }
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "profiles": { "minItems": 1 }
+    }
+  },
+  "then": {
+    "properties": {
+      "secret": {
+        "required": ["existingSecret"]
+      }
+    }
+  }
+}

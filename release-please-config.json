@@ -1,0 +1,22 @@
+{
+  "packages": {
+    ".": {}
+  },
+  "release-type": "go",
+  "initial-version": "0.1.0",
+  "include-v-in-tag": true,
+  "draft": true,
+  "force-tag-creation": true,
+  "changelog-path": "CHANGELOG.md",
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "refactor", "section": "Refactoring" },
+    { "type": "docs", "section": "Documentation", "hidden": true },
+    { "type": "test", "section": "Tests", "hidden": true },
+    { "type": "build", "section": "Maintenance", "hidden": true },
+    { "type": "ci", "section": "Maintenance", "hidden": true },
+    { "type": "chore", "section": "Maintenance", "hidden": true }
+  ]
+}

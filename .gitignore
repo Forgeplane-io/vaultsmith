@@ -1,0 +1,24 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Go build output
+/bin/
+*.test
+coverage.out
+
+# Frontend dependencies and generated assets
+frontend/node_modules/
+*.tsbuildinfo
+backend/web/dist/assets/
+!backend/
+!backend/web/
+!backend/web/dist/
+!backend/web/dist/index.html
+
+# Local scratch files
+.tmp/
+dist/
+.hermes/
+.DS_Store

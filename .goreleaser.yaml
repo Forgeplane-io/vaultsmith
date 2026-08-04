@@ -1,0 +1,67 @@
+version: 2
+project_name: vaultsmith
+
+before:
+  hooks:
+    - go mod verify
+    - npm ci --prefix frontend --no-audit --no-fund
+    - npm run build --prefix frontend
+
+builds:
+  - id: vaultsmith
+    main: ./backend/cmd/server
+    binary: vaultsmith
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/forgeplane-io/vaultsmith/backend/internal/version.Version={{ .Version }} -X github.com/forgeplane-io/vaultsmith/backend/internal/version.Commit={{ .Commit }} -X github.com/forgeplane-io/vaultsmith/backend/internal/version.BuildDate={{ .Date }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: archives
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - id: archive-sbom
+    artifacts: archive
+    cmd: syft
+    args:
+      - "$artifact"
+      - "--output"
+      - "spdx-json=$document"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: forgeplane-io
+    name: vaultsmith
+  draft: false
+  prerelease: auto
+  use_existing_draft: true
+  replace_existing_artifacts: true
