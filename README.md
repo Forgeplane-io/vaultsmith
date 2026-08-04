@@ -32,9 +32,9 @@ Vaultsmith is for short, deliberate operations on one value at a time:
 
 The server loads vault passwords from environment variables. The browser receives profile IDs and labels, then sends the value being operated on to the server. Vaultsmith does not persist values, upload files, store browser state, or log request bodies.
 
-![Vaultsmith workbench](docs/screenshots/workbench.png)
+![Vaultsmith workbench with logo](docs/screenshots/workbench.png)
 
-![Vaultsmith encrypt result](docs/screenshots/encrypted-value.png)
+![Vaultsmith encrypt result with synthetic data](docs/screenshots/encrypted-value.png)
 
 Limits are deliberate:
 
