@@ -2,6 +2,8 @@
 
 # Vaultsmith
 
+<img src="frontend/public/vaultsmith-logo.png" alt="Vaultsmith logo" width="96">
+
 A small web UI for encrypting, decrypting, and re-keying Ansible Vault values.
 
 Vaultsmith supports Ansible Vault 1.1 and 1.2/AES256. It runs as one Go binary with the React UI embedded in it.
