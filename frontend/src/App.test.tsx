@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { MAX_PLAINTEXT_BYTES, OPERATION_TIMEOUT_MS } from './api'
@@ -14,6 +14,9 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
 function profilesResponse(profiles = [{ id: 'dev', label: 'Development' }]) {
   return jsonResponse({ profiles })
 }
+
+const pastedVault = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
+const pastedYamlVault = `app_secret: !vault |\n          ${pastedVault.replace('\n', '\n          ')}`
 
 async function findReadyValueInput() {
   const input = await screen.findByRole('textbox', { name: 'Value to protect' })
@@ -327,6 +330,7 @@ describe('Vaultsmith operator experience', () => {
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
     expect(screen.getByText(/complete protected text/i)).toBeInTheDocument()
+    expect(screen.getByText(/YAML !vault block/i)).toBeInTheDocument()
     const input = screen.getByRole('textbox', { name: 'Protected value to read' })
     await user.type(input, '$ANSIBLE_VAULT;1.1;AES256\nfixture')
     await user.click(screen.getByRole('button', { name: 'Decrypt' }))
@@ -338,6 +342,150 @@ describe('Vaultsmith operator experience', () => {
         body: JSON.stringify({ profileId: 'dev', mode: 'decrypt', value: '$ANSIBLE_VAULT;1.1;AES256\nfixture' }),
       }),
     )
+  })
+
+  it('extracts a pasted Vault block in decrypt mode without reading navigator clipboard', async () => {
+    const getData = vi.fn().mockReturnValue(pastedYamlVault)
+    const readText = vi.fn()
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
+    const preventDefault = vi.spyOn(event, 'preventDefault')
+    fireEvent(input, event)
+
+    expect(input).toHaveValue(pastedVault)
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(getData).toHaveBeenCalledWith('text/plain')
+    expect(readText).not.toHaveBeenCalled()
+    const notice = screen.getByText('Protected text normalized for Vault operation.')
+    expect(notice).toHaveAttribute('aria-live', 'polite')
+    expect(notice).not.toHaveTextContent(pastedVault)
+  })
+
+  it('extracts a pasted Vault block in rotate mode', async () => {
+    const getData = vi.fn().mockReturnValue(pastedYamlVault)
+    const readText = vi.fn()
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse([
+      { id: 'dev', label: 'Development' },
+      { id: 'prod', label: 'Production' },
+    ]))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to move' })
+    const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
+    const preventDefault = vi.spyOn(event, 'preventDefault')
+    fireEvent(input, event)
+
+    expect(input).toHaveValue(pastedVault)
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(getData).toHaveBeenCalledWith('text/plain')
+    expect(readText).not.toHaveBeenCalled()
+    expect(screen.getByText('Protected text normalized for Vault operation.')).toBeInTheDocument()
+  })
+
+  it('leaves ordinary pasted text to the browser in decrypt mode', async () => {
+    const getData = vi.fn().mockReturnValue('ordinary pasted text')
+    const readText = vi.fn()
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    await user.type(input, 'existing input')
+    const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
+    const preventDefault = vi.spyOn(event, 'preventDefault')
+    fireEvent(input, event)
+
+    expect(input).toHaveValue('existing input')
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(getData).toHaveBeenCalledWith('text/plain')
+    expect(readText).not.toHaveBeenCalled()
+    expect(screen.queryByText('Protected text normalized for Vault operation.')).not.toBeInTheDocument()
+  })
+
+  it('passes canonical raw Vault text through without intercepting default paste', async () => {
+    const getData = vi.fn().mockReturnValue(pastedVault)
+    const readText = vi.fn()
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
+    const preventDefault = vi.spyOn(event, 'preventDefault')
+    fireEvent(input, event)
+
+    expect(input).toHaveValue('')
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(getData).toHaveBeenCalledWith('text/plain')
+    expect(readText).not.toHaveBeenCalled()
+  })
+
+  it('normalizes CRLF and outer whitespace during a recognized paste', async () => {
+    const getData = vi.fn().mockReturnValue(`  \r\n${pastedVault.replace(/\n/g, '\r\n')}\r\n  `)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
+    const preventDefault = vi.spyOn(event, 'preventDefault')
+    fireEvent(input, event)
+
+    expect(input).toHaveValue(pastedVault)
+    expect(preventDefault).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a bare-CR or otherwise invalid paste for the browser', async () => {
+    const getData = vi.fn().mockReturnValue(pastedVault.replace('\n', '\r'))
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
+    const preventDefault = vi.spyOn(event, 'preventDefault')
+    fireEvent(input, event)
+
+    expect(input).toHaveValue('')
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(getData).toHaveBeenCalledWith('text/plain')
+  })
+
+  it('does not inspect clipboard data while pasting in encrypt mode', async () => {
+    const getData = vi.fn().mockReturnValue(pastedYamlVault)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    const user = userEvent.setup()
+
+    render(<App />)
+    const input = await findReadyValueInput()
+    const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
+    const preventDefault = vi.spyOn(event, 'preventDefault')
+    fireEvent(input, event)
+
+    expect(getData).not.toHaveBeenCalled()
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(input).toHaveValue('')
   })
 
   it('supports rotate mode with source and destination profiles', async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react'
 import {
   ApiError,
   fetchProfiles,
@@ -10,6 +10,7 @@ import {
   utf8ByteLength,
 } from './api'
 import { formatAnsibleVaultSnippet, isValidAnsibleVariableIdentifier } from './ansibleSnippet'
+import { normalizeVaultPaste } from './pasteHandling'
 import { inspectVaultFormat, type VaultFormatInspection } from './vaultFormat'
 import './styles.css'
 
@@ -80,7 +81,7 @@ export default function App() {
   const modeGuidance = mode === 'encrypt'
     ? 'Choose an environment, then enter the value you want to protect.'
     : mode === 'decrypt'
-      ? 'Choose an environment, then paste complete protected text. Do not paste a YAML file or an encrypt_string assignment.'
+      ? 'Choose an environment, then paste complete protected text or a YAML !vault block. Other YAML and encrypt_string assignments are not supported.'
       : 'Choose where the value comes from and where it should go, then paste the protected text.'
   const shownOutput = mode === 'decrypt' && output && !revealed ? 'Decrypted value hidden' : output
   const copyDisabled = !output
@@ -128,6 +129,18 @@ export default function App() {
     setValue(nextValue)
     invalidateOutput()
     setModeNotice('')
+  }
+
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    if (mode === 'encrypt') return
+
+    const pastedText = event.clipboardData.getData('text/plain')
+    const normalized = normalizeVaultPaste(pastedText)
+    if (!normalized || normalized === pastedText) return
+
+    event.preventDefault()
+    changeValue(normalized)
+    setModeNotice('Protected text normalized for Vault operation.')
   }
 
   function changeProfile(nextProfileId: string) {
@@ -442,6 +455,7 @@ export default function App() {
                   id="value-input"
                   value={value}
                   onChange={(event) => changeValue(event.target.value)}
+                  onPaste={handlePaste}
                   placeholder={mode === 'encrypt' ? 'Paste a value…' : 'Paste protected text…'}
                   disabled={loadingProfiles || busy || profiles.length === 0}
                   spellCheck={false}

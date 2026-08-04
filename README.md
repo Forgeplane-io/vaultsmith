@@ -172,7 +172,7 @@ An empty `allowedIngress` list is deny-all when enforced by the cluster CNI. Net
 
 Vaultsmith is not an authentication or authorization system. Keep it behind an authenticated/private network boundary and terminate TLS at that edge. Treat the browser, clipboard history and sync, browser extensions, shared machines, server memory, and Kubernetes access as part of the trust boundary.
 
-See [`SECURITY.md`](SECURITY.md) for the reporting policy and deployment boundary.
+See [`SECURITY.md`](SECURITY.md) for the reporting policy. See [`docs/deployment.md`](docs/deployment.md) for the tested private-edge contract, Gateway API route shape, internal health-route handling, proxy header rules, and threshold rationale.
 
 ## Development
 
