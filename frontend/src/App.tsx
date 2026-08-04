@@ -35,6 +35,7 @@ export default function App() {
   const resultCopyRequestRef = useRef(0)
   const operationControllerRef = useRef<AbortController | null>(null)
   const operationAbortReasonRef = useRef<'cancelled' | 'timeout' | null>(null)
+  const operationGenerationRef = useRef(0)
 
   useEffect(() => {
     let active = true
@@ -67,6 +68,7 @@ export default function App() {
   }, [profileLoadAttempt])
 
   useEffect(() => () => {
+    operationGenerationRef.current += 1
     operationControllerRef.current?.abort()
   }, [])
 
@@ -205,12 +207,15 @@ export default function App() {
 
     const operationMode = mode
     const controller = new AbortController()
+    const operationGeneration = operationGenerationRef.current + 1
+    operationGenerationRef.current = operationGeneration
     operationControllerRef.current = controller
     operationAbortReasonRef.current = null
     const timeoutId = window.setTimeout(() => {
       operationAbortReasonRef.current = 'timeout'
       controller.abort()
     }, OPERATION_TIMEOUT_MS)
+    const isCurrentOperation = () => operationGenerationRef.current === operationGeneration && operationControllerRef.current === controller
 
     setBusy(true)
     snippetCopyRequestRef.current += 1
@@ -227,9 +232,20 @@ export default function App() {
         ? { mode: operationMode, sourceProfileId: profileId, destinationProfileId, value }
         : { profileId, mode: operationMode, value }
       const result = await runOperation(request, controller.signal)
+      if (!isCurrentOperation()) return
+      if (controller.signal.aborted) {
+        if (operationAbortReasonRef.current === 'timeout') {
+          setError('The operation timed out. Check the service and try again.')
+          setStatus('Operation timed out')
+        } else {
+          setStatus('Operation cancelled')
+        }
+        return
+      }
       setOutput(result)
       setStatus(operationMode === 'encrypt' ? 'Protected value ready' : operationMode === 'decrypt' ? 'Decrypted value ready' : 'Moved value ready')
     } catch (reason: unknown) {
+      if (!isCurrentOperation()) return
       if (controller.signal.aborted) {
         if (operationAbortReasonRef.current === 'timeout') {
           setError('The operation timed out. Check the service and try again.')
@@ -243,11 +259,11 @@ export default function App() {
       }
     } finally {
       window.clearTimeout(timeoutId)
-      if (operationControllerRef.current === controller) {
+      if (isCurrentOperation()) {
         operationControllerRef.current = null
         operationAbortReasonRef.current = null
+        setBusy(false)
       }
-      setBusy(false)
     }
   }
 
@@ -312,6 +328,7 @@ export default function App() {
 
   function clearAll() {
     if (busy || !canClear) return
+    operationGenerationRef.current += 1
     snippetCopyRequestRef.current += 1
     resultCopyRequestRef.current += 1
     setValue('')

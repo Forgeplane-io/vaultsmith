@@ -544,6 +544,30 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('textbox', { name: 'Moved protected value' })).toHaveValue('')
   })
 
+  it('does not restore a late operation result after cancellation', async () => {
+    let resolveOperation!: (response: Response) => void
+    const operation = new Promise<Response>((resolve) => {
+      resolveOperation = resolve
+    })
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(profilesResponse())
+      .mockReturnValueOnce(operation)
+    const user = userEvent.setup()
+
+    render(<App />)
+    const input = await findReadyValueInput()
+    await user.type(input, 'fixture-value')
+    await user.click(screen.getByRole('button', { name: 'Encrypt' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Encrypting…')
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    resolveOperation(jsonResponse({ value: 'late-output' }))
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument())
+    expect(screen.getByRole('status')).toHaveTextContent('Operation cancelled')
+    expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+  })
+
   it('disables rotate submission when no profiles are available', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse([]))
     const user = userEvent.setup()
