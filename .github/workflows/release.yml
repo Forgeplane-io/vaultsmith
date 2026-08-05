@@ -38,6 +38,7 @@ jobs:
       version: ${{ steps.release.outputs.version }}
       sha: ${{ steps.release.outputs.sha }}
       build_date: ${{ steps.release.outputs.build_date }}
+      release_draft: ${{ steps.release.outputs.release_draft }}
     steps:
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -82,11 +83,13 @@ jobs:
             if [[ -n "$release_id" ]]; then
               if release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" 2>/dev/null)"; then
                 if jq -e --arg tag "$tag" '.tag_name == $tag' <<<"$release_json" >/dev/null; then
+                  echo "release_draft=$(jq -r '.draft | tostring' <<<"$release_json")" >> "$GITHUB_OUTPUT"
                   exit 0
                 fi
               fi
             elif release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" 2>/dev/null)"; then
               if jq -e --arg tag "$tag" '.[] | select(.tag_name == $tag and .draft == true)' <<<"$release_json" >/dev/null; then
+                echo 'release_draft=true' >> "$GITHUB_OUTPUT"
                 exit 0
               fi
             fi
@@ -143,6 +146,7 @@ jobs:
         run: echo "$(dirname '${{ steps.syft.outputs.cmd }}')" >> "$GITHUB_PATH"
 
       - name: Run GoReleaser
+        if: needs.validate.outputs.release_draft == 'true'
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
