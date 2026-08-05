@@ -96,6 +96,94 @@ jobs:
       - name: Run chart tests
         run: make chart-test
 
+  helm-kind:
+    name: Helm kind integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
+        with:
+          version: v3.17.3
+      - name: Create kind cluster
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          cluster_name: vaultsmith
+          wait: 120s
+      - name: Build test image
+        run: docker build --tag vaultsmith:ci .
+      - name: Load test image
+        run: kind load docker-image vaultsmith:ci --name vaultsmith
+      - name: Install chart and run Helm test
+        env:
+          RELEASE_NAME: vaultsmith
+          NAMESPACE: vaultsmith
+        run: |
+          set -euo pipefail
+          kubectl create namespace "$NAMESPACE"
+          kubectl create secret generic vaultsmith-passwords \
+            --namespace "$NAMESPACE" \
+            --from-literal='dev=fixture-password'
+          helm_values=(
+            --set image.repository=vaultsmith
+            --set image.tag=ci
+            --set image.pullPolicy=IfNotPresent
+            --set 'profiles[0].id=dev'
+            --set 'profiles[0].label=Development'
+            --set 'profiles[0].passwordEnv=VAULT_PASSWORD_DEV'
+            --set 'profiles[0].passwordSecretKey=dev'
+            --set secret.existingSecret=vaultsmith-passwords
+          )
+          helm upgrade --install "$RELEASE_NAME" deploy/helm/vaultsmith \
+            --namespace "$NAMESPACE" \
+            "${helm_values[@]}" \
+            --wait \
+            --timeout 180s
+          kubectl wait \
+            --namespace "$NAMESPACE" \
+            --for=condition=available \
+            deployment/"$RELEASE_NAME" \
+            --timeout=120s
+          helm test "$RELEASE_NAME" \
+            --namespace "$NAMESPACE" \
+            --logs \
+            --timeout 120s
+          default_policies="$(kubectl get networkpolicy --namespace "$NAMESPACE" -o json | jq '.items | length')"
+          test "$default_policies" -eq 0
+      - name: Exercise deny-all NetworkPolicy toggle
+        env:
+          RELEASE_NAME: vaultsmith
+          NAMESPACE: vaultsmith
+        run: |
+          set -euo pipefail
+          helm upgrade "$RELEASE_NAME" deploy/helm/vaultsmith \
+            --namespace "$NAMESPACE" \
+            --reuse-values \
+            --set networkPolicy.enabled=true \
+            --set networkPolicy.denyAllIngress=true \
+            --wait \
+            --timeout 180s
+          deny_all_policy="$(kubectl get networkpolicy --namespace "$NAMESPACE" -o json)"
+          test "$(jq '.items | length' <<<"$deny_all_policy")" -eq 1
+          test "$(jq -c '.items[0].spec.ingress // []' <<<"$deny_all_policy")" = '[]'
+          helm upgrade "$RELEASE_NAME" deploy/helm/vaultsmith \
+            --namespace "$NAMESPACE" \
+            --reset-values \
+            --set image.repository=vaultsmith \
+            --set image.tag=ci \
+            --set image.pullPolicy=IfNotPresent \
+            --set 'profiles[0].id=dev' \
+            --set 'profiles[0].label=Development' \
+            --set 'profiles[0].passwordEnv=VAULT_PASSWORD_DEV' \
+            --set 'profiles[0].passwordSecretKey=dev' \
+            --set secret.existingSecret=vaultsmith-passwords \
+            --wait \
+            --timeout 180s
+          restored_policies="$(kubectl get networkpolicy --namespace "$NAMESPACE" -o json | jq '.items | length')"
+          test "$restored_policies" -eq 0
+
   smoke:
     name: Smoke round trip
     runs-on: ubuntu-latest

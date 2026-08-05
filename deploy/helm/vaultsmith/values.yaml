@@ -34,7 +34,8 @@ ingress:
   tls: []
 
 networkPolicy:
-  enabled: true
+  enabled: false
+  denyAllIngress: false
   allowedIngress: []
 
 resources: {}

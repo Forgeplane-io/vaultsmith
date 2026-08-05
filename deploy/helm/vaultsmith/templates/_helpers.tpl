@@ -62,9 +62,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if gt (len .Values.profiles) 0 }}
 {{- $_ := required "secret.existingSecret is required when profiles are configured" .Values.secret.existingSecret }}
 {{- end }}
+{{- if and .Values.networkPolicy.enabled .Values.networkPolicy.denyAllIngress .Values.networkPolicy.allowedIngress }}{{ fail "networkPolicy.denyAllIngress cannot be combined with allowedIngress" }}{{ end }}
 {{- if .Values.networkPolicy.enabled }}
 {{- range .Values.networkPolicy.allowedIngress }}
-{{- if and (not .namespaceSelector) (not .podSelector) }}{{ fail "networkPolicy.allowedIngress rules need namespaceSelector or podSelector; leave the list empty for deny-all" }}{{ end }}
+{{- if and (not .namespaceSelector) (not .podSelector) }}{{ fail "networkPolicy.allowedIngress rules need namespaceSelector or podSelector" }}{{ end }}
 {{- end }}
 {{- end }}
 {{- end }}

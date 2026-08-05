@@ -46,12 +46,25 @@ VALUES
 
 helm lint "$CHART_DIR" >/dev/null
 render > "$TMP_DIR/default.yaml"
-grep -Fq 'ingress: []' "$TMP_DIR/default.yaml" || fail 'default NetworkPolicy is not deny-all'
+if grep -Fq 'kind: NetworkPolicy' "$TMP_DIR/default.yaml"; then
+  fail 'default render unexpectedly contains a NetworkPolicy'
+fi
 grep -Fq 'automountServiceAccountToken: false' "$TMP_DIR/default.yaml" || fail 'service token automount is not disabled'
 grep -Fq 'containerPort: 8080' "$TMP_DIR/default.yaml" || fail 'container port is not canonical 8080'
 if grep -Fq 'secretKeyRef:' "$TMP_DIR/default.yaml"; then
   fail 'default render unexpectedly contains a Secret reference'
 fi
+
+cat > "$TMP_DIR/deny-all.yaml" <<'VALUES'
+networkPolicy:
+  enabled: true
+  denyAllIngress: true
+  allowedIngress: []
+VALUES
+helm lint "$CHART_DIR" -f "$TMP_DIR/deny-all.yaml" >/dev/null
+render -f "$TMP_DIR/deny-all.yaml" > "$TMP_DIR/deny-all-render.yaml"
+grep -Fq 'kind: NetworkPolicy' "$TMP_DIR/deny-all-render.yaml" || fail 'explicit deny-all NetworkPolicy is missing'
+grep -Fq 'ingress: []' "$TMP_DIR/deny-all-render.yaml" || fail 'explicit deny-all NetworkPolicy is not empty'
 
 helm lint "$CHART_DIR" -f "$TMP_DIR/valid.yaml" >/dev/null
 render -f "$TMP_DIR/valid.yaml" > "$TMP_DIR/valid-render.yaml"
@@ -142,5 +155,16 @@ networkPolicy:
     - {}
 VALUES
 assert_render_fails "$TMP_DIR/broad-policy.yaml"
+
+cat > "$TMP_DIR/conflicting-policy.yaml" <<'VALUES'
+networkPolicy:
+  enabled: true
+  denyAllIngress: true
+  allowedIngress:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: operator-shell
+VALUES
+assert_render_fails "$TMP_DIR/conflicting-policy.yaml"
 
 printf 'chart tests: ok\n'
