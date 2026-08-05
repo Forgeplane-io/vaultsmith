@@ -31,7 +31,10 @@ func NewWithDependencies(profiles []Profile, executor Executor, dependencies Dep
 }
 
 func WrapSecurity(next http.Handler, cfg config.AuthConfig) http.Handler {
-	return corsMiddleware(csrfMiddleware(next, cfg), cfg)
+	if cfg.Mode == config.AuthModeNative {
+		next = csrfMiddleware(next, cfg)
+	}
+	return corsMiddleware(next, cfg)
 }
 
 const nativeCSRFCookieName = "__Host-vaultsmith_csrf"

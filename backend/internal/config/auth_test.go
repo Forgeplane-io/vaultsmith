@@ -48,13 +48,22 @@ func TestLoadAuthDefaultsDirectStartupToOff(t *testing.T) {
 	}
 }
 
-func TestLoadAuthOffRequiresCSRFSecret(t *testing.T) {
-	_, err := LoadAuth(envLookup(map[string]string{}))
-	if err == nil {
-		t.Fatal("LoadAuth() error = nil, want missing CSRF_SECRET")
+func TestLoadAuthOffDoesNotRequireCSRFSecret(t *testing.T) {
+	cfg, err := LoadAuth(envLookup(map[string]string{}))
+	if err != nil {
+		t.Fatalf("LoadAuth() error = %v, want nil", err)
 	}
-	if !strings.Contains(err.Error(), "CSRF_SECRET") {
-		t.Fatalf("error = %q, want CSRF_SECRET", err)
+	if cfg.CSRF.Secret != "" {
+		t.Fatalf("CSRF secret = %q, want empty in off mode", cfg.CSRF.Secret)
+	}
+}
+
+func TestLoadAuthNativeRequiresCSRFSecret(t *testing.T) {
+	values := nativeEnv()
+	delete(values, "CSRF_SECRET")
+	_, err := LoadAuth(envLookup(values))
+	if err == nil || !strings.Contains(err.Error(), "CSRF_SECRET") {
+		t.Fatalf("LoadAuth() error = %v, want missing CSRF_SECRET", err)
 	}
 }
 

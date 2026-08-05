@@ -1,6 +1,6 @@
 # Vaultsmith deployment and trust boundary
 
-> **Important:** Native mode provides OIDC authentication, Redis-backed sessions, CSRF protection, and Casbin authorization. Explicit `off` mode is development-only, skips authentication, and logs a startup warning. Do not use it for an exposed deployment.
+> **Important:** Native mode provides OIDC authentication, Redis-backed sessions, CSRF protection, and Casbin authorization. Explicit `off` mode is development-only, skips authentication and CSRF protection, and logs a startup warning. Do not use it for an exposed deployment.
 
 Vaultsmith encrypts, decrypts, and re-keys Ansible Vault values. Native mode identifies callers from verified OIDC tokens using `(iss, sub)`, authorizes profile-scoped operations with Casbin, and never trusts client-provided identity or authentication headers. It does not terminate TLS, rate-limit traffic, or replace a private edge. The deployment boundary must provide those controls where required.
 

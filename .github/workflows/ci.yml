@@ -128,9 +128,6 @@ jobs:
           kubectl create secret generic vaultsmith-passwords \
             --namespace "$NAMESPACE" \
             --from-literal='dev=fixture-password'
-          kubectl create secret generic vaultsmith-auth \
-            --namespace "$NAMESPACE" \
-            --from-literal='csrf-secret=fixture-csrf'
           helm upgrade --install "$RELEASE_NAME" deploy/helm/vaultsmith \
             --namespace "$NAMESPACE" \
             --values deploy/helm/vaultsmith/tests/values-kind.yaml \

@@ -31,9 +31,6 @@ assert_render_fails() {
 cat > "$TMP_DIR/valid.yaml" <<'VALUES'
 auth:
   mode: "off"
-  csrf:
-    existingSecret: vaultsmith-auth
-    key: csrf-secret
 profiles:
   - id: dev
     label: Development
@@ -55,9 +52,6 @@ fi
 cat > "$TMP_DIR/off-default.yaml" <<'VALUES'
 auth:
   mode: "off"
-  csrf:
-    existingSecret: vaultsmith-auth
-    key: csrf-secret
 VALUES
 helm lint "$CHART_DIR" -f "$TMP_DIR/off-default.yaml" >/dev/null
 render -f "$TMP_DIR/off-default.yaml" > "$TMP_DIR/off-default-render.yaml"
@@ -66,7 +60,9 @@ if grep -Fq 'kind: NetworkPolicy' "$TMP_DIR/off-default-render.yaml"; then
 fi
 grep -Fq 'automountServiceAccountToken: false' "$TMP_DIR/off-default-render.yaml" || fail 'service token automount is not disabled'
 grep -Fq 'containerPort: 8080' "$TMP_DIR/off-default-render.yaml" || fail 'container port is not canonical 8080'
-grep -Fq 'name: CSRF_SECRET' "$TMP_DIR/off-default-render.yaml" || fail 'explicit off CSRF Secret reference is missing'
+if grep -Fq 'name: CSRF_SECRET' "$TMP_DIR/off-default-render.yaml"; then
+  fail 'explicit off render unexpectedly contains a CSRF Secret reference'
+fi
 if grep -Fq 'fixture-password' "$TMP_DIR/off-default-render.yaml"; then
   fail 'off default render leaked a Secret value'
 fi
@@ -74,9 +70,6 @@ fi
 cat > "$TMP_DIR/deny-all.yaml" <<'VALUES'
 auth:
   mode: "off"
-  csrf:
-    existingSecret: vaultsmith-auth
-    key: csrf-secret
 networkPolicy:
   enabled: true
   denyAllIngress: true
@@ -90,9 +83,6 @@ grep -Fq 'ingress: []' "$TMP_DIR/deny-all-render.yaml" || fail 'explicit deny-al
 cat > "$TMP_DIR/egress-only.yaml" <<'VALUES'
 auth:
   mode: "off"
-  csrf:
-    existingSecret: vaultsmith-auth
-    key: csrf-secret
 networkPolicy:
   enabled: true
   allowedIngress: []
@@ -189,9 +179,6 @@ checksum_a="$(grep -m1 'checksum/profiles:' "$TMP_DIR/valid-render.yaml")"
 cat > "$TMP_DIR/changed.yaml" <<'VALUES'
 auth:
   mode: "off"
-  csrf:
-    existingSecret: vaultsmith-auth
-    key: csrf-secret
 profiles:
   - id: dev
     label: Production

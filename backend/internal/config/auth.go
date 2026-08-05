@@ -119,12 +119,15 @@ func LoadAuth(lookup EnvLookup) (*AuthConfig, error) {
 		return nil, err
 	}
 
-	csrfSecret, err := requiredSecret(lookup, "CSRF_SECRET")
-	if err != nil {
-		return nil, err
-	}
-	if len([]byte(csrfSecret)) < minSecretLength {
-		return nil, fmt.Errorf("CSRF_SECRET must be at least %d bytes", minSecretLength)
+	csrfSecret := ""
+	if mode == AuthModeNative {
+		csrfSecret, err = requiredSecret(lookup, "CSRF_SECRET")
+		if err != nil {
+			return nil, err
+		}
+		if len([]byte(csrfSecret)) < minSecretLength {
+			return nil, fmt.Errorf("CSRF_SECRET must be at least %d bytes", minSecretLength)
+		}
 	}
 
 	cfg := &AuthConfig{

@@ -85,9 +85,9 @@
         },
         "csrf": {
           "type": "object",
-          "required": ["existingSecret", "key"],
+          "required": ["key"],
           "properties": {
-            "existingSecret": { "type": "string", "minLength": 1 },
+            "existingSecret": { "type": "string" },
             "key": { "type": "string", "minLength": 1 }
           }
         },
@@ -194,6 +194,12 @@
                   },
                   "redirectURL": { "minLength": 1, "pattern": "^https://" },
                   "publicBaseURL": { "minLength": 1, "pattern": "^https://" }
+                }
+              },
+              "csrf": {
+                "required": ["existingSecret"],
+                "properties": {
+                  "existingSecret": { "minLength": 1 }
                 }
               },
               "redis": {

@@ -34,7 +34,6 @@ VAULT_PROFILES_JSON='[{"id":"dev","label":"Development","passwordEnv":"VAULT_PAS
 VAULT_PASSWORD_DEV='smoke-password' \
 VAULT_PASSWORD_PROD='smoke-destination-password' \
 AUTH_MODE='off' \
-CSRF_SECRET='smoke-csrf-secret-012345678901234567890123' \
 COOKIE_SECURE='false' \
 HTTP_ADDR="127.0.0.1:${PORT}" \
   "$TMP_DIR/vaultsmith" >"$TMP_DIR/server.log" 2>&1 &
@@ -54,10 +53,15 @@ if [[ "$profiles" == *'VAULT_PASSWORD_DEV'* || "$profiles" == *'VAULT_PASSWORD_P
   fail 'profile response exposed secret configuration'
 fi
 
-COOKIE_JAR="$TMP_DIR/cookies.txt"
-session_bootstrap="$(curl -fsS -c "$COOKIE_JAR" -b "$COOKIE_JAR" http://127.0.0.1:${PORT}/api/v1/session)"
-csrf_token="$(printf '%s' "$session_bootstrap" | python3 -c 'import json, sys; token=json.load(sys.stdin)["csrfToken"]; assert token; print(token, end="")')"
-post_args=(--cookie "$COOKIE_JAR" -H 'Content-Type: application/json' -H "X-CSRF-Token: $csrf_token" -H 'Origin: http://127.0.0.1:'"$PORT" -H 'Referer: http://127.0.0.1:'"$PORT"'/')
+session_headers="$TMP_DIR/session.headers"
+session_body="$TMP_DIR/session.json"
+curl -fsS -D "$session_headers" -o "$session_body" http://127.0.0.1:${PORT}/api/v1/session
+if grep -qi '^Set-Cookie:' "$session_headers"; then
+  fail 'off-mode session endpoint issued a cookie'
+fi
+session_bootstrap="$(<"$session_body")"
+printf '%s' "$session_bootstrap" | python3 -c 'import json, sys; session=json.load(sys.stdin); assert session["authRequired"] is False and session["authenticated"] is False and session["csrfToken"] == ""'
+post_args=(-H 'Content-Type: application/json')
 
 home="$(curl -fsS http://127.0.0.1:${PORT}/)"
 [[ "$home" == *'Vaultsmith'* ]] || fail 'embedded SPA root is missing'

@@ -1,8 +1,5 @@
 auth:
   mode: "off"
-  csrf:
-    existingSecret: vaultsmith-auth
-    key: csrf-secret
 
 image:
   repository: vaultsmith

@@ -65,8 +65,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- $mode := required "auth.mode must be explicitly set to native or off" .Values.auth.mode -}}
 {{- if not (has $mode (list "off" "native")) }}{{ fail (printf "auth.mode must be off or native, got %q" $mode) }}{{ end }}
-{{- $_ := required "auth.csrf.existingSecret is required for every deployment mode" .Values.auth.csrf.existingSecret }}
 {{- if eq $mode "native" }}
+{{- $_ := required "auth.csrf.existingSecret is required in native mode" .Values.auth.csrf.existingSecret }}
 {{- $_ := required "auth.oidc.issuerURL is required in native mode" .Values.auth.oidc.issuerURL }}
 {{- $_ := required "auth.oidc.clientID is required in native mode" .Values.auth.oidc.clientID }}
 {{- $_ := required "auth.oidc.clientSecret.existingSecret is required in native mode" .Values.auth.oidc.clientSecret.existingSecret }}

@@ -73,7 +73,6 @@ Start the server with a local profile. The password below is only a placeholder;
 export VAULT_PROFILES_JSON='[{"id":"dev","label":"Development","passwordEnv":"VAULT_PASSWORD_DEV"}]'
 export VAULT_PASSWORD_DEV='replace-with-a-local-password'
 export AUTH_MODE=off
-export CSRF_SECRET='generate-a-random-32-byte-secret'
 export COOKIE_SECURE=false # local HTTP only; use true behind HTTPS
 go run ./backend/cmd/server
 ```
@@ -111,7 +110,7 @@ The server rejects reserved environment names, duplicate profile IDs, missing pa
 
 `AUTH_MODE` must be explicit at deployment time:
 
-- `off` is a development-only mode. It skips Redis/OIDC and keeps operations available, but CSRF protection remains enabled. The server logs a loud startup warning.
+- `off` is a development-only mode. It skips authentication, Redis/OIDC, session cookies, and CSRF protection while keeping operations available. The server logs a loud startup warning; do not expose this mode.
 - `native` enables provider-neutral OIDC Authorization Code + PKCE, Redis-backed opaque sessions, and Casbin profile authorization. There is no authentication fallback when Redis, OIDC discovery, or policy loading fails.
 
 Native mode requires `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL`, `PUBLIC_BASE_URL`, `REDIS_ADDR`, `REDIS_KEY_PREFIX`, `AUTHZ_POLICY_FILE`, and a random `CSRF_SECRET`. OIDC issuer discovery is single-issuer per deployment; identity is the verified `(iss, sub)` pair. Email is metadata, not identity. `OIDC_GROUPS_CLAIM` defaults to `groups`; groups must be a string array. If the issuer uses a private CA, set `OIDC_CA_FILE` to a mounted PEM bundle; do not disable TLS verification.
@@ -124,19 +123,21 @@ Sessions use host-only `__Host-` cookies with `HttpOnly`, `Path=/`, `SameSite=La
 
 The UI has three operation modes: `encrypt`, `decrypt`, and `rotate`. A rotate request names both the source and destination profile.
 
-List the profiles exposed to the browser. Mutating requests require the CSRF token returned by the session bootstrap and the matching cookie:
+List the profiles exposed to the browser:
+
+```sh
+curl -fsS http://localhost:8080/api/v1/profiles
+```
+
+In native mode, complete OIDC first. The browser then sends the host-only session cookie on API requests, and mutating requests also send the CSRF token returned by the session bootstrap. In local `off` mode, no session or CSRF cookie is needed.
+
+For native-mode session bootstrap:
 
 ```sh
 curl -fsS -c /tmp/vaultsmith.cookies -b /tmp/vaultsmith.cookies http://localhost:8080/api/v1/session
 ```
 
-In native mode, an unauthenticated session is redirected to `/auth/login`; complete OIDC before calling the API. In local `off` mode, use the bootstrap response's `csrfToken` as `X-CSRF-Token` and send the cookie jar.
-
-```sh
-curl -fsS -b /tmp/vaultsmith.cookies http://localhost:8080/api/v1/profiles
-```
-
-Encrypt a synthetic value:
+Encrypt a synthetic value in native mode:
 
 ```sh
 curl -fsS \
@@ -166,14 +167,11 @@ Keep real plaintext, ciphertext, and passwords out of shell history, logs, ticke
 
 The chart lives in `deploy/helm/vaultsmith`. It uses a `ClusterIP` service, leaves Ingress disabled, disables service-account token automount, and leaves NetworkPolicy disabled unless explicitly enabled. Set `networkPolicy.denyAllIngress: true` for an explicit deny-all policy, or provide allowed ingress/egress rules. The chart does not create password, CSRF, OIDC, or Redis Secrets, and it does not create a policy ConfigMap unless policy data is supplied in values.
 
-For a development-only no-auth deployment, provide a CSRF Secret even though Redis and OIDC are skipped:
+For a development-only no-auth deployment, no auth or CSRF Secret is required:
 
 ```yaml
 auth:
   mode: "off"
-  csrf:
-    existingSecret: vaultsmith-auth
-    key: csrf-secret
 ```
 
 For native mode, provide all required external references and explicit egress:
@@ -216,7 +214,7 @@ networkPolicy:
           port: 6379
 ```
 
-Native chart rendering fails unless the OIDC, Redis, CSRF, policy, secure-cookie, and NetworkPolicy egress inputs are present. `auth.mode: off` is never an implicit fallback for native startup failures.
+Native chart rendering fails unless the OIDC, Redis, CSRF, policy, secure-cookie, and NetworkPolicy egress inputs are present. `auth.mode: off` is never an implicit fallback for native startup failures. Off mode intentionally skips authentication and CSRF protection and must remain inside a private development boundary.
 
 ### Casbin policy configuration
 
@@ -280,7 +278,7 @@ An empty `allowedIngress` list is deny-all when enforced by the cluster CNI. Net
 
 ## Security
 
-Vaultsmith has two explicit authentication modes. In `native` mode it authenticates users with provider-neutral OIDC Authorization Code + PKCE, stores opaque sessions and refresh state in Redis, and authorizes profile operations with Casbin. In `off` mode it skips authentication for development only and logs a startup warning; CSRF protection and browser security headers still apply. Native startup fails closed if Redis, OIDC discovery, or policy loading is unavailable.
+Vaultsmith has two explicit authentication modes. In `native` mode it authenticates users with provider-neutral OIDC Authorization Code + PKCE, stores opaque sessions and refresh state in Redis, and authorizes profile operations with Casbin. In `off` mode it skips authentication and CSRF protection for development only and logs a startup warning; browser security headers still apply. Native startup fails closed if Redis, OIDC discovery, or policy loading is unavailable.
 
 Keep native deployments behind TLS and a private network boundary where practical. Treat the browser, clipboard history and sync, browser extensions, shared machines, server memory, Redis, the OIDC provider, and Kubernetes access as part of the trust boundary. Do not log or forward access tokens, refresh tokens, passwords, CSRF secrets, or credential-bearing connection strings.
 
