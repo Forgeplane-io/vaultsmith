@@ -2,11 +2,14 @@ import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react
 import {
   ApiError,
   fetchProfiles,
+  fetchSession,
+  logout,
   maxInputBytes,
   OPERATION_TIMEOUT_MS,
   runOperation,
   type OperationMode,
   type Profile,
+  type Session,
   utf8ByteLength,
 } from './api'
 import { formatAnsibleVaultSnippet, isValidAnsibleVariableIdentifier } from './ansibleSnippet'
@@ -16,6 +19,7 @@ import './styles.css'
 
 export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([])
+  const [session, setSession] = useState<Session | null>(null)
   const [profileId, setProfileId] = useState('')
   const [destinationProfileId, setDestinationProfileId] = useState('')
   const [mode, setMode] = useState<OperationMode>('encrypt')
@@ -43,9 +47,20 @@ export default function App() {
     setProfileLoadFailed(false)
     setStatus('Loading environments…')
     const controller = new AbortController()
-    fetchProfiles(controller.signal)
+    fetchSession(controller.signal)
+      .then((session) => {
+        if (!active) return undefined
+        setSession(session)
+        if (session.authRequired && !session.authenticated) {
+          redirectToLogin()
+          setStatus('Sign-in required…')
+          return undefined
+        }
+        setStatus('Loading environments…')
+        return fetchProfiles(controller.signal)
+      })
       .then((loadedProfiles) => {
-        if (!active) return
+        if (!active || !loadedProfiles) return
         setProfiles(loadedProfiles)
         setProfileId((current) => current || loadedProfiles[0]?.id || '')
         setDestinationProfileId((current) => current || loadedProfiles[1]?.id || loadedProfiles[0]?.id || '')
@@ -54,6 +69,11 @@ export default function App() {
       })
       .catch((reason: unknown) => {
         if (!active) return
+        if (reason instanceof ApiError && reason.code === 'unauthorized') {
+          redirectToLogin()
+          setStatus('Sign-in required…')
+          return
+        }
         setProfileLoadFailed(true)
         setError(safeErrorMessage(reason, 'Profiles could not be loaded.', 'profiles'))
         setStatus('')
@@ -254,6 +274,11 @@ export default function App() {
           setStatus('Operation cancelled')
         }
       } else {
+        if (reason instanceof ApiError && reason.code === 'unauthorized') {
+          redirectToLogin()
+          setStatus('Sign-in required…')
+          return
+        }
         setError(operationErrorMessage(reason, operationMode))
         setStatus('')
       }
@@ -326,6 +351,20 @@ export default function App() {
     }
   }
 
+  async function handleLogout() {
+    if (busy) return
+    setStatus('Signing out…')
+    setError('')
+    try {
+      await logout()
+      setSession(null)
+      redirectToLogin()
+    } catch (reason) {
+      setStatus('')
+      setError(safeErrorMessage(reason, 'Could not sign out. Try again.'))
+    }
+  }
+
   function clearAll() {
     if (busy || !canClear) return
     operationGenerationRef.current += 1
@@ -355,6 +394,12 @@ export default function App() {
           <div className="topbar-context">
             <strong>Protect · read · move</strong>
           </div>
+          {session?.authenticated && (
+            <div className="session-controls">
+              {session.email && <span className="session-email">{session.email}</span>}
+              <button className="quiet-button" type="button" onClick={() => void handleLogout()} disabled={busy}>Sign out</button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -624,6 +669,12 @@ function formatGuidance(inspection: VaultFormatInspection, selectedProfileId: st
     return `Vault ID label “${inspection.label}” differs from selected environment ${environmentDescription}. This is advisory; the backend remains authoritative.`
   }
   return ''
+}
+
+function redirectToLogin(): void {
+  if (typeof window === 'undefined') return
+  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  window.location.assign(`/auth/login?return_to=${encodeURIComponent(returnTo || '/')}`)
 }
 
 function safeErrorMessage(reason: unknown, fallback: string, context: 'profiles' | 'operation' = 'operation'): string {

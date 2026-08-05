@@ -13,3 +13,7 @@ data:
       {"id": {{ toJson $profile.id }}, "label": {{ toJson $profile.label }}, "passwordEnv": {{ toJson $profile.passwordEnv }}}
     {{- end }}
     ]
+  {{- if .Values.auth.policy.data }}
+  policy.csv: |-
+{{ .Values.auth.policy.data | nindent 4 }}
+  {{- end }}

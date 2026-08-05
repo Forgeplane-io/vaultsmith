@@ -29,6 +29,11 @@ assert_render_fails() {
 }
 
 cat > "$TMP_DIR/valid.yaml" <<'VALUES'
+auth:
+  mode: "off"
+  csrf:
+    existingSecret: vaultsmith-auth
+    key: csrf-secret
 profiles:
   - id: dev
     label: Development
@@ -44,13 +49,24 @@ networkPolicy:
           app.kubernetes.io/name: operator-shell
 VALUES
 
-helm lint "$CHART_DIR" >/dev/null
-render > "$TMP_DIR/default.yaml"
-grep -Fq 'ingress: []' "$TMP_DIR/default.yaml" || fail 'default NetworkPolicy is not deny-all'
-grep -Fq 'automountServiceAccountToken: false' "$TMP_DIR/default.yaml" || fail 'service token automount is not disabled'
-grep -Fq 'containerPort: 8080' "$TMP_DIR/default.yaml" || fail 'container port is not canonical 8080'
-if grep -Fq 'secretKeyRef:' "$TMP_DIR/default.yaml"; then
-  fail 'default render unexpectedly contains a Secret reference'
+if render > "$TMP_DIR/default.yaml" 2> "$TMP_DIR/default.err"; then
+  fail 'default chart render unexpectedly selected an authentication mode'
+fi
+cat > "$TMP_DIR/off-default.yaml" <<'VALUES'
+auth:
+  mode: "off"
+  csrf:
+    existingSecret: vaultsmith-auth
+    key: csrf-secret
+VALUES
+helm lint "$CHART_DIR" -f "$TMP_DIR/off-default.yaml" >/dev/null
+render -f "$TMP_DIR/off-default.yaml" > "$TMP_DIR/off-default-render.yaml"
+grep -Fq 'ingress: []' "$TMP_DIR/off-default-render.yaml" || fail 'explicit off NetworkPolicy is not deny-all'
+grep -Fq 'automountServiceAccountToken: false' "$TMP_DIR/off-default-render.yaml" || fail 'service token automount is not disabled'
+grep -Fq 'containerPort: 8080' "$TMP_DIR/off-default-render.yaml" || fail 'container port is not canonical 8080'
+grep -Fq 'name: CSRF_SECRET' "$TMP_DIR/off-default-render.yaml" || fail 'explicit off CSRF Secret reference is missing'
+if grep -Fq 'fixture-password' "$TMP_DIR/off-default-render.yaml"; then
+  fail 'off default render leaked a Secret value'
 fi
 
 helm lint "$CHART_DIR" -f "$TMP_DIR/valid.yaml" >/dev/null
@@ -63,8 +79,78 @@ if grep -Fq 'fixture-password' "$TMP_DIR/valid-render.yaml"; then
   fail 'password-like value leaked into rendered manifests'
 fi
 
+cat > "$TMP_DIR/native.yaml" <<'VALUES'
+auth:
+  mode: native
+  csrf:
+    existingSecret: vaultsmith-auth
+    key: csrf-secret
+  oidc:
+    issuerURL: https://idp.example.test/realms/vaultsmith
+    clientID: vaultsmith
+    clientSecret:
+      existingSecret: vaultsmith-auth
+      key: oidc-client-secret
+    redirectURL: https://vault.example.test/auth/callback
+    publicBaseURL: https://vault.example.test
+    ca:
+      existingConfigMap: vaultsmith-oidc-ca
+      key: ca.crt
+  redis:
+    address: redis.example.test:6379
+    keyPrefix: "vaultsmith:"
+  policy:
+    data: |
+      p, role:operator, profiles, profiles:list, allow
+      p, role:operator, profile:dev, encrypt, allow
+networkPolicy:
+  enabled: true
+  allowedIngress:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: operator-shell
+  allowedEgress:
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6379
+profiles:
+  - id: dev
+    label: Development
+    passwordEnv: VAULT_PASSWORD_DEV
+    passwordSecretKey: dev
+secret:
+  existingSecret: vaultsmith-passwords
+VALUES
+helm lint "$CHART_DIR" -f "$TMP_DIR/native.yaml" >/dev/null
+render -f "$TMP_DIR/native.yaml" > "$TMP_DIR/native-render.yaml"
+grep -Fq 'name: AUTH_MODE' "$TMP_DIR/native-render.yaml" || fail 'native auth mode env is missing'
+grep -Fq 'name: CSRF_SECRET' "$TMP_DIR/native-render.yaml" || fail 'native CSRF Secret reference is missing'
+grep -Fq 'name: OIDC_CLIENT_SECRET' "$TMP_DIR/native-render.yaml" || fail 'native OIDC Secret reference is missing'
+grep -Fq 'name: OIDC_CA_FILE' "$TMP_DIR/native-render.yaml" || fail 'native OIDC CA env is missing'
+grep -Fq 'vaultsmith-oidc-ca' "$TMP_DIR/native-render.yaml" || fail 'native OIDC CA ConfigMap reference is missing'
+grep -Fq 'name: REDIS_ADDR' "$TMP_DIR/native-render.yaml" || fail 'native Redis address env is missing'
+grep -Fq 'policy.csv' "$TMP_DIR/native-render.yaml" || fail 'native policy volume/config is missing'
+grep -Fq '    - Egress' "$TMP_DIR/native-render.yaml" || fail 'native NetworkPolicy egress type is missing'
+grep -Fq 'port: 6379' "$TMP_DIR/native-render.yaml" || fail 'native Redis egress port is missing'
+
+cat > "$TMP_DIR/incomplete-native.yaml" <<'VALUES'
+auth:
+  mode: native
+VALUES
+assert_render_fails "$TMP_DIR/incomplete-native.yaml"
+
 checksum_a="$(grep -m1 'checksum/profiles:' "$TMP_DIR/valid-render.yaml")"
 cat > "$TMP_DIR/changed.yaml" <<'VALUES'
+auth:
+  mode: "off"
+  csrf:
+    existingSecret: vaultsmith-auth
+    key: csrf-secret
 profiles:
   - id: dev
     label: Production

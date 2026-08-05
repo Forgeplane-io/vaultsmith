@@ -42,7 +42,7 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Loading environments')
     expect(await screen.findByRole('option', { name: 'Development' })).toBeInTheDocument()
     expect(screen.queryByText(/VAULT_PASSWORD/i)).not.toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/profiles', expect.anything())
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/session', expect.anything())
   })
 
   it('uses endpoint-specific guidance when profiles cannot be found', async () => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, fetchProfiles, PROFILE_LOAD_TIMEOUT_MS, runOperation } from './api'
+import { ApiError, fetchProfiles, fetchSession, logout, PROFILE_LOAD_TIMEOUT_MS, runOperation } from './api'
 
 const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), {
@@ -48,6 +48,24 @@ describe('API client', () => {
         body: JSON.stringify({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: 'vault-input' }),
       }),
     )
+  })
+
+  it('sends a CSRF-protected same-origin logout request', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async () => jsonResponse({
+      authenticated: true,
+      authRequired: true,
+      email: 'operator@example.test',
+      csrfToken: 'csrf-fixture',
+    })).mockImplementationOnce(async () => jsonResponse({ ok: true }))
+
+    await fetchSession()
+    await logout()
+
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/auth/logout', expect.objectContaining({
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'X-CSRF-Token': 'csrf-fixture' },
+    }))
   })
 
   it('turns API errors into safe typed errors', async () => {

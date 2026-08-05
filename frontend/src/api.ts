@@ -5,6 +5,13 @@ export type Profile = {
   label: string
 }
 
+export type Session = {
+  authenticated: boolean
+  authRequired: boolean
+  email?: string
+  csrfToken: string
+}
+
 export type SingleProfileOperationRequest = {
   profileId: string
   mode: 'encrypt' | 'decrypt'
@@ -44,10 +51,22 @@ type ErrorEnvelope = {
   }
 }
 
+let csrfToken = ''
+let legacyProfiles: Profile[] | null = null
+
+export function currentCSRFToken(): string {
+  return csrfToken
+}
+
 async function requestJSON(path: string, init?: RequestInit): Promise<unknown> {
+  const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) }
+  const method = (init?.method || 'GET').toUpperCase()
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && csrfToken && !Object.prototype.hasOwnProperty.call(headers, 'X-CSRF-Token')) {
+    headers['X-CSRF-Token'] = csrfToken
+  }
   let response: Response
   try {
-    response = await fetch(path, init)
+    response = await fetch(path, { ...init, headers, credentials: 'same-origin' })
   } catch (reason) {
     if (reason instanceof Error && reason.name === 'AbortError') throw reason
     throw new ApiError('Unable to reach the Vaultsmith service', 'network_error')
@@ -68,9 +87,30 @@ async function requestJSON(path: string, init?: RequestInit): Promise<unknown> {
   return payload
 }
 
+export async function fetchSession(signal?: AbortSignal): Promise<Session> {
+  const payload = await requestJSON('/api/v1/session', {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal,
+  })
+  if (!isSessionEnvelope(payload)) {
+    if (isProfileEnvelope(payload)) {
+      legacyProfiles = payload.profiles
+      return { authenticated: false, authRequired: false, csrfToken: '' }
+    }
+    throw new ApiError('The service returned an invalid session response', 'invalid_response')
+  }
+  csrfToken = payload.csrfToken
+  return payload
+}
 export async function fetchProfiles(signal?: AbortSignal): Promise<Profile[]> {
   if (signal?.aborted) {
     throw new DOMException('The operation was aborted', 'AbortError')
+  }
+  if (legacyProfiles) {
+    const cachedProfiles = legacyProfiles
+    legacyProfiles = null
+    return cachedProfiles
   }
   const timeoutController = new AbortController()
   let timedOut = false
@@ -98,6 +138,13 @@ export async function fetchProfiles(signal?: AbortSignal): Promise<Profile[]> {
     globalThis.clearTimeout(timeoutId)
     signal?.removeEventListener('abort', abortRequest)
   }
+}
+
+export async function logout(): Promise<void> {
+  await requestJSON('/auth/logout', {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+  })
 }
 
 export async function runOperation(request: OperationRequest, signal?: AbortSignal): Promise<string> {
@@ -129,6 +176,15 @@ function isErrorEnvelope(value: unknown): value is ErrorEnvelope & { error: NonN
   if (!value || typeof value !== 'object' || !('error' in value)) return false
   const error = (value as ErrorEnvelope).error
   return Boolean(error && typeof error === 'object')
+}
+
+function isSessionEnvelope(value: unknown): value is Session {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<Session>
+  return typeof candidate.authenticated === 'boolean'
+    && typeof candidate.authRequired === 'boolean'
+    && typeof candidate.csrfToken === 'string'
+    && (candidate.email === undefined || typeof candidate.email === 'string')
 }
 
 function isProfileEnvelope(value: unknown): value is { profiles: Profile[] } {

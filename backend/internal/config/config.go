@@ -44,6 +44,7 @@ type profile struct {
 type Config struct {
 	profiles []profile
 	executor *executor
+	auth     AuthConfig
 }
 
 type Executor interface {
@@ -63,6 +64,19 @@ func LoadFromEnv() (*Config, error) {
 		return nil, fmt.Errorf("%s is required", profilesEnv)
 	}
 	return LoadJSON(profilesJSON, os.LookupEnv)
+}
+
+func LoadApplicationFromEnv() (*Config, error) {
+	loaded, err := LoadFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	auth, err := LoadAuthFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	loaded.auth = *auth
+	return loaded, nil
 }
 
 // LoadJSON validates profile metadata and resolves passwords through lookup.
@@ -129,6 +143,10 @@ func LoadJSON(profilesJSON string, lookup func(string) (string, bool)) (*Config,
 	return &Config{profiles: profiles, executor: &executor{profiles: byID}}, nil
 }
 
+func IsValidProfileID(id string) bool {
+	return profileIDPattern.MatchString(id)
+}
+
 func (c *Config) PublicProfiles() []PublicProfile {
 	public := make([]PublicProfile, 0, len(c.profiles))
 	for _, current := range c.profiles {
@@ -137,10 +155,13 @@ func (c *Config) PublicProfiles() []PublicProfile {
 	return public
 }
 
+func (c *Config) Auth() AuthConfig {
+	return c.auth
+}
+
 func (c *Config) Executor() Executor {
 	return c.executor
 }
-
 func (e *executor) Execute(profileID, mode, value string) (string, error) {
 	current, ok := e.profiles[profileID]
 	if !ok {

@@ -29,6 +29,25 @@ spec:
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if or .Values.auth.policy.existingConfigMap .Values.auth.policy.data .Values.auth.oidc.ca.existingConfigMap }}
+      volumes:
+        {{- if or .Values.auth.policy.existingConfigMap .Values.auth.policy.data }}
+        - name: policy
+          configMap:
+            name: {{ default (include "vaultsmith.fullname" .) .Values.auth.policy.existingConfigMap }}
+            items:
+              - key: {{ .Values.auth.policy.key | quote }}
+                path: policy.csv
+        {{- end }}
+        {{- if .Values.auth.oidc.ca.existingConfigMap }}
+        - name: oidc-ca
+          configMap:
+            name: {{ .Values.auth.oidc.ca.existingConfigMap | quote }}
+            items:
+              - key: {{ .Values.auth.oidc.ca.key | quote }}
+                path: ca.crt
+        {{- end }}
+      {{- end }}
       containers:
         - name: vaultsmith
           image: {{ include "vaultsmith.image" . | quote }}
@@ -38,6 +57,78 @@ spec:
           env:
             - name: HTTP_ADDR
               value: "{{ printf ":%d" (int .Values.containerPort) }}"
+            - name: AUTH_MODE
+              value: {{ .Values.auth.mode | quote }}
+            - name: OIDC_ISSUER_URL
+              value: {{ .Values.auth.oidc.issuerURL | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.auth.oidc.clientID | quote }}
+            - name: OIDC_REDIRECT_URL
+              value: {{ .Values.auth.oidc.redirectURL | quote }}
+            - name: PUBLIC_BASE_URL
+              value: {{ .Values.auth.oidc.publicBaseURL | quote }}
+            {{- if .Values.auth.oidc.ca.existingConfigMap }}
+            - name: OIDC_CA_FILE
+              value: /etc/vaultsmith/oidc-ca/ca.crt
+            {{- end }}
+            - name: OIDC_GROUPS_CLAIM
+              value: {{ .Values.auth.oidc.groupsClaim | quote }}
+            - name: OIDC_SCOPES
+              value: {{ join " " .Values.auth.oidc.scopes | quote }}
+            - name: AUTHZ_POLICY_FILE
+              value: {{ .Values.auth.policy.file | quote }}
+            - name: SESSION_ABSOLUTE_LIFETIME
+              value: {{ .Values.auth.session.absoluteLifetime | quote }}
+            - name: SESSION_IDLE_LIFETIME
+              value: {{ .Values.auth.session.idleLifetime | quote }}
+            - name: COOKIE_SECURE
+              value: {{ .Values.auth.session.secure | quote }}
+            - name: COOKIE_SAME_SITE
+              value: {{ .Values.auth.session.sameSite | quote }}
+            - name: REDIS_ADDR
+              value: {{ .Values.auth.redis.address | quote }}
+            - name: REDIS_USERNAME
+              value: {{ .Values.auth.redis.username | quote }}
+            - name: REDIS_DB
+              value: {{ .Values.auth.redis.database | quote }}
+            - name: REDIS_TLS
+              value: {{ .Values.auth.redis.tls | quote }}
+            - name: REDIS_CONNECT_TIMEOUT
+              value: {{ .Values.auth.redis.connectTimeout | quote }}
+            - name: REDIS_READ_TIMEOUT
+              value: {{ .Values.auth.redis.readTimeout | quote }}
+            - name: REDIS_WRITE_TIMEOUT
+              value: {{ .Values.auth.redis.writeTimeout | quote }}
+            - name: REDIS_POOL_SIZE
+              value: {{ .Values.auth.redis.poolSize | quote }}
+            - name: REDIS_KEY_PREFIX
+              value: {{ .Values.auth.redis.keyPrefix | quote }}
+            - name: CORS_ALLOWED_ORIGINS
+              value: {{ join "," .Values.auth.cors.allowedOrigins | quote }}
+            {{- if .Values.auth.csrf.existingSecret }}
+            - name: CSRF_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.csrf.existingSecret | quote }}
+                  key: {{ .Values.auth.csrf.key | quote }}
+                  optional: false
+            {{- end }}
+            {{- if .Values.auth.oidc.clientSecret.existingSecret }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.oidc.clientSecret.existingSecret | quote }}
+                  key: {{ .Values.auth.oidc.clientSecret.key | quote }}
+                  optional: false
+            {{- end }}
+            {{- if .Values.auth.redis.password.existingSecret }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.redis.password.existingSecret | quote }}
+                  key: {{ .Values.auth.redis.password.key | quote }}
+                  optional: false
+            {{- end }}
             - name: VAULT_PROFILES_JSON
               valueFrom:
                 configMapKeyRef:
@@ -50,6 +141,17 @@ spec:
                   name: {{ $.Values.secret.existingSecret | quote }}
                   key: {{ .passwordSecretKey | quote }}
                   optional: false
+            {{- end }}
+          volumeMounts:
+            {{- if or .Values.auth.policy.existingConfigMap .Values.auth.policy.data }}
+            - name: policy
+              mountPath: /etc/vaultsmith/policy
+              readOnly: true
+            {{- end }}
+            {{- if .Values.auth.oidc.ca.existingConfigMap }}
+            - name: oidc-ca
+              mountPath: /etc/vaultsmith/oidc-ca
+              readOnly: true
             {{- end }}
           ports:
             - name: http

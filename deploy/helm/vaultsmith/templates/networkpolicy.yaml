@@ -12,6 +12,9 @@ spec:
       {{- include "vaultsmith.selectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
+    {{- if or (eq (default "off" .Values.auth.mode) "native") .Values.networkPolicy.allowedEgress }}
+    - Egress
+    {{- end }}
   {{- if .Values.networkPolicy.allowedIngress }}
   ingress:
     {{- range .Values.networkPolicy.allowedIngress }}
@@ -23,5 +26,20 @@ spec:
     {{- end }}
   {{- else }}
   ingress: []
+  {{- end }}
+  {{- if .Values.networkPolicy.allowedEgress }}
+  egress:
+    {{- range .Values.networkPolicy.allowedEgress }}
+    - {{- with .to }}
+      to:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .ports }}
+      ports:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+  {{- else if eq (default "off" .Values.auth.mode) "native" }}
+  egress: []
   {{- end }}
 {{- end }}

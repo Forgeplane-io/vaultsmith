@@ -10,6 +10,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/ansiblevault"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/authz"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 )
 
 const (
@@ -29,10 +32,13 @@ type Executor interface {
 }
 
 type Handler struct {
-	profiles map[string]struct{}
-	public   []Profile
-	executor Executor
-	ready    bool
+	profiles   map[string]struct{}
+	public     []Profile
+	executor   Executor
+	ready      bool
+	auth       *authn.Authenticator
+	authorizer *authz.Authorizer
+	authConfig config.AuthConfig
 }
 
 type operationRequest struct {
@@ -55,6 +61,13 @@ type statusResponse struct {
 	Status string `json:"status"`
 }
 
+type sessionResponse struct {
+	Authenticated bool   `json:"authenticated"`
+	AuthRequired  bool   `json:"authRequired"`
+	Email         string `json:"email,omitempty"`
+	CSRFToken     string `json:"csrfToken"`
+}
+
 type errorResponse struct {
 	Error apiError `json:"error"`
 }
@@ -65,6 +78,10 @@ type apiError struct {
 }
 
 func New(profiles []Profile, executor Executor) http.Handler {
+	return newHandler(profiles, executor)
+}
+
+func newHandler(profiles []Profile, executor Executor) *Handler {
 	public := make([]Profile, 0, len(profiles))
 	profileSet := make(map[string]struct{}, len(profiles))
 	for _, profile := range profiles {
@@ -86,6 +103,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveProfiles(w, r)
 	case "/api/v1/operations":
 		h.serveOperation(w, r)
+	case "/api/v1/session":
+		h.serveSession(w, r)
+	case "/auth/login":
+		h.serveLogin(w, r)
+	case "/auth/callback":
+		h.serveCallback(w, r)
+	case "/auth/logout":
+		h.serveLogout(w, r)
 	case "/healthz":
 		h.serveHealth(w, r)
 	case "/readyz":
@@ -100,7 +125,35 @@ func (h *Handler) serveProfiles(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, http.MethodGet)
 		return
 	}
+	if h.authConfig.Mode == config.AuthModeNative {
+		principal, ok, status, code := h.requirePrincipal(r)
+		if !ok {
+			writeAuthError(w, status, code)
+			return
+		}
+		allowedIDs := h.authorizer.FilterProfiles(principal, profileIDs(h.public))
+		allowed := make(map[string]struct{}, len(allowedIDs))
+		for _, id := range allowedIDs {
+			allowed[id] = struct{}{}
+		}
+		filtered := make([]Profile, 0, len(allowedIDs))
+		for _, profile := range h.public {
+			if _, exists := allowed[profile.ID]; exists {
+				filtered = append(filtered, profile)
+			}
+		}
+		writeJSON(w, http.StatusOK, profilesResponse{Profiles: filtered})
+		return
+	}
 	writeJSON(w, http.StatusOK, profilesResponse{Profiles: h.public})
+}
+
+func profileIDs(profiles []Profile) []string {
+	ids := make([]string, 0, len(profiles))
+	for _, profile := range profiles {
+		ids = append(ids, profile.ID)
+	}
+	return ids
 }
 
 func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
@@ -160,6 +213,31 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
 	if valueBytes > maxValueBytes {
 		writeError(w, http.StatusRequestEntityTooLarge, "invalid_request", "value is too large")
 		return
+	}
+	if h.authConfig.Mode == config.AuthModeNative {
+		principal, ok, status, code := h.requirePrincipal(r)
+		if !ok {
+			writeAuthError(w, status, code)
+			return
+		}
+		var authErr error
+		if request.Mode == "rotate" {
+			authErr = h.authorizer.AuthorizeRotate(principal, request.SourceProfileID, request.DestinationProfileID)
+		} else {
+			action := authz.ActionEncrypt
+			if request.Mode == "decrypt" {
+				action = authz.ActionDecrypt
+			}
+			authErr = h.authorizer.Authorize(principal, action, authz.ProfileResource(request.ProfileID))
+		}
+		if authErr != nil {
+			if errors.Is(authErr, authz.ErrForbidden) {
+				writeError(w, http.StatusForbidden, "forbidden", "operation is not permitted")
+			} else {
+				writeError(w, http.StatusServiceUnavailable, "not_ready", "authorization is not ready")
+			}
+			return
+		}
 	}
 	if h.executor == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_ready", "service is not ready")
