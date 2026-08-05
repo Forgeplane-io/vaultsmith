@@ -250,10 +250,10 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,assets
           printf 'image=%s@%s\n' "$IMAGE" '${{ steps.image.outputs.digest }}'
           printf 'chart=%s:%s\n' "$CHART_REPOSITORY/vaultsmith" "$VERSION"
-          {
-            echo "### Vaultsmith release"
-            echo "- Tag: \\`$TAG\\`"
-            echo "- Source: \\`$SOURCE_SHA\\`"
-            echo "- Image digest: \\`${IMAGE}@${{ steps.image.outputs.digest }}\\`"
-            echo "- Helm chart: \\`${CHART_REPOSITORY}/vaultsmith:${VERSION}\\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' \
+            '### Vaultsmith release' \
+            "- Tag: $TAG" \
+            "- Source: $SOURCE_SHA" \
+            "- Image digest: ${IMAGE}@${{ steps.image.outputs.digest }}" \
+            "- Helm chart: ${CHART_REPOSITORY}/vaultsmith:${VERSION}" \
+            >> "$GITHUB_STEP_SUMMARY"
