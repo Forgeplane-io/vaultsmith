@@ -2,6 +2,13 @@
 
 All notable changes to Vaultsmith are documented here. Release Please maintains this file from Conventional Commits.
 
+## [0.1.1](https://github.com/Forgeplane-io/vaultsmith/compare/v0.1.0...v0.1.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **chart:** make NetworkPolicy opt-in by default ([ae3fb57](https://github.com/Forgeplane-io/vaultsmith/commit/ae3fb57c63570086c4550cbffebbffc10d91302e))
+
 ## 0.1.0 (2026-08-04)
 
 
