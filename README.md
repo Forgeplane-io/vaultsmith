@@ -218,6 +218,38 @@ networkPolicy:
 
 Native chart rendering fails unless the OIDC, Redis, CSRF, policy, secure-cookie, and NetworkPolicy egress inputs are present. `auth.mode: off` is never an implicit fallback for native startup failures.
 
+### Casbin policy configuration
+
+Native mode loads a file-backed Casbin policy from `AUTHZ_POLICY_FILE`. The chart mounts that file at `/etc/vaultsmith/policy/policy.csv`. Choose one policy source: either inline `auth.policy.data`, or an external ConfigMap referenced by `auth.policy.existingConfigMap`.
+
+For an inline policy, replace the `auth.policy` block above with this form. Keep the default `key: policy.csv` when using inline data:
+
+```yaml
+auth:
+  policy:
+    key: policy.csv
+    data: |-
+      g, group:vaultsmith-operators, role:operator
+      p, role:operator, profiles, profiles:list, allow
+      p, role:operator, profile:dev, encrypt, allow
+      p, role:operator, profile:dev, decrypt, allow
+      p, role:operator, profile:prod*, encrypt, allow
+      p, role:operator, profile:prod*, decrypt, allow
+```
+
+For an externally managed policy, create a ConfigMap whose data key matches `auth.policy.key` and reference it instead:
+
+```yaml
+auth:
+  policy:
+    existingConfigMap: vaultsmith-policy
+    key: policy.csv
+```
+
+The `group:<value>` in a `g` row must match a value from the verified OIDC groups claim (`groups` by default). Permission rows use role subjects and have the form `p, role:<name>, <resource>, <action>, <effect>`. `profiles:list` applies to the global `profiles` resource; `encrypt` and `decrypt` apply to `profile:<id>` resources. A trailing `*` is allowed for a profile prefix, but it must match at least one configured profile. Explicit `deny` rows override `allow` rows. Rotate requires decrypt permission on the source profile and encrypt permission on the destination profile. Policy validation fails closed if it references an unknown profile or invalid action.
+
+The full policy and external ConfigMap examples are in the [deployment guide](docs/deployment.md#casbin-policy-configuration). Do not put credentials or tokens in the policy; keep them in the referenced Kubernetes Secrets.
+
 Create the profile password Secret and referenced auth Secret/ConfigMap outside Helm, then install:
 
 ```yaml

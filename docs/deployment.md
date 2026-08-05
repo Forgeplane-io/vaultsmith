@@ -147,6 +147,70 @@ ingress:
 
 A NetworkPolicy source selector must match only the intended edge or probe workload. It limits which workloads can open a network connection; it does not authenticate an HTTP caller, validate a session, or strip headers.
 
+### Casbin policy configuration
+
+Native mode uses a file-backed Casbin policy. The chart sets `AUTHZ_POLICY_FILE` to `/etc/vaultsmith/policy/policy.csv` and mounts the policy read-only. Provide exactly one policy source: inline Helm values or an external ConfigMap.
+
+#### Inline policy data
+
+Replace the `auth.policy` block in the values above with the following. The chart creates the policy data in its release-managed ConfigMap. Keep `key: policy.csv`, which is the default key used for inline policy data:
+
+```yaml
+auth:
+  policy:
+    key: policy.csv
+    data: |-
+      g, group:vaultsmith-operators, role:operator
+      p, role:operator, profiles, profiles:list, allow
+      p, role:operator, profile:dev, encrypt, allow
+      p, role:operator, profile:dev, decrypt, allow
+      p, role:operator, profile:prod*, encrypt, allow
+      p, role:operator, profile:prod*, decrypt, allow
+```
+
+#### External policy ConfigMap
+
+Create and manage the policy ConfigMap separately when policy changes should not be part of Helm values:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vaultsmith-policy
+  namespace: vaultsmith
+data:
+  policy.csv: |-
+    g, group:vaultsmith-operators, role:operator
+    p, role:operator, profiles, profiles:list, allow
+    p, role:operator, profile:dev, encrypt, allow
+    p, role:operator, profile:dev, decrypt, allow
+```
+
+Apply it before the Helm release:
+
+```sh
+kubectl apply -f vaultsmith-policy.yaml
+```
+
+Reference it with:
+
+```yaml
+auth:
+  policy:
+    existingConfigMap: vaultsmith-policy
+    key: policy.csv
+```
+
+The `g` row maps an exact value from the verified OIDC groups claim to a role. The default claim is `groups`; set `auth.oidc.groupsClaim` when the provider uses another valid claim path. Permission rows must use role subjects and follow `p, role:<name>, <resource>, <action>, <effect>`.
+
+- `profiles:list` grants access to the global `profiles` resource.
+- `encrypt` and `decrypt` grant operations on `profile:<id>` resources.
+- A trailing `*` matches a profile prefix, such as `profile:prod*`; it must match a configured profile.
+- `deny` overrides `allow`; no matching allow is denied by default.
+- Rotate is authorized by checking decrypt on the source and encrypt on the destination.
+
+Policy resources must match the IDs under `.Values.profiles`. Malformed role subjects, invalid actions, duplicate rows, unknown profiles, and unmatched wildcard selectors cause authorization policy loading to fail closed. Keep credentials and tokens in Kubernetes Secrets, not in the policy ConfigMap.
+
 ### Public Gateway API route contract
 
 The following objects describe the route shape and TLS boundary. They are synthetic and **not ready to expose unchanged**. Replace the GatewayClass, namespace, certificate Secret, Service name, and policy references with values rendered from the installed release and the selected maintained Gateway implementation.
