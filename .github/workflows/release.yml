@@ -81,7 +81,7 @@ jobs:
           for attempt in $(seq 1 12); do
             if [[ -n "$release_id" ]]; then
               if release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" 2>/dev/null)"; then
-                if jq -e --arg tag "$tag" '.tag_name == $tag and .draft == true' <<<"$release_json" >/dev/null; then
+                if jq -e --arg tag "$tag" '.tag_name == $tag' <<<"$release_json" >/dev/null; then
                   exit 0
                 fi
               fi
@@ -93,7 +93,7 @@ jobs:
             echo "waiting for Release Please draft for $tag (attempt $attempt/12)"
             sleep 5
           done
-          echo "Release Please draft not found for $tag${release_id:+ (release ID $release_id)}" >&2
+          echo "Release not found for $tag${release_id:+ (release ID $release_id)}" >&2
           exit 1
 
   publish:
