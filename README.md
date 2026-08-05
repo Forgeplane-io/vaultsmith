@@ -140,7 +140,7 @@ Keep real plaintext, ciphertext, and passwords out of shell history, logs, ticke
 
 ## Deploy with Helm
 
-The chart lives in `deploy/helm/vaultsmith`. It uses a `ClusterIP` service, leaves Ingress disabled, disables service-account token automount, and enables a NetworkPolicy by default. The chart does not create the password Secret.
+The chart lives in `deploy/helm/vaultsmith`. It uses a `ClusterIP` service, leaves Ingress disabled, disables service-account token automount, and leaves NetworkPolicy disabled by default. The chart does not create the password Secret.
 
 Create the Secret outside Helm, then reference it from a values file:
 
@@ -156,6 +156,7 @@ secret:
 
 networkPolicy:
   enabled: true
+  denyAllIngress: true
   allowedIngress: []
 ```
 
@@ -168,7 +169,7 @@ helm upgrade --install vaultsmith deploy/helm/vaultsmith \
   -f /path/to/vaultsmith-values.yaml
 ```
 
-An empty `allowedIngress` list is deny-all when enforced by the cluster CNI. NetworkPolicy is not authentication. Put an authenticated or private edge in front of the service before enabling Ingress.
+Set `denyAllIngress: true` with an empty `allowedIngress` list for an explicit deny-all policy. For an allowlist, leave `denyAllIngress` false and add `namespaceSelector` or `podSelector` entries. NetworkPolicy is not authentication. Put an authenticated or private edge in front of the service before enabling Ingress.
 
 ## Security
 

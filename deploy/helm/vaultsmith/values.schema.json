@@ -59,6 +59,7 @@
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" },
+        "denyAllIngress": { "type": "boolean" },
         "allowedIngress": {
           "type": "array",
           "items": {
