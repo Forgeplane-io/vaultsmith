@@ -10,6 +10,10 @@ on:
         description: Existing semver tag to publish or recover
         required: true
         type: string
+      release_id:
+        description: Draft GitHub release ID created by Release Please
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -42,6 +46,7 @@ jobs:
       - name: Validate tag and source commit
         id: release
         env:
+          INPUT_RELEASE_ID: ${{ inputs.release_id }}
           INPUT_TAG: ${{ inputs.tag }}
           REF_NAME: ${{ github.ref_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,16 +71,27 @@ jobs:
             echo "build_date=$(git show -s --format=%cI "$checked_out_sha")"
           } >> "$GITHUB_OUTPUT"
 
+          release_id="${INPUT_RELEASE_ID:-}"
+          if [[ -n "$release_id" && ! "$release_id" =~ ^[0-9]+$ ]]; then
+            echo "invalid release ID: $release_id" >&2
+            exit 1
+          fi
           for attempt in $(seq 1 12); do
-            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft >/tmp/release.json 2>/dev/null; then
-              if jq -e --arg tag "$tag" '.tagName == $tag and .isDraft == true' /tmp/release.json >/dev/null; then
+            if [[ -n "$release_id" ]]; then
+              if release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" 2>/dev/null)"; then
+                if jq -e --arg tag "$tag" '.tag_name == $tag and .draft == true' <<<"$release_json" >/dev/null; then
+                  exit 0
+                fi
+              fi
+            elif release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" 2>/dev/null)"; then
+              if jq -e --arg tag "$tag" '.[] | select(.tag_name == $tag and .draft == true)' <<<"$release_json" >/dev/null; then
                 exit 0
               fi
             fi
             echo "waiting for Release Please draft for $tag (attempt $attempt/12)"
             sleep 5
           done
-          echo "Release Please draft not found for $tag" >&2
+          echo "Release Please draft not found for $tag${release_id:+ (release ID $release_id)}" >&2
           exit 1
 
   publish:

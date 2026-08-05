@@ -43,11 +43,28 @@ jobs:
               core.setFailed('Release Please reported a release without a tag_name');
               return;
             }
+            const { owner, repo } = context.repo;
+            let draft;
+            for (let attempt = 1; attempt <= 12 && !draft; attempt += 1) {
+              const releases = await github.paginate(github.rest.repos.listReleases, {
+                owner,
+                repo,
+                per_page: 100,
+              });
+              draft = releases.find((release) => release.tag_name === tag && release.draft);
+              if (!draft && attempt < 12) {
+                await new Promise((resolve) => setTimeout(resolve, 5000));
+              }
+            }
+            if (!draft) {
+              core.setFailed(`Release Please draft not found for ${tag}`);
+              return;
+            }
             await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
+              owner,
+              repo,
               workflow_id: 'release.yml',
               ref: tag,
-              inputs: { tag },
+              inputs: { tag, release_id: String(draft.id) },
             });
-            core.info(`Dispatched release.yml for ${tag}`);
+            core.info(`Dispatched release.yml for ${tag} using draft release ${draft.id}`);
