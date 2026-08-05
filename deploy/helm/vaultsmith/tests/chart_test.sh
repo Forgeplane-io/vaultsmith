@@ -87,6 +87,29 @@ render -f "$TMP_DIR/deny-all.yaml" > "$TMP_DIR/deny-all-render.yaml"
 grep -Fq 'kind: NetworkPolicy' "$TMP_DIR/deny-all-render.yaml" || fail 'explicit deny-all NetworkPolicy is missing'
 grep -Fq 'ingress: []' "$TMP_DIR/deny-all-render.yaml" || fail 'explicit deny-all NetworkPolicy is not empty'
 
+cat > "$TMP_DIR/egress-only.yaml" <<'VALUES'
+auth:
+  mode: "off"
+  csrf:
+    existingSecret: vaultsmith-auth
+    key: csrf-secret
+networkPolicy:
+  enabled: true
+  allowedIngress: []
+  denyAllIngress: false
+  allowedEgress:
+    - ports:
+        - protocol: TCP
+          port: 443
+VALUES
+helm lint "$CHART_DIR" -f "$TMP_DIR/egress-only.yaml" >/dev/null
+render -f "$TMP_DIR/egress-only.yaml" > "$TMP_DIR/egress-only-render.yaml"
+grep -Fq 'kind: NetworkPolicy' "$TMP_DIR/egress-only-render.yaml" || fail 'egress-only NetworkPolicy is missing'
+grep -Fq '    - Egress' "$TMP_DIR/egress-only-render.yaml" || fail 'egress-only NetworkPolicy egress type is missing'
+if grep -Fq '    - Ingress' "$TMP_DIR/egress-only-render.yaml" || grep -Fq '  ingress:' "$TMP_DIR/egress-only-render.yaml"; then
+  fail 'egress-only NetworkPolicy unexpectedly selected an ingress policy'
+fi
+
 helm lint "$CHART_DIR" -f "$TMP_DIR/valid.yaml" >/dev/null
 render -f "$TMP_DIR/valid.yaml" > "$TMP_DIR/valid-render.yaml"
 grep -Fq 'VAULT_PROFILES_JSON' "$TMP_DIR/valid-render.yaml" || fail 'profile config env is missing'

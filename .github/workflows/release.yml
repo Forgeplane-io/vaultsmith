@@ -124,12 +124,14 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Go
+        if: needs.validate.outputs.release_draft == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up Node.js
+        if: needs.validate.outputs.release_draft == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .nvmrc
@@ -137,12 +139,14 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Syft
+        if: needs.validate.outputs.release_draft == 'true'
         id: syft
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           syft-version: v1.50.0
 
       - name: Add Syft to PATH
+        if: needs.validate.outputs.release_draft == 'true'
         run: echo "$(dirname '${{ steps.syft.outputs.cmd }}')" >> "$GITHUB_PATH"
 
       - name: Run GoReleaser

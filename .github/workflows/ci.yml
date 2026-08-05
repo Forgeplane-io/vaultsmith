@@ -128,19 +128,12 @@ jobs:
           kubectl create secret generic vaultsmith-passwords \
             --namespace "$NAMESPACE" \
             --from-literal='dev=fixture-password'
-          helm_values=(
-            --set image.repository=vaultsmith
-            --set image.tag=ci
-            --set image.pullPolicy=IfNotPresent
-            --set 'profiles[0].id=dev'
-            --set 'profiles[0].label=Development'
-            --set 'profiles[0].passwordEnv=VAULT_PASSWORD_DEV'
-            --set 'profiles[0].passwordSecretKey=dev'
-            --set secret.existingSecret=vaultsmith-passwords
-          )
+          kubectl create secret generic vaultsmith-auth \
+            --namespace "$NAMESPACE" \
+            --from-literal='csrf-secret=fixture-csrf'
           helm upgrade --install "$RELEASE_NAME" deploy/helm/vaultsmith \
             --namespace "$NAMESPACE" \
-            "${helm_values[@]}" \
+            --values deploy/helm/vaultsmith/tests/values-kind.yaml \
             --wait \
             --timeout 180s
           kubectl wait \
@@ -173,14 +166,7 @@ jobs:
           helm upgrade "$RELEASE_NAME" deploy/helm/vaultsmith \
             --namespace "$NAMESPACE" \
             --reset-values \
-            --set image.repository=vaultsmith \
-            --set image.tag=ci \
-            --set image.pullPolicy=IfNotPresent \
-            --set 'profiles[0].id=dev' \
-            --set 'profiles[0].label=Development' \
-            --set 'profiles[0].passwordEnv=VAULT_PASSWORD_DEV' \
-            --set 'profiles[0].passwordSecretKey=dev' \
-            --set secret.existingSecret=vaultsmith-passwords \
+            --values deploy/helm/vaultsmith/tests/values-kind.yaml \
             --wait \
             --timeout 180s
           restored_policies="$(kubectl get networkpolicy --namespace "$NAMESPACE" -o json | jq '.items | length')"
