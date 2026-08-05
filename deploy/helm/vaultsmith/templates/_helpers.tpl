@@ -78,9 +78,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and .Values.auth.redis.username (not .Values.auth.redis.password.existingSecret) }}{{ fail "auth.redis.password.existingSecret is required when auth.redis.username is configured" }}{{ end }}
 {{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.allowedEgress) }}{{ fail "networkPolicy.allowedEgress must allow OIDC and Redis egress in native mode, or disable networkPolicy explicitly" }}{{ end }}
 {{- end }}
+{{- if and .Values.networkPolicy.enabled .Values.networkPolicy.denyAllIngress .Values.networkPolicy.allowedIngress }}{{ fail "networkPolicy.denyAllIngress cannot be combined with allowedIngress" }}{{ end }}
 {{- if .Values.networkPolicy.enabled }}
 {{- range .Values.networkPolicy.allowedIngress }}
-{{- if and (not .namespaceSelector) (not .podSelector) }}{{ fail "networkPolicy.allowedIngress rules need namespaceSelector or podSelector; leave the list empty for deny-all" }}{{ end }}
+{{- if and (not .namespaceSelector) (not .podSelector) }}{{ fail "networkPolicy.allowedIngress rules need namespaceSelector or podSelector" }}{{ end }}
 {{- end }}
 {{- range .Values.networkPolicy.allowedEgress }}
 {{- if and (not .to) (not .ports) }}{{ fail "networkPolicy.allowedEgress rules need to or ports" }}{{ end }}

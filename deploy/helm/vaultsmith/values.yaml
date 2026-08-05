@@ -88,7 +88,8 @@ ingress:
   tls: []
 
 networkPolicy:
-  enabled: true
+  enabled: false
+  denyAllIngress: false
   allowedIngress: []
   # Each item may contain Kubernetes `to` and `ports` fields. Native mode must
   # explicitly allow egress to the OIDC issuer and Redis, unless policy is disabled.

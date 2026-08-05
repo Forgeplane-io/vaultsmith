@@ -164,7 +164,7 @@ Keep real plaintext, ciphertext, and passwords out of shell history, logs, ticke
 
 ## Deploy with Helm
 
-The chart lives in `deploy/helm/vaultsmith`. It uses a `ClusterIP` service, leaves Ingress disabled, disables service-account token automount, and enables a NetworkPolicy by default. The chart does not create password, CSRF, OIDC, or Redis Secrets, and it does not create a policy ConfigMap unless policy data is supplied in values.
+The chart lives in `deploy/helm/vaultsmith`. It uses a `ClusterIP` service, leaves Ingress disabled, disables service-account token automount, and leaves NetworkPolicy disabled unless explicitly enabled. Set `networkPolicy.denyAllIngress: true` for an explicit deny-all policy, or provide allowed ingress/egress rules. The chart does not create password, CSRF, OIDC, or Redis Secrets, and it does not create a policy ConfigMap unless policy data is supplied in values.
 
 For a development-only no-auth deployment, provide a CSRF Secret even though Redis and OIDC are skipped:
 

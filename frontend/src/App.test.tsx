@@ -34,6 +34,28 @@ describe('Vaultsmith operator experience', () => {
     cleanup()
   })
 
+  it('presents the primary flow without decorative or duplicate labels', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(profilesResponse())
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Protect a value' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Vaultsmith logo' })).toHaveAttribute('src', '/vaultsmith-logo.png')
+    expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Environment' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Operation' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Value to protect' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Protected value' })).toBeInTheDocument()
+
+    expect(screen.queryByText('01 / Start')).not.toBeInTheDocument()
+    expect(screen.queryByText('Protect · read · move')).not.toBeInTheDocument()
+    expect(screen.queryByText('Value protection')).not.toBeInTheDocument()
+    expect(screen.queryByText('Enter here')).not.toBeInTheDocument()
+    expect(screen.queryByText('Copy when ready')).not.toBeInTheDocument()
+    expect(screen.queryByText('Where this value will be used.')).not.toBeInTheDocument()
+  })
+
   it('loads a public profile label without exposing its environment name', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(profilesResponse())
 
@@ -840,7 +862,7 @@ describe('Vaultsmith operator experience', () => {
 
     const diagnostics = screen.getByRole('region', { name: 'Vault format diagnostics' })
     expect(diagnostics).toHaveTextContent('Vault 1.2')
-    expect(diagnostics).toHaveTextContent('Header-only advisory; not cryptographic validation.')
+    expect(diagnostics).toHaveTextContent('Checks the header only; this does not verify encryption.')
     expect(diagnostics).toHaveTextContent('AES256')
     expect(diagnostics).toHaveTextContent('dev')
     expect(diagnostics).toHaveTextContent(/Input size/)

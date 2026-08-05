@@ -101,10 +101,10 @@ export default function App() {
   const inputName = mode === 'encrypt' ? 'Value to protect' : mode === 'decrypt' ? 'Protected value to read' : 'Protected value to move'
   const outputName = mode === 'encrypt' ? 'Protected value' : mode === 'decrypt' ? 'Decrypted value' : 'Moved protected value'
   const modeGuidance = mode === 'encrypt'
-    ? 'Choose an environment, then enter the value you want to protect.'
+    ? 'Choose an environment, then enter a value.'
     : mode === 'decrypt'
-      ? 'Choose an environment, then paste complete protected text or a YAML !vault block. Other YAML and encrypt_string assignments are not supported.'
-      : 'Choose where the value comes from and where it should go, then paste the protected text.'
+      ? 'Choose an environment, then paste complete protected text or a YAML !vault block.'
+      : 'Choose source and destination environments, then paste complete protected text.'
   const shownOutput = mode === 'decrypt' && output && !revealed ? 'Decrypted value hidden' : output
   const copyDisabled = !output
   const copyLabel = mode === 'decrypt' && output && !revealed ? 'Copy without revealing' : 'Copy result'
@@ -118,11 +118,10 @@ export default function App() {
     ? 'input-byte-count vault-format-diagnostics'
     : 'input-byte-count'
   const heading = mode === 'encrypt'
-    ? 'Protect a value.'
+    ? 'Protect a value'
     : mode === 'decrypt'
-      ? 'Read a protected value.'
-      : 'Move a value safely.'
-  const modeEyebrow = mode === 'encrypt' ? 'PROTECT' : mode === 'decrypt' ? 'READ' : 'MOVE'
+      ? 'Read a protected value'
+      : 'Move a protected value'
 
   function invalidateOutput() {
     snippetCopyRequestRef.current += 1
@@ -385,14 +384,8 @@ export default function App() {
       <header className="console-topbar">
         <div className="topbar-inner">
           <div className="brand-lockup">
-            <span className="brand-mark" aria-hidden="true">V</span>
-            <div>
-              <div className="brand-name">Vaultsmith</div>
-              <div className="brand-subtitle">Value protection</div>
-            </div>
-          </div>
-          <div className="topbar-context">
-            <strong>Protect · read · move</strong>
+            <img className="brand-mark" src="/vaultsmith-logo.png" alt="Vaultsmith logo" width="32" height="32" />
+            <span className="brand-name">Vaultsmith</span>
           </div>
           {session?.authenticated && (
             <div className="session-controls">
@@ -406,20 +399,13 @@ export default function App() {
       <main className="console-content">
         <div className="content-heading">
           <div className="heading-copy">
-            <div className="heading-eyebrow"><span className="heading-eyebrow-dot" aria-hidden="true" />{modeEyebrow}</div>
             <h1>{heading}</h1>
             <p>{modeGuidance}</p>
           </div>
         </div>
 
-        <section className="workbench-card" aria-labelledby="workbench-title">
-          <div className="workbench-header">
-            <div>
-              <div className="workbench-kicker">01 / Start</div>
-              <h2 id="workbench-title">Choose an action</h2>
-            </div>
-            {status && <p className="status-line" role="status" aria-live="polite">{status}</p>}
-          </div>
+        <section className="workbench-card" aria-label="Vault operation">
+          {status && <p className="status-line" role="status" aria-live="polite">{status}</p>}
 
           {visibleError && (
             <div className="error-banner" role="alert">
@@ -440,61 +426,52 @@ export default function App() {
               {mode === 'rotate' ? (
                 <div className="rotate-profile-fields">
                   <div className="field-label">
-                    <span className="field-kicker">From</span>
                     <label htmlFor="source-profile-select">From environment</label>
                     <select
                       id="source-profile-select"
                       value={profileId}
                       disabled={loadingProfiles || busy || profiles.length === 0}
                       onChange={(event) => changeProfile(event.target.value)}
-                      aria-describedby="source-profile-help"
                     >
                       {profiles.map((profile) => (
                         <option key={profile.id} value={profile.id}>{profile.label}</option>
                       ))}
                     </select>
-                    <span className="field-help" id="source-profile-help">Where it comes from.</span>
                   </div>
                   <div className="field-label">
-                    <span className="field-kicker">To</span>
                     <label htmlFor="destination-profile-select">To environment</label>
                     <select
                       id="destination-profile-select"
                       value={destinationProfileId}
                       disabled={loadingProfiles || busy || profiles.length === 0}
                       onChange={(event) => changeDestinationProfile(event.target.value)}
-                      aria-describedby="destination-profile-help"
                     >
                       {profiles.map((profile) => (
                         <option key={profile.id} value={profile.id}>{profile.label}</option>
                       ))}
                     </select>
-                    <span className="field-help" id="destination-profile-help">Where it should go.</span>
                   </div>
                 </div>
               ) : (
                 <div className="field-label">
-                  <span className="field-kicker">Use in</span>
                   <label htmlFor="profile-select">Environment</label>
                   <select
                     id="profile-select"
                     value={profileId}
                     disabled={loadingProfiles || busy || profiles.length === 0}
                     onChange={(event) => changeProfile(event.target.value)}
-                    aria-describedby="profile-help"
                   >
                     {profiles.length === 0 && <option value="">No profiles available</option>}
                     {profiles.map((profile) => (
                       <option key={profile.id} value={profile.id}>{profile.label}</option>
                     ))}
                   </select>
-                  <span className="field-help" id="profile-help">Where this value will be used.</span>
                 </div>
               )}
 
               <fieldset className="mode-fieldset">
-                <legend><span className="field-kicker">Action</span><span>What do you want to do?</span></legend>
-                <div className="mode-switch" role="group" aria-label="Operation mode">
+                <legend>Operation</legend>
+                <div className="mode-switch">
                   <button type="button" className={mode === 'encrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set encrypt mode" aria-pressed={mode === 'encrypt'} onClick={() => changeMode('encrypt')} disabled={busy}>Encrypt</button>
                   <button type="button" className={mode === 'decrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set decrypt mode" aria-pressed={mode === 'decrypt'} onClick={() => changeMode('decrypt')} disabled={busy}>Decrypt</button>
                   <button type="button" className={mode === 'rotate' ? 'mode-button active' : 'mode-button'} aria-label="Set rotate mode" aria-pressed={mode === 'rotate'} onClick={() => changeMode('rotate')} disabled={busy}>Rotate</button>
@@ -507,10 +484,7 @@ export default function App() {
             <div className="editor-grid">
               <div className="editor-card">
                 <div className="editor-card-header">
-                  <div className="editor-heading-group">
-                    <span className="editor-index" aria-hidden="true">01</span>
-                    <div><label className="editor-caption" htmlFor="value-input">{inputName}</label><span className="editor-subtitle">Enter here</span></div>
-                  </div>
+                  <label className="editor-caption" htmlFor="value-input">{inputName}</label>
                   <span className="editor-limit">{formatLimit(byteLimit)} max</span>
                 </div>
                 <textarea
@@ -527,7 +501,7 @@ export default function App() {
                   aria-describedby={inputDescriptionIds}
                   rows={12}
                 />
-                <div className="editor-card-footer" id="input-byte-count"><span>{mode === 'encrypt' ? 'Value' : 'Protected text'}</span><strong>{byteLength.toLocaleString()} / {byteLimit.toLocaleString()} bytes</strong></div>
+                <div className="editor-card-footer" id="input-byte-count"><strong>{byteLength.toLocaleString()} / {byteLimit.toLocaleString()} bytes</strong></div>
                 {formatInspection && value && <VaultFormatDiagnostics inspection={formatInspection} selectedProfileId={profileId} selectedProfileLabel={selectedProfileLabel} />}
                 <div className="panel-actions">
                   <button className="primary-button" type="submit" disabled={!canSubmit}>
@@ -540,11 +514,7 @@ export default function App() {
 
               <div className="editor-card output-card">
                 <div className="editor-card-header">
-                  <div className="editor-heading-group">
-                    <span className="editor-index" aria-hidden="true">02</span>
-                    <div><label className="editor-caption" htmlFor="result-output">{outputName}</label><span className="editor-subtitle">Copy when ready</span></div>
-                  </div>
-                  <span className="editor-limit">Output</span>
+                  <label className="editor-caption" htmlFor="result-output">{outputName}</label>
                 </div>
                 <textarea
                   id="result-output"
@@ -556,12 +526,11 @@ export default function App() {
                   autoCapitalize="off"
                   rows={12}
                   className={mode === 'decrypt' && output && !revealed ? 'masked-output' : ''}
-                  placeholder="Result appears here."
+                  placeholder="No result yet"
                 />
                 {output && (mode === 'encrypt' || mode === 'rotate') && (
                   <div className="snippet-controls">
                     <div className="field-label">
-                      <span className="field-kicker">Ansible</span>
                       <label htmlFor="ansible-variable-name">Ansible variable name</label>
                       <input
                         id="ansible-variable-name"
@@ -625,12 +594,11 @@ function VaultFormatDiagnostics({ inspection, selectedProfileId, selectedProfile
     <section className="format-inspector" id="vault-format-diagnostics" data-state={state} aria-label="Vault format diagnostics">
       <div className="format-inspector-heading">
         <div className="format-inspector-title">
-          <span className="inspector-mark" aria-hidden="true">↳</span>
-          <div><span>Header inspection</span><strong>{formatName(inspection)}</strong></div>
+          <span>Vault format</span>
+          <strong>{formatName(inspection)}</strong>
         </div>
-        <span className="inspector-state">{state === 'recognized' ? 'Parsed' : 'Review'}</span>
       </div>
-      <p className="format-inspector-note">Header-only advisory; not cryptographic validation.</p>
+      <p className="format-inspector-note">Checks the header only; this does not verify encryption.</p>
       <dl className="format-inspector-grid">
         <div><dt>Cipher</dt><dd>{cipherName(inspection)}</dd></div>
         <div><dt>Vault ID label</dt><dd>{inspection.label || 'None'}</dd></div>

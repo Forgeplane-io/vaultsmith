@@ -79,7 +79,7 @@ Use these starting values at the edge and measure the result:
 
 ## Kubernetes and Helm
 
-The chart keeps `ClusterIP`, disables its legacy Ingress object by default, and renders an empty `networkPolicy.allowedIngress` list as deny-all ingress when NetworkPolicy is enforced. Enabling `networkPolicy.allowedIngress` only grants network reachability. It does **not** authenticate callers and does not prove that a Gateway implementation has configured authentication.
+The chart keeps `ClusterIP`, disables its legacy Ingress object by default, and leaves NetworkPolicy disabled by default. Set `networkPolicy.enabled: true` with an allowlist to grant selected workloads network reachability, or set `networkPolicy.denyAllIngress: true` with an empty allowlist for an explicit deny-all policy. NetworkPolicy does **not** authenticate callers and does not prove that a Gateway implementation has configured authentication.
 
 Prefer the Kubernetes Gateway API with a maintained implementation where it is supported. The chart exposes the existing `ingress.annotations` map for installations that must use an Ingress adapter, but those annotations are only a controller-specific adapter surface. Keep the chart Ingress disabled when using Gateway API, and do not copy old controller keys into a new deployment without checking the selected implementation's current documentation and rendered configuration.
 
@@ -118,6 +118,7 @@ secret:
 
 networkPolicy:
   enabled: true
+  denyAllIngress: false
   allowedIngress:
     - namespaceSelector:
         matchLabels:

@@ -1,98 +1,391 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["auth"],
   "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "image": {
+      "type": "object",
+      "required": [
+        "repository",
+        "pullPolicy"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        },
+        "tag": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "containerPort": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "passwordEnv",
+          "passwordSecretKey"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "passwordEnv": {
+            "type": "string",
+            "pattern": "^[A-Z_][A-Z0-9_]*$"
+          },
+          "passwordSecretKey": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+$"
+          }
+        },
+        "not": {
+          "properties": {
+            "passwordEnv": {
+              "enum": [
+                "VAULT_PROFILES_JSON",
+                "HTTP_ADDR"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "secret": {
+      "type": "object",
+      "properties": {
+        "existingSecret": {
+          "type": "string"
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "automountServiceAccountToken": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "ingress": {
+      "type": "object"
+    },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "denyAllIngress": {
+          "type": "boolean"
+        },
+        "allowedIngress": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "namespaceSelector": {
+                "type": "object",
+                "minProperties": 1
+              },
+              "podSelector": {
+                "type": "object",
+                "minProperties": 1
+              }
+            },
+            "additionalProperties": false,
+            "minProperties": 1
+          }
+        }
+      }
+    },
     "auth": {
       "type": "object",
-      "required": ["mode", "csrf", "oidc", "redis", "policy", "session", "cors"],
+      "required": [
+        "mode",
+        "csrf",
+        "oidc",
+        "redis",
+        "policy",
+        "session",
+        "cors"
+      ],
       "properties": {
         "mode": {
           "type": "string",
-          "enum": ["native", "off"]
+          "enum": [
+            "native",
+            "off"
+          ]
         },
         "csrf": {
           "type": "object",
-          "required": ["existingSecret", "key"],
+          "required": [
+            "existingSecret",
+            "key"
+          ],
           "properties": {
-            "existingSecret": { "type": "string", "minLength": 1 },
-            "key": { "type": "string", "minLength": 1 }
+            "existingSecret": {
+              "type": "string",
+              "minLength": 1
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         "oidc": {
           "type": "object",
-          "required": ["issuerURL", "clientID", "clientSecret", "redirectURL", "publicBaseURL", "ca", "scopes", "groupsClaim"],
+          "required": [
+            "issuerURL",
+            "clientID",
+            "clientSecret",
+            "redirectURL",
+            "publicBaseURL",
+            "ca",
+            "scopes",
+            "groupsClaim"
+          ],
           "properties": {
-            "issuerURL": { "type": "string" },
-            "clientID": { "type": "string" },
+            "issuerURL": {
+              "type": "string"
+            },
+            "clientID": {
+              "type": "string"
+            },
             "clientSecret": {
               "type": "object",
-              "required": ["existingSecret", "key"],
+              "required": [
+                "existingSecret",
+                "key"
+              ],
               "properties": {
-                "existingSecret": { "type": "string" },
-                "key": { "type": "string", "minLength": 1 }
+                "existingSecret": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             },
-            "redirectURL": { "type": "string" },
-            "publicBaseURL": { "type": "string" },
+            "redirectURL": {
+              "type": "string"
+            },
+            "publicBaseURL": {
+              "type": "string"
+            },
             "ca": {
               "type": "object",
-              "required": ["existingConfigMap", "key"],
+              "required": [
+                "existingConfigMap",
+                "key"
+              ],
               "properties": {
-                "existingConfigMap": { "type": "string" },
-                "key": { "type": "string", "minLength": 1 }
+                "existingConfigMap": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             },
-            "scopes": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
-            "groupsClaim": { "type": "string", "minLength": 1 }
+            "scopes": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "groupsClaim": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         "redis": {
           "type": "object",
-          "required": ["address", "username", "password", "database", "tls", "connectTimeout", "readTimeout", "writeTimeout", "poolSize", "keyPrefix"],
+          "required": [
+            "address",
+            "username",
+            "password",
+            "database",
+            "tls",
+            "connectTimeout",
+            "readTimeout",
+            "writeTimeout",
+            "poolSize",
+            "keyPrefix"
+          ],
           "properties": {
-            "address": { "type": "string" },
-            "username": { "type": "string" },
+            "address": {
+              "type": "string"
+            },
+            "username": {
+              "type": "string"
+            },
             "password": {
               "type": "object",
-              "required": ["existingSecret", "key"],
+              "required": [
+                "existingSecret",
+                "key"
+              ],
               "properties": {
-                "existingSecret": { "type": "string" },
-                "key": { "type": "string", "minLength": 1 }
+                "existingSecret": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             },
-            "database": { "type": "integer", "minimum": 0 },
-            "tls": { "type": "boolean" },
-            "connectTimeout": { "type": "string", "minLength": 1 },
-            "readTimeout": { "type": "string", "minLength": 1 },
-            "writeTimeout": { "type": "string", "minLength": 1 },
-            "poolSize": { "type": "integer", "minimum": 1 },
-            "keyPrefix": { "type": "string", "minLength": 1 }
+            "database": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tls": {
+              "type": "boolean"
+            },
+            "connectTimeout": {
+              "type": "string",
+              "minLength": 1
+            },
+            "readTimeout": {
+              "type": "string",
+              "minLength": 1
+            },
+            "writeTimeout": {
+              "type": "string",
+              "minLength": 1
+            },
+            "poolSize": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "keyPrefix": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         "policy": {
           "type": "object",
-          "required": ["file", "existingConfigMap", "key", "data"],
+          "required": [
+            "file",
+            "existingConfigMap",
+            "key",
+            "data"
+          ],
           "properties": {
-            "file": { "type": "string", "minLength": 1 },
-            "existingConfigMap": { "type": "string" },
-            "key": { "type": "string", "minLength": 1 },
-            "data": { "type": "string" }
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "existingConfigMap": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "data": {
+              "type": "string"
+            }
           }
         },
         "session": {
           "type": "object",
-          "required": ["absoluteLifetime", "idleLifetime", "secure", "sameSite"],
+          "required": [
+            "absoluteLifetime",
+            "idleLifetime",
+            "secure",
+            "sameSite"
+          ],
           "properties": {
-            "absoluteLifetime": { "type": "string", "minLength": 1 },
-            "idleLifetime": { "type": "string", "minLength": 1 },
-            "secure": { "type": "boolean" },
-            "sameSite": { "type": "string", "enum": ["lax", "strict", "none"] }
+            "absoluteLifetime": {
+              "type": "string",
+              "minLength": 1
+            },
+            "idleLifetime": {
+              "type": "string",
+              "minLength": 1
+            },
+            "secure": {
+              "type": "boolean"
+            },
+            "sameSite": {
+              "type": "string",
+              "enum": [
+                "lax",
+                "strict",
+                "none"
+              ]
+            }
           }
         },
         "cors": {
           "type": "object",
-          "required": ["allowedOrigins"],
+          "required": [
+            "allowedOrigins"
+          ],
           "properties": {
             "allowedOrigins": {
               "type": "array",
@@ -106,36 +399,86 @@
       },
       "allOf": [
         {
-          "if": { "properties": { "mode": { "const": "native" } } },
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "native"
+              }
+            }
+          },
           "then": {
-            "required": ["oidc", "redis", "policy"],
+            "required": [
+              "oidc",
+              "redis",
+              "policy"
+            ],
             "properties": {
               "oidc": {
-                "required": ["issuerURL", "clientID", "clientSecret", "redirectURL", "publicBaseURL"],
+                "required": [
+                  "issuerURL",
+                  "clientID",
+                  "clientSecret",
+                  "redirectURL",
+                  "publicBaseURL"
+                ],
                 "properties": {
-                  "issuerURL": { "minLength": 1, "pattern": "^https://" },
-                  "clientID": { "minLength": 1 },
+                  "issuerURL": {
+                    "minLength": 1,
+                    "pattern": "^https://"
+                  },
+                  "clientID": {
+                    "minLength": 1
+                  },
                   "clientSecret": {
                     "properties": {
-                      "existingSecret": { "minLength": 1 }
+                      "existingSecret": {
+                        "minLength": 1
+                      }
                     }
                   },
-                  "redirectURL": { "minLength": 1, "pattern": "^https://" },
-                  "publicBaseURL": { "minLength": 1, "pattern": "^https://" }
+                  "redirectURL": {
+                    "minLength": 1,
+                    "pattern": "^https://"
+                  },
+                  "publicBaseURL": {
+                    "minLength": 1,
+                    "pattern": "^https://"
+                  }
                 }
               },
               "redis": {
-                "required": ["address", "keyPrefix"],
+                "required": [
+                  "address",
+                  "keyPrefix"
+                ],
                 "properties": {
-                  "address": { "minLength": 1 },
-                  "keyPrefix": { "minLength": 1 }
+                  "address": {
+                    "minLength": 1
+                  },
+                  "keyPrefix": {
+                    "minLength": 1
+                  }
                 }
               },
-              "session": { "properties": { "secure": { "const": true } } },
+              "session": {
+                "properties": {
+                  "secure": {
+                    "const": true
+                  }
+                }
+              },
               "policy": {
                 "anyOf": [
-                  { "required": ["data"] },
-                  { "required": ["existingConfigMap"] }
+                  {
+                    "required": [
+                      "data"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "existingConfigMap"
+                    ]
+                  }
                 ]
               }
             }
@@ -143,5 +486,24 @@
         }
       ]
     }
-  }
+  },
+  "if": {
+    "properties": {
+      "profiles": {
+        "minItems": 1
+      }
+    }
+  },
+  "then": {
+    "properties": {
+      "secret": {
+        "required": [
+          "existingSecret"
+        ]
+      }
+    }
+  },
+  "required": [
+    "auth"
+  ]
 }

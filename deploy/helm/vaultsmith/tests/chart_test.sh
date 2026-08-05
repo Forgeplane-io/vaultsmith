@@ -61,13 +61,31 @@ auth:
 VALUES
 helm lint "$CHART_DIR" -f "$TMP_DIR/off-default.yaml" >/dev/null
 render -f "$TMP_DIR/off-default.yaml" > "$TMP_DIR/off-default-render.yaml"
-grep -Fq 'ingress: []' "$TMP_DIR/off-default-render.yaml" || fail 'explicit off NetworkPolicy is not deny-all'
+if grep -Fq 'kind: NetworkPolicy' "$TMP_DIR/off-default-render.yaml"; then
+  fail 'explicit off render unexpectedly contains a NetworkPolicy'
+fi
 grep -Fq 'automountServiceAccountToken: false' "$TMP_DIR/off-default-render.yaml" || fail 'service token automount is not disabled'
 grep -Fq 'containerPort: 8080' "$TMP_DIR/off-default-render.yaml" || fail 'container port is not canonical 8080'
 grep -Fq 'name: CSRF_SECRET' "$TMP_DIR/off-default-render.yaml" || fail 'explicit off CSRF Secret reference is missing'
 if grep -Fq 'fixture-password' "$TMP_DIR/off-default-render.yaml"; then
   fail 'off default render leaked a Secret value'
 fi
+
+cat > "$TMP_DIR/deny-all.yaml" <<'VALUES'
+auth:
+  mode: "off"
+  csrf:
+    existingSecret: vaultsmith-auth
+    key: csrf-secret
+networkPolicy:
+  enabled: true
+  denyAllIngress: true
+  allowedIngress: []
+VALUES
+helm lint "$CHART_DIR" -f "$TMP_DIR/deny-all.yaml" >/dev/null
+render -f "$TMP_DIR/deny-all.yaml" > "$TMP_DIR/deny-all-render.yaml"
+grep -Fq 'kind: NetworkPolicy' "$TMP_DIR/deny-all-render.yaml" || fail 'explicit deny-all NetworkPolicy is missing'
+grep -Fq 'ingress: []' "$TMP_DIR/deny-all-render.yaml" || fail 'explicit deny-all NetworkPolicy is not empty'
 
 helm lint "$CHART_DIR" -f "$TMP_DIR/valid.yaml" >/dev/null
 render -f "$TMP_DIR/valid.yaml" > "$TMP_DIR/valid-render.yaml"
