@@ -196,7 +196,7 @@ func (a *Authenticator) CompleteLogin(ctx context.Context, state, code string) (
 	StorePrincipal(ctx, a.Sessions, principal, token.RefreshToken)
 	a.Sessions.Remove(ctx, pendingStateKey)
 	if token.RefreshToken == "" {
-		a.Sessions.SetDeadline(ctx, refreshedSessionExpiry(a.Sessions, ctx, principal.ExpiresAt))
+		a.Sessions.SetDeadline(ctx, refreshedSessionExpiry(a.Sessions.Deadline(ctx), principal.ExpiresAt))
 	}
 	return transaction.ReturnTo, principal, nil
 }
@@ -214,10 +214,6 @@ func (a *Authenticator) verifyIDToken(ctx context.Context, rawIDToken, expectedN
 		return Principal{}, ErrInvalidCallback
 	}
 	return principalFromClaims(a.Config.OIDC.IssuerURL, claims, a.Config.OIDC.GroupsClaim, idToken.IssuedAt, idToken.Expiry)
-}
-
-func (a *Authenticator) CurrentPrincipal(ctx context.Context) (Principal, bool, error) {
-	return a.AuthenticatedPrincipal(ctx)
 }
 
 func randomURLToken(size int) (string, error) {

@@ -26,13 +26,20 @@ func testRedisConfig(address string) config.RedisConfig {
 	}
 }
 
-func TestRedisRuntimeProbeAndSessionPrefix(t *testing.T) {
+func newTestRedisRuntime(t *testing.T) (*miniredis.Miniredis, *RedisRuntime, config.RedisConfig) {
+	t.Helper()
 	server := miniredis.RunT(t)
-	runtime, err := NewRedisRuntime(testRedisConfig(server.Addr()))
+	cfg := testRedisConfig(server.Addr())
+	runtime, err := NewRedisRuntime(cfg)
 	if err != nil {
 		t.Fatalf("NewRedisRuntime() error = %v", err)
 	}
-	defer runtime.Close()
+	t.Cleanup(func() { _ = runtime.Close() })
+	return server, runtime, cfg
+}
+
+func TestRedisRuntimeProbeAndSessionPrefix(t *testing.T) {
+	server, runtime, _ := newTestRedisRuntime(t)
 
 	if err := runtime.Probe(context.Background()); err != nil {
 		t.Fatalf("Probe() error = %v", err)
@@ -51,12 +58,7 @@ func TestRedisRuntimeProbeAndSessionPrefix(t *testing.T) {
 }
 
 func TestRedisSessionStoreRejectsMalformedSessionCommit(t *testing.T) {
-	server := miniredis.RunT(t)
-	runtime, err := NewRedisRuntime(testRedisConfig(server.Addr()))
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	_, runtime, _ := newTestRedisRuntime(t)
 
 	if err := runtime.SessionStore().Commit("token", []byte("malformed"), time.Now().Add(time.Minute)); err == nil {
 		t.Fatal("malformed session commit succeeded")
@@ -127,20 +129,15 @@ func TestRedisRuntimeDoesNotDowngradeRejectedCredentials(t *testing.T) {
 }
 
 func TestRedisRuntimeRefreshLockIsBoundedAndOwnerSafe(t *testing.T) {
-	server := miniredis.RunT(t)
-	runtime, err := NewRedisRuntime(testRedisConfig(server.Addr()))
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	_, runtime, _ := newTestRedisRuntime(t)
 
-	first := runtime.NewRefreshMutex("session-id")
+	first := runtime.NewSessionMutex("session-id")
 	if err := first.TryLockContext(context.Background()); err != nil {
 		t.Fatalf("first TryLockContext() error = %v", err)
 	}
 	defer first.Unlock()
 
-	second := runtime.NewRefreshMutex("session-id")
+	second := runtime.NewSessionMutex("session-id")
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
 	if err := second.LockContext(ctx); err == nil {
@@ -151,7 +148,7 @@ func TestRedisRuntimeRefreshLockIsBoundedAndOwnerSafe(t *testing.T) {
 		t.Fatalf("first UnlockContext() = (%t, %v), want true, nil", unlocked, err)
 	}
 
-	third := runtime.NewRefreshMutex("session-id")
+	third := runtime.NewSessionMutex("session-id")
 	if err := third.TryLockContext(context.Background()); err != nil {
 		t.Fatalf("third TryLockContext() error = %v, lock was not released", err)
 	}
@@ -161,12 +158,7 @@ func TestRedisRuntimeRefreshLockIsBoundedAndOwnerSafe(t *testing.T) {
 }
 
 func TestRedisRuntimeActivatesSessionFence(t *testing.T) {
-	server := miniredis.RunT(t)
-	runtime, err := NewRedisRuntime(testRedisConfig(server.Addr()))
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	server, runtime, _ := newTestRedisRuntime(t)
 
 	mutex := runtime.NewSessionMutex("session-id")
 	if err := mutex.TryLockContext(context.Background()); err != nil {
@@ -188,7 +180,10 @@ func TestRedisRuntimeActivatesSessionFence(t *testing.T) {
 }
 
 func TestRedisRuntimePoolRejectsConnectionErrors(t *testing.T) {
-	cfg := testRedisConfig("127.0.0.1:1")
+	server := miniredis.RunT(t)
+	address := server.Addr()
+	server.Close()
+	cfg := testRedisConfig(address)
 	runtime, err := NewRedisRuntime(cfg)
 	if err != nil {
 		t.Fatalf("NewRedisRuntime() error = %v", err)

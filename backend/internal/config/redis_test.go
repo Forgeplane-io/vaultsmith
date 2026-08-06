@@ -17,9 +17,6 @@ func TestLoadAuthRedisAllowsNoCredentials(t *testing.T) {
 	if cfg.Redis.Username != "" || cfg.Redis.Password != "" {
 		t.Fatalf("redis credentials = %q/%q, want omitted", cfg.Redis.Username, cfg.Redis.Password)
 	}
-	if cfg.Redis.CredentialsConfigured() {
-		t.Fatal("CredentialsConfigured() = true, want false")
-	}
 }
 
 func TestLoadAuthRedisRejectsUsernameWithoutPassword(t *testing.T) {

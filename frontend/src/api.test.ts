@@ -87,8 +87,7 @@ describe('API client', () => {
   it('uses a generic message when the server response is not JSON', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('sensitive upstream detail', { status: 500 }))
 
-    await expect(fetchProfiles()).rejects.toEqual(expect.any(ApiError))
-    await expect(fetchProfiles()).rejects.toMatchObject({ message: 'Request failed' })
+    await expect(fetchProfiles()).rejects.toMatchObject({ name: 'ApiError', message: 'Request failed' })
   })
 
   it('times out a stalled profile request', async () => {

@@ -13,13 +13,7 @@ import (
 )
 
 func TestRedisSessionFenceAllowsTokenRenewal(t *testing.T) {
-	redisServer := miniredis.RunT(t)
-	cfg := testRedisConfig(redisServer.Addr())
-	runtime, err := NewRedisRuntime(cfg)
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	_, runtime, cfg := newTestRedisRuntime(t)
 
 	sessionCfg := config.SessionConfig{CookieName: "__Host-vaultsmith_session", AbsoluteLifetime: time.Hour}
 	sessions := NewSessionManager(runtime.SessionStore(), sessionCfg)
@@ -60,13 +54,7 @@ func TestRedisSessionFenceAllowsTokenRenewal(t *testing.T) {
 }
 
 func TestRedisSessionFenceRejectsStaleWholeSessionCommit(t *testing.T) {
-	redisServer := miniredis.RunT(t)
-	cfg := testRedisConfig(redisServer.Addr())
-	runtime, err := NewRedisRuntime(cfg)
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	_, runtime, cfg := newTestRedisRuntime(t)
 
 	sessionCfg := config.SessionConfig{CookieName: "__Host-vaultsmith_session", AbsoluteLifetime: time.Hour}
 	sessions := NewSessionManager(runtime.SessionStore(), sessionCfg)
@@ -137,13 +125,7 @@ func TestRedisSessionFenceRejectsStaleWholeSessionCommit(t *testing.T) {
 }
 
 func TestSessionMiddlewareRecoversFromEvictedSessionCookie(t *testing.T) {
-	redisServer := miniredis.RunT(t)
-	cfg := testRedisConfig(redisServer.Addr())
-	runtime, err := NewRedisRuntime(cfg)
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	redisServer, runtime, cfg := newTestRedisRuntime(t)
 
 	sessionCfg := config.SessionConfig{
 		CookieName:       "__Host-vaultsmith_session",

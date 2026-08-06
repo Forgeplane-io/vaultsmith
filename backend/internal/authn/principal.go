@@ -149,25 +149,6 @@ func RefreshTokenFromSession(ctx context.Context, manager *scs.SessionManager) s
 	return manager.GetString(ctx, sessionRefreshTokenKey)
 }
 
-func ClearPrincipal(ctx context.Context, manager *scs.SessionManager) {
-	for _, key := range []string{
-		sessionIssuerKey,
-		sessionSubjectKey,
-		sessionEmailKey,
-		sessionEmailVerifiedKey,
-		sessionGroupsKey,
-		sessionIssuedAtKey,
-		sessionExpiresAtKey,
-		sessionRefreshTokenKey,
-		sessionVersionKey,
-		sessionRefreshCheckedKey,
-		sessionFenceKey,
-		pendingStateKey,
-	} {
-		manager.Remove(ctx, key)
-	}
-}
-
 func principalFromClaims(issuer string, claims map[string]any, groupsClaim string, issuedAt, expiresAt time.Time) (Principal, error) {
 	if strings.TrimSpace(issuer) == "" {
 		return Principal{}, fmt.Errorf("issuer claim is required")

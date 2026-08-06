@@ -57,19 +57,24 @@ func TestCSRFMiddlewareIssuesAndValidatesSharedSecretToken(t *testing.T) {
 
 func TestCSRFRejectsMissingTokenAndForeignOrigin(t *testing.T) {
 	base := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
-	wrapped := WrapSecurity(base, csrfTestConfig())
+	cfg := csrfTestConfig()
+	wrapped := WrapSecurity(base, cfg)
+	token, err := issueCSRFToken([]byte(cfg.CSRF.Secret))
+	if err != nil {
+		t.Fatalf("issueCSRFToken() error = %v", err)
+	}
 
 	for name, mutate := range map[string]func(*http.Request){
-		"missing header": func(r *http.Request) { r.Header.Set("Origin", "http://example.test") },
+		"missing header": func(r *http.Request) { r.Header.Set("Origin", "https://example.test") },
 		"foreign origin": func(r *http.Request) {
 			r.Header.Set("Origin", "https://evil.example")
-			r.Header.Set("X-CSRF-Token", "not-a-token")
+			r.Header.Set("X-CSRF-Token", token)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "https://example.test/mutate", nil)
 			request.Host = "example.test"
-			cookie := &http.Cookie{Name: "__Host-vaultsmith_csrf", Value: "invalid"}
+			cookie := &http.Cookie{Name: "__Host-vaultsmith_csrf", Value: token}
 			request.AddCookie(cookie)
 			mutate(request)
 			response := httptest.NewRecorder()

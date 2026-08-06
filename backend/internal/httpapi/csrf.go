@@ -49,11 +49,7 @@ func csrfMiddleware(next http.Handler, cfg config.AuthConfig) http.Handler {
 			setCSRFCookie(w, cfg, token)
 		}
 		r = r.WithContext(contextWithCSRFToken(r.Context(), token))
-		if safeCSRFMethod(r.Method) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if !validCookie || !csrfOriginAllowed(r, cfg) || !hmac.Equal([]byte(token), []byte(r.Header.Get(csrfHeaderName))) {
+		if !safeCSRFMethod(r.Method) && (!validCookie || !csrfOriginAllowed(r, cfg) || !hmac.Equal([]byte(token), []byte(r.Header.Get(csrfHeaderName)))) {
 			writeError(w, http.StatusForbidden, "csrf_failed", "request could not be verified")
 			return
 		}
@@ -66,12 +62,7 @@ func contextWithCSRFToken(ctx context.Context, token string) context.Context {
 }
 
 func safeCSRFMethod(method string) bool {
-	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return true
-	default:
-		return false
-	}
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
 }
 
 func issueCSRFToken(secret []byte) (string, error) {

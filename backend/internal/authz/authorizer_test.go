@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
 )
@@ -143,7 +142,7 @@ func TestAuthorizerIsFailClosedForUnknownGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthorizer() error = %v", err)
 	}
-	if authorizer.Can(principalWithGroups("unknown"), ActionEncrypt, ProfileResource("dev")) {
+	if err := authorizer.Authorize(principalWithGroups("unknown"), ActionEncrypt, ProfileResource("dev")); err == nil {
 		t.Fatal("unknown group was authorized")
 	}
 }
@@ -165,10 +164,6 @@ func TestAuthorizerReloadsChangedPolicyFile(t *testing.T) {
 	updated := "g, group:admins, role:admin\np, role:admin, profile:dev, encrypt, deny\n"
 	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
 		t.Fatalf("write updated policy: %v", err)
-	}
-	future := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(path, future, future); err != nil {
-		t.Fatalf("touch updated policy: %v", err)
 	}
 	if err := authorizer.Authorize(principal, ActionEncrypt, ProfileResource("dev")); err != ErrForbidden {
 		t.Fatalf("authorization after policy update = %v, want ErrForbidden", err)

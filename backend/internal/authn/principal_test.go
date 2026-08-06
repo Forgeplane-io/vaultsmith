@@ -2,6 +2,7 @@ package authn
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -68,7 +69,7 @@ func TestPrincipalFromClaimsRejectsMalformedGroups(t *testing.T) {
 				claims["groups"] = tt.groups
 			}
 			_, err := principalFromClaims("issuer", claims, "groups", time.Time{}, time.Time{})
-			if err == nil || !contains(err.Error(), tt.want) {
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("principalFromClaims() error = %v, want mention %q", err, tt.want)
 			}
 		})
@@ -88,13 +89,4 @@ func TestPrincipalFromClaimsSupportsNestedGroupPath(t *testing.T) {
 	if !reflect.DeepEqual(principal.Groups, []string{"vault-admins"}) {
 		t.Fatalf("groups = %#v", principal.Groups)
 	}
-}
-
-func contains(value, substring string) bool {
-	for i := 0; i+len(substring) <= len(value); i++ {
-		if value[i:i+len(substring)] == substring {
-			return true
-		}
-	}
-	return false
 }

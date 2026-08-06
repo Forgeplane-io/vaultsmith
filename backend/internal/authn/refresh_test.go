@@ -379,17 +379,9 @@ func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
 }
 
-type fixedDeadlineSessions struct {
-	deadline time.Time
-}
-
-func (s fixedDeadlineSessions) Deadline(context.Context) time.Time {
-	return s.deadline
-}
-
 func TestRefreshedSessionExpiryIsBoundedByAbsoluteLifetime(t *testing.T) {
 	deadline := time.Now().Add(time.Minute)
-	got := refreshedSessionExpiry(fixedDeadlineSessions{deadline: deadline}, context.Background(), time.Now().Add(time.Hour))
+	got := refreshedSessionExpiry(deadline, time.Now().Add(time.Hour))
 	if got.After(deadline) {
 		t.Fatalf("refreshed expiry = %s, exceeds absolute deadline %s", got, deadline)
 	}

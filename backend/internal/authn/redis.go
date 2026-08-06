@@ -340,10 +340,6 @@ func (r *RedisRuntime) NewSessionMutex(sessionID string) *redsync.Mutex {
 	)
 }
 
-func (r *RedisRuntime) NewRefreshMutex(sessionID string) *redsync.Mutex {
-	return r.NewSessionMutex(sessionID)
-}
-
 func (r *RedisRuntime) Close() error {
 	return r.pool.Close()
 }

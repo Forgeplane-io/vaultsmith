@@ -5,17 +5,10 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/alicebob/miniredis/v2"
 )
 
 func TestLoginTransactionIsAtomicAndSingleUse(t *testing.T) {
-	server := miniredis.RunT(t)
-	runtime, err := NewRedisRuntime(testRedisConfig(server.Addr()))
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	_, runtime, _ := newTestRedisRuntime(t)
 
 	transaction := LoginTransaction{
 		State:          "state-1",
@@ -31,40 +24,44 @@ func TestLoginTransactionIsAtomicAndSingleUse(t *testing.T) {
 
 	const consumers = 8
 	var wg sync.WaitGroup
-	results := make(chan bool, consumers)
+	type consumeResult struct {
+		transaction LoginTransaction
+		found       bool
+	}
+	results := make(chan consumeResult, consumers)
 	for range consumers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, found, err := runtime.ConsumeLoginTransaction(context.Background(), transaction.State)
+			consumed, found, err := runtime.ConsumeLoginTransaction(context.Background(), transaction.State)
 			if err != nil {
 				t.Errorf("ConsumeLoginTransaction() error = %v", err)
 				return
 			}
-			results <- found
+			results <- consumeResult{transaction: consumed, found: found}
 		}()
 	}
 	wg.Wait()
 	close(results)
 
 	foundCount := 0
-	for found := range results {
-		if found {
+	var got LoginTransaction
+	for result := range results {
+		if result.found {
 			foundCount++
+			got = result.transaction
 		}
 	}
 	if foundCount != 1 {
 		t.Fatalf("successful transaction consumers = %d, want 1", foundCount)
 	}
+	if got.Nonce != transaction.Nonce || got.PKCEVerifier != transaction.PKCEVerifier || got.PreAuthSession != transaction.PreAuthSession || got.ReturnTo != transaction.ReturnTo {
+		t.Fatalf("consumed transaction payload = %#v, want %#v", got, transaction)
+	}
 }
 
 func TestLoginTransactionRejectsDuplicateStateAndExpiredValues(t *testing.T) {
-	server := miniredis.RunT(t)
-	runtime, err := NewRedisRuntime(testRedisConfig(server.Addr()))
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	_, runtime, _ := newTestRedisRuntime(t)
 
 	transaction := LoginTransaction{State: "duplicate", ExpiresAt: time.Now().Add(time.Minute)}
 	if err := runtime.SaveLoginTransaction(context.Background(), transaction); err != nil {

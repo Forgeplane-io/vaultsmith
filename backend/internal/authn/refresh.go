@@ -122,7 +122,7 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 			return Principal{}, false, ErrNotAuthenticated
 		}
 	} else {
-		refreshedPrincipal.ExpiresAt = refreshedSessionExpiry(a.Sessions, freshCtx, rotated.Expiry)
+		refreshedPrincipal.ExpiresAt = refreshedSessionExpiry(a.Sessions.Deadline(freshCtx), rotated.Expiry)
 		if !refreshedPrincipal.ExpiresAt.After(now) {
 			if destroyErr := a.destroySession(ctx); destroyErr != nil {
 				return Principal{}, false, destroyErr
@@ -199,10 +199,8 @@ func (a *Authenticator) destroySession(ctx context.Context) error {
 	return nil
 }
 
-func refreshedSessionExpiry(sessions interface {
-	Deadline(context.Context) time.Time
-}, ctx context.Context, tokenExpiry time.Time) time.Time {
-	expiry := sessions.Deadline(ctx)
+func refreshedSessionExpiry(deadline, tokenExpiry time.Time) time.Time {
+	expiry := deadline
 	if expiry.IsZero() || (!tokenExpiry.IsZero() && tokenExpiry.Before(expiry)) {
 		expiry = tokenExpiry
 	}

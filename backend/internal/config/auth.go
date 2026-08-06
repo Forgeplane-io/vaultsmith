@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -82,10 +83,6 @@ type RedisConfig struct {
 	RefreshLockRetry time.Duration
 	ProviderTimeout  time.Duration
 	KeyPrefix        string
-}
-
-func (r RedisConfig) CredentialsConfigured() bool {
-	return r.Username != "" || r.Password != ""
 }
 
 type CSRFConfig struct {
@@ -306,7 +303,7 @@ func parseNativeOptions(cfg *AuthConfig, lookup EnvLookup) error {
 		}
 		cfg.OIDC.Scopes = scopes
 	}
-	if !containsString(cfg.OIDC.Scopes, "openid") {
+	if !slices.Contains(cfg.OIDC.Scopes, "openid") {
 		return errors.New("OIDC_SCOPES must include openid")
 	}
 
@@ -547,13 +544,4 @@ func validRedisPrefix(prefix string) bool {
 		}
 	}
 	return true
-}
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }

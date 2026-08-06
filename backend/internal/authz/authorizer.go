@@ -195,10 +195,6 @@ func authorizeWithPolicy(policy *Policy, principal authn.Principal, action, reso
 	return nil
 }
 
-func (a *Authorizer) Can(principal authn.Principal, action, resource string) bool {
-	return a.Authorize(principal, action, resource) == nil
-}
-
 func (a *Authorizer) FilterProfiles(principal authn.Principal, profileIDs []string) []string {
 	policy, err := a.currentPolicy()
 	if err != nil || authorizeWithPolicy(policy, principal, ActionListProfiles, ResourceProfiles) != nil {
@@ -212,18 +208,6 @@ func (a *Authorizer) FilterProfiles(principal authn.Principal, profileIDs []stri
 		}
 	}
 	return filtered
-}
-
-func (a *Authorizer) Capabilities(principal authn.Principal, profileID string) map[string]bool {
-	capabilities := map[string]bool{ActionEncrypt: false, ActionDecrypt: false}
-	policy, err := a.currentPolicy()
-	if err != nil {
-		return capabilities
-	}
-	resource := ProfileResource(profileID)
-	capabilities[ActionEncrypt] = authorizeWithPolicy(policy, principal, ActionEncrypt, resource) == nil
-	capabilities[ActionDecrypt] = authorizeWithPolicy(policy, principal, ActionDecrypt, resource) == nil
-	return capabilities
 }
 
 func (a *Authorizer) AuthorizeRotate(principal authn.Principal, sourceProfileID, destinationProfileID string) error {
