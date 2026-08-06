@@ -14,6 +14,6 @@ data:
     {{- end }}
     ]
   {{- if .Values.auth.policy.data }}
-  policy.csv: |-
+  {{ .Values.auth.policy.key | quote }}: |-
 {{ .Values.auth.policy.data | nindent 4 }}
   {{- end }}

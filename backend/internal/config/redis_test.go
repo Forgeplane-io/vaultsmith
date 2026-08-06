@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadAuthRedisAllowsNoCredentials(t *testing.T) {
@@ -39,5 +40,29 @@ func TestLoadAuthRedisRejectsUnsafePrefix(t *testing.T) {
 		if err == nil {
 			t.Fatalf("LoadAuth(%q) error = nil, want invalid prefix", prefix)
 		}
+	}
+}
+
+func TestLoadAuthRedisLoadsRefreshTuning(t *testing.T) {
+	values := nativeEnv()
+	values["REDIS_REFRESH_LOCK_TTL"] = "45s"
+	values["REDIS_REFRESH_LOCK_WAIT"] = "2s"
+	values["REDIS_REFRESH_LOCK_RETRY"] = "100ms"
+	values["REDIS_PROVIDER_TIMEOUT"] = "30s"
+	cfg, err := LoadAuth(envLookup(values))
+	if err != nil {
+		t.Fatalf("LoadAuth() error = %v", err)
+	}
+	if cfg.Redis.RefreshLockTTL != 45*time.Second || cfg.Redis.RefreshLockWait != 2*time.Second || cfg.Redis.RefreshLockRetry != 100*time.Millisecond || cfg.Redis.ProviderTimeout != 30*time.Second {
+		t.Fatalf("redis refresh tuning = %+v", cfg.Redis)
+	}
+}
+
+func TestLoadAuthRedisRejectsRefreshLockTTLNotExceedingProviderTimeout(t *testing.T) {
+	values := nativeEnv()
+	values["REDIS_REFRESH_LOCK_TTL"] = "10s"
+	values["REDIS_PROVIDER_TIMEOUT"] = "10s"
+	if _, err := LoadAuth(envLookup(values)); err == nil || !strings.Contains(err.Error(), "REDIS_REFRESH_LOCK_TTL") {
+		t.Fatalf("LoadAuth() error = %v, want TTL validation", err)
 	}
 }

@@ -117,7 +117,7 @@ func (r *RedisRuntime) TransactionPrefix() string {
 	return r.config.KeyPrefix + transactionKeySuffix
 }
 
-func (r *RedisRuntime) NewRefreshMutex(sessionID string) *redsync.Mutex {
+func (r *RedisRuntime) NewSessionMutex(sessionID string) *redsync.Mutex {
 	tries := int(r.config.RefreshLockWait/r.config.RefreshLockRetry) + 1
 	return r.synchronizer.NewMutex(
 		r.config.KeyPrefix+lockKeySuffix+sessionID,
@@ -125,6 +125,10 @@ func (r *RedisRuntime) NewRefreshMutex(sessionID string) *redsync.Mutex {
 		redsync.WithTries(tries),
 		redsync.WithRetryDelay(r.config.RefreshLockRetry),
 	)
+}
+
+func (r *RedisRuntime) NewRefreshMutex(sessionID string) *redsync.Mutex {
+	return r.NewSessionMutex(sessionID)
 }
 
 func (r *RedisRuntime) Close() error {

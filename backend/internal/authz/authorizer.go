@@ -7,6 +7,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
@@ -22,8 +24,8 @@ const (
 	ActionListProfiles = "profiles:list"
 	ActionEncrypt      = "encrypt"
 	ActionDecrypt      = "decrypt"
-	ActionRotateAudit  = "rotate:audit"
-	ResourceProfiles   = "profiles"
+
+	ResourceProfiles = "profiles"
 )
 
 var (
@@ -43,9 +45,14 @@ type Policy struct {
 	rules      []Rule
 	groupRoles map[string][]string
 	parents    map[string]string
+	path       string
+	profileIDs []string
+	modTime    time.Time
+	size       int64
 }
 
 type Authorizer struct {
+	mu     sync.RWMutex
 	policy *Policy
 }
 
@@ -53,7 +60,8 @@ func LoadPolicy(path string, profileIDs []string) (*Policy, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("%w: policy file is required", ErrPolicy)
 	}
-	if _, err := os.Stat(path); err != nil {
+	fileInfo, err := os.Stat(path)
+	if err != nil {
 		return nil, fmt.Errorf("%w: policy file unavailable", ErrPolicy)
 	}
 	m, err := model.NewModelFromString(embeddedModel)
@@ -82,6 +90,10 @@ func LoadPolicy(path string, profileIDs []string) (*Policy, error) {
 		enforcer:   enforcer,
 		groupRoles: make(map[string][]string),
 		parents:    make(map[string]string),
+		path:       path,
+		profileIDs: append([]string(nil), profileIDs...),
+		modTime:    fileInfo.ModTime(),
+		size:       fileInfo.Size(),
 	}
 	permissionRows, err := enforcer.GetPolicy()
 	if err != nil {
@@ -127,15 +139,46 @@ func NewAuthorizer(policy *Policy) (*Authorizer, error) {
 	return &Authorizer{policy: policy}, nil
 }
 
-func (a *Authorizer) Authorize(principal authn.Principal, action, resource string) error {
-	if a == nil || a.policy == nil {
-		return ErrPolicy
+func (a *Authorizer) currentPolicy() (*Policy, error) {
+	if a == nil {
+		return nil, ErrPolicy
 	}
-	roles := a.policy.rolesForGroups(principal.Groups)
+	a.mu.RLock()
+	policy := a.policy
+	a.mu.RUnlock()
+	if policy == nil || policy.enforcer == nil {
+		return nil, ErrPolicy
+	}
+	if policy.path == "" {
+		return policy, nil
+	}
+	fileInfo, err := os.Stat(policy.path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: policy file unavailable", ErrPolicy)
+	}
+	if fileInfo.ModTime().Equal(policy.modTime) && fileInfo.Size() == policy.size {
+		return policy, nil
+	}
+	reloaded, err := LoadPolicy(policy.path, policy.profileIDs)
+	if err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	a.policy = reloaded
+	a.mu.Unlock()
+	return reloaded, nil
+}
+
+func (a *Authorizer) Authorize(principal authn.Principal, action, resource string) error {
+	policy, err := a.currentPolicy()
+	if err != nil {
+		return err
+	}
+	roles := policy.rolesForGroups(principal.Groups)
 	if len(roles) == 0 {
 		return ErrForbidden
 	}
-	allow, deny, err := a.policy.evaluate(roles, resource, action)
+	allow, deny, err := policy.evaluate(roles, resource, action)
 	if err != nil {
 		return err
 	}
@@ -242,7 +285,7 @@ func validatePolicy(policy *Policy, profileIDs []string) error {
 		if rule.Effect != "allow" && rule.Effect != "deny" {
 			return fmt.Errorf("%w: invalid permission effect", ErrPolicy)
 		}
-		if rule.Action != ActionListProfiles && rule.Action != ActionEncrypt && rule.Action != ActionDecrypt && rule.Action != ActionRotateAudit {
+		if rule.Action != ActionListProfiles && rule.Action != ActionEncrypt && rule.Action != ActionDecrypt {
 			return fmt.Errorf("%w: invalid permission action", ErrPolicy)
 		}
 		key := strings.Join([]string{rule.Subject, rule.Object, rule.Action, rule.Effect}, "\x00")
@@ -266,10 +309,18 @@ func validatePolicy(policy *Policy, profileIDs []string) error {
 			}
 		}
 	}
+	knownRoles := make(map[string]struct{})
+	for _, rule := range policy.rules {
+		knownRoles[rule.Subject] = struct{}{}
+	}
+	for child, parent := range policy.parents {
+		knownRoles[child] = struct{}{}
+		knownRoles[parent] = struct{}{}
+	}
 	for _, roles := range policy.groupRoles {
 		for _, role := range roles {
-			if _, ok := policy.parents[role]; ok {
-				continue
+			if _, ok := knownRoles[role]; !ok {
+				return fmt.Errorf("%w: group references unknown role", ErrPolicy)
 			}
 		}
 	}

@@ -58,12 +58,12 @@ func newRefreshService(t *testing.T, exchange func(context.Context, string) (*oa
 	return service, runtime, token
 }
 
-func TestAuthenticatedPrincipalRotatesRefreshTokenWithoutExtendingIDExpiry(t *testing.T) {
+func TestAuthenticatedPrincipalRotatesRefreshTokenAndExtendsSessionExpiryWithoutIDToken(t *testing.T) {
 	service, runtime, token := newRefreshService(t, func(_ context.Context, refreshToken string) (*oauth2.Token, error) {
 		if refreshToken != "old-refresh" {
 			t.Fatalf("refresh token = %q, want old-refresh", refreshToken)
 		}
-		return &oauth2.Token{RefreshToken: "new-refresh"}, nil
+		return &oauth2.Token{RefreshToken: "new-refresh", Expiry: time.Now().Add(time.Hour)}, nil
 	})
 	defer runtime.Close()
 
@@ -75,11 +75,57 @@ func TestAuthenticatedPrincipalRotatesRefreshTokenWithoutExtendingIDExpiry(t *te
 	if err != nil || !found {
 		t.Fatalf("AuthenticatedPrincipal() = (%+v, %t, %v)", principal, found, err)
 	}
-	if principal.Subject != "user-123" || !principal.ExpiresAt.Before(time.Now().Add(10*time.Second)) {
+	if principal.Subject != "user-123" || !principal.ExpiresAt.After(time.Now().Add(30*time.Minute)) {
 		t.Fatalf("unexpected principal after refresh: %+v", principal)
 	}
 	if got := RefreshTokenFromSession(ctx, service.Sessions); got != "new-refresh" {
 		t.Fatalf("stored refresh token = %q, want new-refresh", got)
+	}
+}
+
+func TestLogoutSerializesWithInFlightRefresh(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	service, runtime, token := newRefreshService(t, func(_ context.Context, _ string) (*oauth2.Token, error) {
+		close(started)
+		<-release
+		return &oauth2.Token{RefreshToken: "rotated", Expiry: time.Now().Add(time.Hour)}, nil
+	})
+	defer runtime.Close()
+
+	refreshCtx, err := service.Sessions.Load(context.Background(), token)
+	if err != nil {
+		t.Fatalf("refresh Sessions.Load() error = %v", err)
+	}
+	logoutCtx, err := service.Sessions.Load(context.Background(), token)
+	if err != nil {
+		t.Fatalf("logout Sessions.Load() error = %v", err)
+	}
+
+	refreshErr := make(chan error, 1)
+	go func() {
+		_, _, err := service.AuthenticatedPrincipal(refreshCtx)
+		refreshErr <- err
+	}()
+	<-started
+
+	logoutErr := make(chan error, 1)
+	go func() { logoutErr <- service.Logout(logoutCtx) }()
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+
+	if err := <-refreshErr; err != nil {
+		t.Fatalf("refresh error = %v", err)
+	}
+	if err := <-logoutErr; err != nil {
+		t.Fatalf("logout error = %v", err)
+	}
+	fresh, err := service.Sessions.Load(context.Background(), token)
+	if err != nil {
+		t.Fatalf("fresh Sessions.Load() error = %v", err)
+	}
+	if _, found, err := PrincipalFromSession(fresh, service.Sessions); err != nil || found {
+		t.Fatalf("session after serialized logout = (found=%t, err=%v), want absent", found, err)
 	}
 }
 
@@ -165,5 +211,21 @@ func TestAuthenticatedPrincipalPreservesSessionOnTransientRefreshFailure(t *test
 	}
 	if _, found, err := PrincipalFromSession(fresh, service.Sessions); err != nil || !found {
 		t.Fatalf("preserved session state = (found=%t, err=%v), want present", found, err)
+	}
+}
+
+type fixedDeadlineSessions struct {
+	deadline time.Time
+}
+
+func (s fixedDeadlineSessions) Deadline(context.Context) time.Time {
+	return s.deadline
+}
+
+func TestRefreshedSessionExpiryIsBoundedByAbsoluteLifetime(t *testing.T) {
+	deadline := time.Now().Add(time.Minute)
+	got := refreshedSessionExpiry(fixedDeadlineSessions{deadline: deadline}, context.Background(), time.Now().Add(time.Hour))
+	if got.After(deadline) {
+		t.Fatalf("refreshed expiry = %s, exceeds absolute deadline %s", got, deadline)
 	}
 }

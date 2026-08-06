@@ -67,7 +67,9 @@ func NewSessionManager(store scs.Store, cfg config.SessionConfig) *scs.SessionMa
 	}
 	manager.ErrorFunc = func(w http.ResponseWriter, _ *http.Request, _ error) {
 		w.Header().Set("Cache-Control", "no-store")
-		http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("{\"error\":{\"code\":\"temporarily_unavailable\",\"message\":\"service is temporarily unavailable\"}}"))
 	}
 	return manager
 }

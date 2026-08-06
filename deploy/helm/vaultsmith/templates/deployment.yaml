@@ -101,6 +101,14 @@ spec:
               value: {{ .Values.auth.redis.writeTimeout | quote }}
             - name: REDIS_POOL_SIZE
               value: {{ .Values.auth.redis.poolSize | quote }}
+            - name: REDIS_REFRESH_LOCK_TTL
+              value: {{ .Values.auth.redis.refreshLockTTL | quote }}
+            - name: REDIS_REFRESH_LOCK_WAIT
+              value: {{ .Values.auth.redis.refreshLockWait | quote }}
+            - name: REDIS_REFRESH_LOCK_RETRY
+              value: {{ .Values.auth.redis.refreshLockRetry | quote }}
+            - name: REDIS_PROVIDER_TIMEOUT
+              value: {{ .Values.auth.redis.providerTimeout | quote }}
             - name: REDIS_KEY_PREFIX
               value: {{ .Values.auth.redis.keyPrefix | quote }}
             - name: CORS_ALLOWED_ORIGINS

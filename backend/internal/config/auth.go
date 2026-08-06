@@ -46,7 +46,6 @@ type AuthConfig struct {
 	CSRF    CSRFConfig
 	CORS    CORSConfig
 	Policy  PolicyConfig
-	Audit   AuditConfig
 }
 
 type OIDCConfig struct {
@@ -99,10 +98,6 @@ type CORSConfig struct {
 
 type PolicyConfig struct {
 	File string
-}
-
-type AuditConfig struct {
-	HashKey string
 }
 
 // LoadAuth loads the authentication contract from environment variables. The
@@ -163,13 +158,6 @@ func LoadAuth(lookup EnvLookup) (*AuthConfig, error) {
 		return nil, err
 	}
 
-	if auditKey, ok := lookup("AUDIT_HASH_KEY"); ok && auditKey != "" {
-		if len([]byte(auditKey)) < minSecretLength {
-			return nil, fmt.Errorf("AUDIT_HASH_KEY must be at least %d bytes", minSecretLength)
-		}
-		cfg.Audit.HashKey = auditKey
-	}
-
 	if mode == AuthModeNative {
 		if err := parseNativeOptions(cfg, lookup); err != nil {
 			return nil, err
@@ -185,7 +173,7 @@ func LoadAuthFromEnv() (*AuthConfig, error) {
 func parseAuthMode(lookup EnvLookup) (AuthMode, error) {
 	raw, ok := lookup(authModeEnv)
 	if !ok || strings.TrimSpace(raw) == "" {
-		return AuthModeOff, nil
+		return "", fmt.Errorf("%s must be explicitly set to %q or %q", authModeEnv, AuthModeNative, AuthModeOff)
 	}
 	switch AuthMode(strings.TrimSpace(raw)) {
 	case AuthModeNative:
@@ -365,13 +353,31 @@ func parseRedisOptions(cfg *RedisConfig, lookup EnvLookup, required bool) error 
 		return err
 	}
 	if cfg.ConnectTimeout <= 0 || cfg.ReadTimeout <= 0 || cfg.WriteTimeout <= 0 {
-		return errors.New("Redis timeouts must be positive")
+		return errors.New("redis timeouts must be positive")
 	}
 	if raw, ok := lookup("REDIS_POOL_SIZE"); ok && strings.TrimSpace(raw) != "" {
 		cfg.PoolSize, err = intOption("REDIS_POOL_SIZE", raw, defaultRedisPoolSize)
 		if err != nil || cfg.PoolSize <= 0 {
 			return errors.New("REDIS_POOL_SIZE must be a positive integer")
 		}
+	}
+	if cfg.RefreshLockTTL, err = durationOption(lookup, "REDIS_REFRESH_LOCK_TTL", defaultRefreshLockTTL); err != nil {
+		return err
+	}
+	if cfg.RefreshLockWait, err = durationOption(lookup, "REDIS_REFRESH_LOCK_WAIT", defaultRefreshLockWait); err != nil {
+		return err
+	}
+	if cfg.RefreshLockRetry, err = durationOption(lookup, "REDIS_REFRESH_LOCK_RETRY", defaultRefreshLockRetry); err != nil {
+		return err
+	}
+	if cfg.ProviderTimeout, err = durationOption(lookup, "REDIS_PROVIDER_TIMEOUT", defaultProviderTimeout); err != nil {
+		return err
+	}
+	if cfg.RefreshLockTTL <= 0 || cfg.RefreshLockWait <= 0 || cfg.RefreshLockRetry <= 0 || cfg.ProviderTimeout <= 0 {
+		return errors.New("redis refresh lock and provider timeouts must be positive")
+	}
+	if cfg.RefreshLockTTL <= cfg.ProviderTimeout {
+		return errors.New("REDIS_REFRESH_LOCK_TTL must exceed REDIS_PROVIDER_TIMEOUT")
 	}
 	prefix, ok := lookup("REDIS_KEY_PREFIX")
 	if required && (!ok || strings.TrimSpace(prefix) == "") {

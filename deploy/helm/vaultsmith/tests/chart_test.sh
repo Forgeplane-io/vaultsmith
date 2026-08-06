@@ -131,7 +131,8 @@ auth:
     address: redis.example.test:6379
     keyPrefix: "vaultsmith:"
   policy:
-    data: |
+    key: custom.csv
+    data: |-
       p, role:operator, profiles, profiles:list, allow
       p, role:operator, profile:dev, encrypt, allow
 networkPolicy:
@@ -165,7 +166,12 @@ grep -Fq 'name: OIDC_CLIENT_SECRET' "$TMP_DIR/native-render.yaml" || fail 'nativ
 grep -Fq 'name: OIDC_CA_FILE' "$TMP_DIR/native-render.yaml" || fail 'native OIDC CA env is missing'
 grep -Fq 'vaultsmith-oidc-ca' "$TMP_DIR/native-render.yaml" || fail 'native OIDC CA ConfigMap reference is missing'
 grep -Fq 'name: REDIS_ADDR' "$TMP_DIR/native-render.yaml" || fail 'native Redis address env is missing'
-grep -Fq 'policy.csv' "$TMP_DIR/native-render.yaml" || fail 'native policy volume/config is missing'
+grep -Fq 'name: REDIS_REFRESH_LOCK_TTL' "$TMP_DIR/native-render.yaml" || fail 'native refresh lock TTL env is missing'
+grep -Fq 'name: REDIS_REFRESH_LOCK_WAIT' "$TMP_DIR/native-render.yaml" || fail 'native refresh lock wait env is missing'
+grep -Fq 'name: REDIS_REFRESH_LOCK_RETRY' "$TMP_DIR/native-render.yaml" || fail 'native refresh lock retry env is missing'
+grep -Fq 'name: REDIS_PROVIDER_TIMEOUT' "$TMP_DIR/native-render.yaml" || fail 'native provider timeout env is missing'
+grep -Fq 'key: "custom.csv"' "$TMP_DIR/native-render.yaml" || fail 'custom inline policy key is missing'
+grep -Fq 'path: policy.csv' "$TMP_DIR/native-render.yaml" || fail 'policy mount path is missing'
 grep -Fq '    - Egress' "$TMP_DIR/native-render.yaml" || fail 'native NetworkPolicy egress type is missing'
 grep -Fq 'port: 6379' "$TMP_DIR/native-render.yaml" || fail 'native Redis egress port is missing'
 
@@ -174,6 +180,16 @@ auth:
   mode: native
 VALUES
 assert_render_fails "$TMP_DIR/incomplete-native.yaml"
+
+cat > "$TMP_DIR/conflicting-policy.yaml" <<'VALUES'
+auth:
+  mode: off
+  policy:
+    data: |
+      p, role:operator, profiles, profiles:list, allow
+    existingConfigMap: managed-policy
+VALUES
+assert_render_fails "$TMP_DIR/conflicting-policy.yaml"
 
 checksum_a="$(grep -m1 'checksum/profiles:' "$TMP_DIR/valid-render.yaml")"
 cat > "$TMP_DIR/changed.yaml" <<'VALUES'

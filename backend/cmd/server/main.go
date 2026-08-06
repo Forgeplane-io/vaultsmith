@@ -99,8 +99,7 @@ func run() error {
 		AuthConfig: authConfig,
 		Ready:      true,
 	})
-	secured := httpapi.WrapSecurity(api, authConfig)
-	serverHandler := authenticator.SessionMiddleware(secured)
+	serverHandler := httpapi.WrapSecurity(authenticator.SessionMiddleware(api), authConfig)
 	server := &http.Server{
 		Addr:              address,
 		Handler:           web.New(web.Files(), serverHandler),

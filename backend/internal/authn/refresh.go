@@ -46,7 +46,7 @@ func (a *Authenticator) AuthenticatedPrincipal(ctx context.Context) (Principal, 
 	return a.refreshSession(ctx)
 }
 
-func (a *Authenticator) refreshSession(ctx context.Context) (principal Principal, found bool, resultErr error) {
+func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, error) {
 	if a.Redis == nil || a.Sessions == nil {
 		return Principal{}, false, ErrTemporaryUnavailable
 	}
@@ -54,18 +54,12 @@ func (a *Authenticator) refreshSession(ctx context.Context) (principal Principal
 	if sessionToken == "" {
 		return Principal{}, false, ErrNotAuthenticated
 	}
-	lockCtx, cancel := context.WithTimeout(ctx, a.Config.Redis.RefreshLockWait)
-	defer cancel()
-	mutex := a.Redis.NewRefreshMutex(sessionToken)
-	if err := mutex.LockContext(lockCtx); err != nil {
-		return Principal{}, false, ErrTemporaryUnavailable
+	unlock, err := a.acquireSessionLock(ctx, sessionToken)
+	if err != nil {
+		return Principal{}, false, err
 	}
-	defer func() {
-		if _, err := mutex.UnlockContext(context.Background()); err != nil && resultErr == nil {
-			resultErr = ErrTemporaryUnavailable
-			found = false
-		}
-	}()
+	defer unlock()
+	ctx = withSessionLock(ctx, sessionToken)
 
 	freshCtx, err := a.Sessions.Load(contextWithoutSession(ctx), sessionToken)
 	if err != nil {
@@ -130,11 +124,14 @@ func (a *Authenticator) refreshSession(ctx context.Context) (principal Principal
 			}
 			return Principal{}, false, ErrNotAuthenticated
 		}
-	} else if !freshPrincipal.ExpiresAt.After(now) {
-		if destroyErr := a.destroySession(ctx); destroyErr != nil {
-			return Principal{}, false, destroyErr
+	} else {
+		refreshedPrincipal.ExpiresAt = refreshedSessionExpiry(a.Sessions, freshCtx, rotated.Expiry)
+		if !refreshedPrincipal.ExpiresAt.After(now) {
+			if destroyErr := a.destroySession(ctx); destroyErr != nil {
+				return Principal{}, false, destroyErr
+			}
+			return Principal{}, false, ErrNotAuthenticated
 		}
-		return Principal{}, false, ErrNotAuthenticated
 	}
 
 	newRefreshToken := rotated.RefreshToken
@@ -199,11 +196,18 @@ func isPermanentRefreshFailure(err error) bool {
 }
 
 func (a *Authenticator) destroySession(ctx context.Context) error {
-	if a.Sessions == nil {
-		return nil
-	}
-	if err := a.Sessions.Destroy(ctx); err != nil {
+	if err := a.Logout(ctx); err != nil {
 		return ErrTemporaryUnavailable
 	}
 	return nil
+}
+
+func refreshedSessionExpiry(sessions interface {
+	Deadline(context.Context) time.Time
+}, ctx context.Context, tokenExpiry time.Time) time.Time {
+	expiry := sessions.Deadline(ctx)
+	if expiry.IsZero() || (!tokenExpiry.IsZero() && tokenExpiry.Before(expiry)) {
+		expiry = tokenExpiry
+	}
+	return expiry
 }

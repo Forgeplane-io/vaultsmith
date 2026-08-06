@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -24,9 +23,7 @@ func NewWithDependencies(profiles []Profile, executor Executor, dependencies Dep
 	handler.auth = dependencies.Auth
 	handler.authorizer = dependencies.Authorizer
 	handler.authConfig = dependencies.AuthConfig
-	if dependencies.Ready {
-		handler.ready = true
-	}
+	handler.ready = dependencies.Ready
 	return handler
 }
 
@@ -34,7 +31,11 @@ func WrapSecurity(next http.Handler, cfg config.AuthConfig) http.Handler {
 	if cfg.Mode == config.AuthModeNative {
 		next = csrfMiddleware(next, cfg)
 	}
-	return corsMiddleware(next, cfg)
+	next = corsMiddleware(next, cfg)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setSecurityHeaders(w)
+		next.ServeHTTP(w, r)
+	})
 }
 
 const nativeCSRFCookieName = "__Host-vaultsmith_csrf"
@@ -143,11 +144,4 @@ func authURLReturnTo(r *http.Request) string {
 		return "/"
 	}
 	return value
-}
-
-func authFailure(err error) error {
-	if err == nil {
-		return nil
-	}
-	return fmt.Errorf("authentication flow failed")
 }

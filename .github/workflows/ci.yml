@@ -257,10 +257,7 @@ jobs:
 
   dependency-review:
     name: Dependency review
-    # This repository does not currently have the GitHub Advanced Security capability
-    # required by dependency-review-action. Set DEPENDENCY_REVIEW_ENABLED to true
-    # once that capability is enabled; do not hide a supported action failure.
-    if: github.event_name == 'pull_request' && vars.DEPENDENCY_REVIEW_ENABLED == 'true'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

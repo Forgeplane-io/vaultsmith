@@ -30,26 +30,14 @@ func nativeEnv() map[string]string {
 	}
 }
 
-func TestLoadAuthDefaultsDirectStartupToOff(t *testing.T) {
-	cfg, err := LoadAuth(envLookup(map[string]string{
-		"CSRF_SECRET": strings.Repeat("c", 32),
-	}))
-	if err != nil {
-		t.Fatalf("LoadAuth() error = %v", err)
-	}
-	if cfg.Mode != AuthModeOff {
-		t.Fatalf("mode = %q, want %q", cfg.Mode, AuthModeOff)
-	}
-	if cfg.Redis.Address != "" {
-		t.Fatalf("off mode initialized Redis address %q", cfg.Redis.Address)
-	}
-	if cfg.Session.CookieName != defaultSessionCookieName {
-		t.Fatalf("cookie name = %q, want %q", cfg.Session.CookieName, defaultSessionCookieName)
+func TestLoadAuthRequiresExplicitMode(t *testing.T) {
+	if _, err := LoadAuth(envLookup(map[string]string{})); err == nil || !strings.Contains(err.Error(), "AUTH_MODE") {
+		t.Fatalf("LoadAuth() error = %v, want explicit AUTH_MODE error", err)
 	}
 }
 
 func TestLoadAuthOffDoesNotRequireCSRFSecret(t *testing.T) {
-	cfg, err := LoadAuth(envLookup(map[string]string{}))
+	cfg, err := LoadAuth(envLookup(map[string]string{"AUTH_MODE": "off"}))
 	if err != nil {
 		t.Fatalf("LoadAuth() error = %v, want nil", err)
 	}

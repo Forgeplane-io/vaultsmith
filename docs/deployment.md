@@ -8,13 +8,15 @@ This guide documents a narrow private deployment pattern. It uses synthetic host
 
 ## Native authentication contract
 
-Set `AUTH_MODE=native` explicitly. Startup requires successful OIDC discovery/JWKS setup, Redis connectivity, a valid Casbin policy file, a random CSRF secret, and secure host-only session-cookie settings. Redis is authoritative for login transactions, opaque sessions, refresh state, and refresh locks; Redis failure is a retryable service failure, never an unauthenticated fallback.
+Set `AUTH_MODE=native` explicitly. An unset or blank `AUTH_MODE` is a startup error; there is no implicit off-mode fallback. Startup requires successful OIDC discovery/JWKS setup, Redis connectivity, a valid Casbin policy file, a random CSRF secret, and secure host-only session-cookie settings. Redis is authoritative for login transactions, opaque sessions, refresh state, and refresh locks; Redis failure is a retryable service failure, never an unauthenticated fallback.
 
 Register exactly the configured `OIDC_REDIRECT_URL` at the single configured issuer. The browser starts at `/auth/login?return_to=/`; the callback is `/auth/callback`. The callback consumes the Redis login transaction exactly once, verifies state, nonce, PKCE, issuer, audience, signature, expiry, and required claims, then rotates the session token. Logout is a CSRF-protected `POST /auth/logout`.
 
 If the issuer is signed by a private CA, create the referenced ConfigMap with the PEM bundle under the configured key and set `auth.oidc.ca.existingConfigMap`; the chart mounts it read-only and sets `OIDC_CA_FILE`. Do not use an insecure TLS-verification bypass.
 
-The frontend calls `GET /api/v1/session` before loading profiles. Native unauthenticated users are sent to `/auth/login`; the response contains the CSRF token used for mutation headers. `/api/v1/profiles` returns only profiles permitted by `profiles:list` plus per-profile action policy. Rotate requires decrypt on the source and encrypt on the destination.
+The frontend calls `GET /api/v1/session` before loading profiles. Native unauthenticated users are sent to `/auth/login`; the response contains the CSRF token used for mutation headers. `/api/v1/profiles` returns only profiles permitted by `profiles:list` plus per-profile action policy. Rotate requires decrypt on the source and encrypt on the destination. Native requests with unknown profile IDs are normalized to the same forbidden response as known-but-unauthorized profiles.
+
+Requests carrying a session cookie are serialized through a Redis lease, including ordinary SCS commits, refresh, and logout. The lease is renewed while the request runs, preventing a stale request from overwriting refreshed state or resurrecting a logged-out session. OIDC refresh responses may omit `id_token`; in that case the session expiry is advanced only to the earlier of the refreshed token expiry and the configured absolute session deadline.
 
 
 ## Required trust boundary
@@ -79,7 +81,7 @@ Use these starting values at the edge and measure the result:
 
 ## Kubernetes and Helm
 
-The chart keeps `ClusterIP`, disables its legacy Ingress object by default, and leaves NetworkPolicy disabled by default. Set `networkPolicy.enabled: true` with an allowlist to grant selected workloads network reachability, or set `networkPolicy.denyAllIngress: true` with an empty allowlist for an explicit deny-all policy. NetworkPolicy does **not** authenticate callers and does not prove that a Gateway implementation has configured authentication.
+The chart keeps `ClusterIP`, disables its legacy Ingress object by default, and leaves NetworkPolicy disabled by default. Set `networkPolicy.enabled: true` with an allowlist to grant selected workloads network reachability, or set `networkPolicy.denyAllIngress: true` with an empty allowlist for an explicit deny-all policy. NetworkPolicy does **not** authenticate callers and does not prove that a Gateway implementation has configured authentication. `auth.redis.refreshLockTTL`, `refreshLockWait`, `refreshLockRetry`, and `providerTimeout` are emitted as runtime environment variables and are validated by the server.
 
 Prefer the Kubernetes Gateway API with a maintained implementation where it is supported. The chart exposes the existing `ingress.annotations` map for installations that must use an Ingress adapter, but those annotations are only a controller-specific adapter surface. Keep the chart Ingress disabled when using Gateway API, and do not copy old controller keys into a new deployment without checking the selected implementation's current documentation and rendered configuration.
 
@@ -149,11 +151,11 @@ A NetworkPolicy source selector must match only the intended edge or probe workl
 
 ### Casbin policy configuration
 
-Native mode uses a file-backed Casbin policy. The chart sets `AUTHZ_POLICY_FILE` to `/etc/vaultsmith/policy/policy.csv` and mounts the policy read-only. Provide exactly one policy source: inline Helm values or an external ConfigMap.
+Native mode uses a file-backed Casbin policy. The chart sets `AUTHZ_POLICY_FILE` to `/etc/vaultsmith/policy/policy.csv` and mounts the policy read-only. Provide exactly one policy source: inline Helm values or an external ConfigMap; Helm rejects configurations that provide both.
 
 #### Inline policy data
 
-Replace the `auth.policy` block in the values above with the following. The chart creates the policy data in its release-managed ConfigMap. Keep `key: policy.csv`, which is the default key used for inline policy data:
+Replace the `auth.policy` block in the values above with the following. The chart creates the policy data in its release-managed ConfigMap. The configured `key` is used for the inline ConfigMap key and may be customized; the application mount path remains `/etc/vaultsmith/policy/policy.csv`:
 
 ```yaml
 auth:
@@ -209,7 +211,7 @@ The `g` row maps an exact value from the verified OIDC groups claim to a role. T
 - `deny` overrides `allow`; no matching allow is denied by default.
 - Rotate is authorized by checking decrypt on the source and encrypt on the destination.
 
-Policy resources must match the IDs under `.Values.profiles`. Malformed role subjects, invalid actions, duplicate rows, unknown profiles, and unmatched wildcard selectors cause authorization policy loading to fail closed. Keep credentials and tokens in Kubernetes Secrets, not in the policy ConfigMap.
+Policy resources must match the IDs under `.Values.profiles`. Malformed role subjects, invalid actions, duplicate rows, unknown profiles, and unmatched wildcard selectors cause authorization policy loading to fail closed. Supported actions are `profiles:list`, `encrypt`, and `decrypt`; audit-rotation policy rows are rejected rather than accepted without enforcement. The authorizer checks the mounted file before authorization and reloads a valid external ConfigMap update without a pod restart; missing or malformed updates fail closed. Keep credentials and tokens in Kubernetes Secrets, not in the policy ConfigMap.
 
 ### Public Gateway API route contract
 

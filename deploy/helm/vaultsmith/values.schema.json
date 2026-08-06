@@ -211,9 +211,31 @@
               },
               "session": { "properties": { "secure": { "const": true } } },
               "policy": {
-                "anyOf": [
-                  { "required": ["data"] },
-                  { "required": ["existingConfigMap"] }
+                "oneOf": [
+                  {
+                    "properties": {
+                      "data": { "minLength": 1 }
+                    },
+                    "required": ["data"],
+                    "not": {
+                      "properties": {
+                        "existingConfigMap": { "minLength": 1 }
+                      },
+                      "required": ["existingConfigMap"]
+                    }
+                  },
+                  {
+                    "properties": {
+                      "existingConfigMap": { "minLength": 1 }
+                    },
+                    "required": ["existingConfigMap"],
+                    "not": {
+                      "properties": {
+                        "data": { "minLength": 1 }
+                      },
+                      "required": ["data"]
+                    }
+                  }
                 ]
               }
             }

@@ -83,7 +83,7 @@ func nativeHTTPFixture(t *testing.T) (http.Handler, *authn.Authenticator, config
 	}
 	executor := &recordingExecutor{}
 	api := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}, {ID: "prod", Label: "Production"}}, executor, Dependencies{Auth: authenticator, Authorizer: authorizer, AuthConfig: cfg, Ready: true})
-	return authenticator.SessionMiddleware(WrapSecurity(api, cfg)), authenticator, cfg, server.Addr(), executor
+	return WrapSecurity(authenticator.SessionMiddleware(api), cfg), authenticator, cfg, server.Addr(), executor
 }
 
 func seedNativeSession(t *testing.T, authenticator *authn.Authenticator) string {
@@ -165,6 +165,30 @@ func TestNativeHTTPAuthenticationAuthorizationAndSessionBootstrap(t *testing.T) 
 		t.Fatal("executor was not called for authorized operation")
 	}
 
+	missingCSRF := httptest.NewRequest(http.MethodPost, "https://example.test/api/v1/operations", strings.NewReader(`{"profileId":"dev","mode":"encrypt","value":"secret"}`))
+	missingCSRF.Header.Set("Content-Type", "application/json")
+	missingCSRF.Header.Set("Origin", "https://example.test")
+	missingCSRF.Header.Set("Referer", "https://example.test/")
+	missingCSRF.AddCookie(&http.Cookie{Name: cfg.Session.CookieName, Value: sessionToken})
+	missingCSRF.AddCookie(csrfCookie)
+	missingCSRFResponse := httptest.NewRecorder()
+	handler.ServeHTTP(missingCSRFResponse, missingCSRF)
+	if missingCSRFResponse.Code != http.StatusForbidden {
+		t.Fatalf("missing CSRF status = %d, want 403: %s", missingCSRFResponse.Code, missingCSRFResponse.Body.String())
+	}
+
+	foreignOrigin := httptest.NewRequest(http.MethodPost, "https://example.test/api/v1/operations", strings.NewReader(`{"profileId":"dev","mode":"encrypt","value":"secret"}`))
+	foreignOrigin.Header.Set("Content-Type", "application/json")
+	foreignOrigin.Header.Set("Origin", "https://attacker.example")
+	foreignOrigin.Header.Set(csrfHeaderName, session.CSRFToken)
+	foreignOrigin.AddCookie(&http.Cookie{Name: cfg.Session.CookieName, Value: sessionToken})
+	foreignOrigin.AddCookie(csrfCookie)
+	foreignOriginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(foreignOriginResponse, foreignOrigin)
+	if foreignOriginResponse.Code != http.StatusForbidden {
+		t.Fatalf("foreign origin status = %d, want 403: %s", foreignOriginResponse.Code, foreignOriginResponse.Body.String())
+	}
+
 	executor.called = false
 	forbidden := httptest.NewRequest(http.MethodPost, "https://example.test/api/v1/operations", strings.NewReader(`{"profileId":"prod","mode":"encrypt","value":"secret"}`))
 	forbidden.Header.Set("Content-Type", "application/json")
@@ -180,5 +204,63 @@ func TestNativeHTTPAuthenticationAuthorizationAndSessionBootstrap(t *testing.T) 
 	}
 	if executor.called {
 		t.Fatal("executor was called for forbidden operation")
+	}
+
+	unknown := httptest.NewRequest(http.MethodPost, "https://example.test/api/v1/operations", strings.NewReader(`{"profileId":"missing","mode":"encrypt","value":"secret"}`))
+	unknown.Header.Set("Content-Type", "application/json")
+	unknown.Header.Set("Origin", "https://example.test")
+	unknown.Header.Set("Referer", "https://example.test/")
+	unknown.Header.Set(csrfHeaderName, session.CSRFToken)
+	unknown.AddCookie(&http.Cookie{Name: cfg.Session.CookieName, Value: sessionToken})
+	unknown.AddCookie(csrfCookie)
+	unknownResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unknownResponse, unknown)
+	if unknownResponse.Code != http.StatusForbidden {
+		t.Fatalf("unknown profile status = %d, want 403: %s", unknownResponse.Code, unknownResponse.Body.String())
+	}
+}
+
+func TestSessionMiddlewareSerializesConcurrentSessionRequests(t *testing.T) {
+	_, authenticator, cfg, _, _ := nativeHTTPFixture(t)
+	token := seedNativeSession(t, authenticator)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/first" {
+			close(started)
+			<-release
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	wrapped := authenticator.SessionMiddleware(inner)
+
+	first := httptest.NewRequest(http.MethodGet, "https://example.test/first", nil)
+	first.AddCookie(&http.Cookie{Name: cfg.Session.CookieName, Value: token})
+	firstResponse := httptest.NewRecorder()
+	firstDone := make(chan struct{})
+	go func() {
+		wrapped.ServeHTTP(firstResponse, first)
+		close(firstDone)
+	}()
+	<-started
+
+	second := httptest.NewRequest(http.MethodGet, "https://example.test/second", nil)
+	second.AddCookie(&http.Cookie{Name: cfg.Session.CookieName, Value: token})
+	secondResponse := httptest.NewRecorder()
+	secondDone := make(chan struct{})
+	go func() {
+		wrapped.ServeHTTP(secondResponse, second)
+		close(secondDone)
+	}()
+	select {
+	case <-secondDone:
+		t.Fatal("second session request completed while first request held the session lease")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	<-firstDone
+	<-secondDone
+	if firstResponse.Code != http.StatusNoContent || secondResponse.Code != http.StatusNoContent {
+		t.Fatalf("serialized response statuses = %d/%d, want 204/204", firstResponse.Code, secondResponse.Code)
 	}
 }

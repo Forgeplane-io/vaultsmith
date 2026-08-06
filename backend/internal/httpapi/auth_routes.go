@@ -3,8 +3,6 @@ package httpapi
 import (
 	"errors"
 	"net/http"
-	"net/url"
-	"strings"
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
@@ -104,19 +102,4 @@ func (h *Handler) serveLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	authn.ClearSessionCookie(w, h.authConfig.Session)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func safeReturnToForHTTP(value string) (string, error) {
-	if value == "" || strings.ContainsAny(value, "\\\r\n\x00") || strings.HasPrefix(value, "//") {
-		return "", errors.New("invalid return path")
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.Scheme != "" || !strings.HasPrefix(parsed.Path, "/") {
-		return "", errors.New("invalid return path")
-	}
-	decoded, err := url.PathUnescape(parsed.EscapedPath())
-	if err != nil || strings.HasPrefix(decoded, "//") {
-		return "", errors.New("invalid return path")
-	}
-	return value, nil
 }

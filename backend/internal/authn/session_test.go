@@ -2,6 +2,7 @@ package authn
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -64,6 +65,17 @@ func TestSessionManagerLoadAndSaveDoesNotExposeStoreErrors(t *testing.T) {
 	manager.LoadAndSave(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(response, request)
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("LoadAndSave() status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("LoadAndSave() body is not JSON: %v", err)
+	}
+	if body.Error.Code != "temporarily_unavailable" {
+		t.Fatalf("LoadAndSave() error code = %q", body.Error.Code)
 	}
 }
 

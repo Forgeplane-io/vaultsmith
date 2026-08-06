@@ -26,6 +26,7 @@ func TestSafeReturnToAllowsOnlyInternalPaths(t *testing.T) {
 
 func TestNewAuthenticatorOffSkipsRedisAndOIDC(t *testing.T) {
 	values := map[string]string{
+		"AUTH_MODE":   "off",
 		"CSRF_SECRET": strings.Repeat("c", 32),
 	}
 	cfg, err := config.LoadAuth(func(key string) (string, bool) {

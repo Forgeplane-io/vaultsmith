@@ -113,11 +113,15 @@ The server rejects reserved environment names, duplicate profile IDs, missing pa
 - `off` is a development-only mode. It skips authentication, Redis/OIDC, session cookies, and CSRF protection while keeping operations available. The server logs a loud startup warning; do not expose this mode.
 - `native` enables provider-neutral OIDC Authorization Code + PKCE, Redis-backed opaque sessions, and Casbin profile authorization. There is no authentication fallback when Redis, OIDC discovery, or policy loading fails.
 
+An unset or blank `AUTH_MODE` is a startup error; native security is never selected or bypassed implicitly.
+
 Native mode requires `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL`, `PUBLIC_BASE_URL`, `REDIS_ADDR`, `REDIS_KEY_PREFIX`, `AUTHZ_POLICY_FILE`, and a random `CSRF_SECRET`. OIDC issuer discovery is single-issuer per deployment; identity is the verified `(iss, sub)` pair. Email is metadata, not identity. `OIDC_GROUPS_CLAIM` defaults to `groups`; groups must be a string array. If the issuer uses a private CA, set `OIDC_CA_FILE` to a mounted PEM bundle; do not disable TLS verification.
 
-Sessions use host-only `__Host-` cookies with `HttpOnly`, `Path=/`, `SameSite=Lax`, and `Secure` in native mode. Refresh tokens and session data remain server-side in Redis. Redis credentials are optional; omitted credentials send no Redis `AUTH`. Configured credential rejection is a startup/runtime error, never a downgrade.
+Sessions use host-only `__Host-` cookies with `HttpOnly`, `Path=/`, `SameSite=Lax`, and `Secure` in native mode. Refresh tokens and session data remain server-side in Redis. Requests carrying a session cookie are serialized through a Redis lease, including refresh and logout; the lease renews while the request is running so stale session commits cannot overwrite a refresh or resurrect a logged-out session. Redis credentials are optional; omitted credentials send no Redis `AUTH`. Configured credential rejection is a startup/runtime error, never a downgrade.
 
-`AUTHZ_POLICY_FILE` uses Casbin CSV policy with `p, subject, object, action, effect` and `g, group:<claim>, role:<name>` rows. `profiles:list` gates profile listing; known-profile operations are authorized independently. Rotate requires decrypt on the source and encrypt on the destination.
+If an OIDC refresh response omits `id_token` (which is permitted by OIDC), Vaultsmith keeps the refreshed session valid until the earlier of the new token expiry and the SCS absolute session deadline. This prevents a standards-compliant refresh response from expiring the session at the old ID-token deadline while retaining a bounded absolute lifetime.
+
+`AUTHZ_POLICY_FILE` uses Casbin CSV policy with `p, subject, object, action, effect` and `g, group:<claim>, role:<name>` rows. `profiles:list` gates profile listing; known-profile operations are authorized independently. Rotate requires decrypt on the source and encrypt on the destination. Supported actions are `profiles:list`, `encrypt`, and `decrypt`; unsupported audit-rotation actions are rejected during policy validation rather than accepted without enforcement.
 
 ## Usage
 
@@ -214,13 +218,13 @@ networkPolicy:
           port: 6379
 ```
 
-Native chart rendering fails unless the OIDC, Redis, CSRF, policy, secure-cookie, and NetworkPolicy egress inputs are present. `auth.mode: off` is never an implicit fallback for native startup failures. Off mode intentionally skips authentication and CSRF protection and must remain inside a private development boundary.
+Native chart rendering fails unless the OIDC, Redis, CSRF, policy, secure-cookie, and NetworkPolicy egress inputs are present. `auth.mode: off` is never an implicit fallback for native startup failures. Off mode intentionally skips authentication and CSRF protection and must remain inside a private development boundary. The chart emits `REDIS_REFRESH_LOCK_TTL`, `REDIS_REFRESH_LOCK_WAIT`, `REDIS_REFRESH_LOCK_RETRY`, and `REDIS_PROVIDER_TIMEOUT`; these values are parsed by the server and control session/refresh coordination.
 
 ### Casbin policy configuration
 
-Native mode loads a file-backed Casbin policy from `AUTHZ_POLICY_FILE`. The chart mounts that file at `/etc/vaultsmith/policy/policy.csv`. Choose one policy source: either inline `auth.policy.data`, or an external ConfigMap referenced by `auth.policy.existingConfigMap`.
+Native mode loads a file-backed Casbin policy from `AUTHZ_POLICY_FILE`. The chart mounts that file at `/etc/vaultsmith/policy/policy.csv`. Choose exactly one policy source: either inline `auth.policy.data`, or an external ConfigMap referenced by `auth.policy.existingConfigMap`; Helm rejects both together.
 
-For an inline policy, replace the `auth.policy` block above with this form. Keep the default `key: policy.csv` when using inline data:
+For an inline policy, replace the `auth.policy` block above with this form. The configured `key` is used for the inline ConfigMap key and can be customized; the mounted application path remains `/etc/vaultsmith/policy/policy.csv`:
 
 ```yaml
 auth:
@@ -245,6 +249,8 @@ auth:
 ```
 
 The `group:<value>` in a `g` row must match a value from the verified OIDC groups claim (`groups` by default). Permission rows use role subjects and have the form `p, role:<name>, <resource>, <action>, <effect>`. `profiles:list` applies to the global `profiles` resource; `encrypt` and `decrypt` apply to `profile:<id>` resources. A trailing `*` is allowed for a profile prefix, but it must match at least one configured profile. Explicit `deny` rows override `allow` rows. Rotate requires decrypt permission on the source profile and encrypt permission on the destination profile. Policy validation fails closed if it references an unknown profile or invalid action.
+
+The authorizer checks the policy file for changes before authorization and reloads a valid update, so an externally managed ConfigMap can be updated without a pod restart. A missing or malformed updated policy fails closed until a valid policy is available.
 
 The full policy and external ConfigMap examples are in the [deployment guide](docs/deployment.md#casbin-policy-configuration). Do not put credentials or tokens in the policy; keep them in the referenced Kubernetes Secrets.
 

@@ -178,17 +178,28 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "operation mode is invalid")
 		return
 	}
+	var principal authn.Principal
+	if h.authConfig.Mode == config.AuthModeNative {
+		var authenticated bool
+		var status int
+		var code string
+		principal, authenticated, status, code = h.requirePrincipal(r)
+		if !authenticated {
+			writeAuthError(w, status, code)
+			return
+		}
+	}
 	if request.Mode == "rotate" {
 		if request.ProfileID != "" || request.SourceProfileID == "" || request.DestinationProfileID == "" {
 			writeError(w, http.StatusBadRequest, "invalid_request", "rotate requires source and destination profiles")
 			return
 		}
 		if _, ok := h.profiles[request.SourceProfileID]; !ok {
-			writeError(w, http.StatusNotFound, "not_found", "profile was not found")
+			writeProfileAccessError(w, h.authConfig.Mode)
 			return
 		}
 		if _, ok := h.profiles[request.DestinationProfileID]; !ok {
-			writeError(w, http.StatusNotFound, "not_found", "profile was not found")
+			writeProfileAccessError(w, h.authConfig.Mode)
 			return
 		}
 	} else {
@@ -197,7 +208,7 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, ok := h.profiles[request.ProfileID]; !ok {
-			writeError(w, http.StatusNotFound, "not_found", "profile was not found")
+			writeProfileAccessError(w, h.authConfig.Mode)
 			return
 		}
 	}
@@ -215,11 +226,6 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.authConfig.Mode == config.AuthModeNative {
-		principal, ok, status, code := h.requirePrincipal(r)
-		if !ok {
-			writeAuthError(w, status, code)
-			return
-		}
 		var authErr error
 		if request.Mode == "rotate" {
 			authErr = h.authorizer.AuthorizeRotate(principal, request.SourceProfileID, request.DestinationProfileID)
@@ -319,6 +325,14 @@ func setSecurityHeaders(w http.ResponseWriter) {
 func methodNotAllowed(w http.ResponseWriter, allowed string) {
 	w.Header().Set("Allow", allowed)
 	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed")
+}
+
+func writeProfileAccessError(w http.ResponseWriter, mode config.AuthMode) {
+	if mode == config.AuthModeNative {
+		writeError(w, http.StatusForbidden, "forbidden", "operation is not permitted")
+		return
+	}
+	writeError(w, http.StatusNotFound, "not_found", "profile was not found")
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
 )
@@ -110,5 +111,32 @@ func TestAuthorizerIsFailClosedForUnknownGroups(t *testing.T) {
 	}
 	if authorizer.Can(principalWithGroups("unknown"), ActionEncrypt, ProfileResource("dev")) {
 		t.Fatal("unknown group was authorized")
+	}
+}
+
+func TestAuthorizerReloadsChangedPolicyFile(t *testing.T) {
+	path := policyFile(t, "g, group:admins, role:admin\np, role:admin, profile:dev, encrypt, allow\n")
+	policy, err := LoadPolicy(path, []string{"dev"})
+	if err != nil {
+		t.Fatalf("LoadPolicy() error = %v", err)
+	}
+	authorizer, err := NewAuthorizer(policy)
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+	principal := principalWithGroups("admins")
+	if err := authorizer.Authorize(principal, ActionEncrypt, ProfileResource("dev")); err != nil {
+		t.Fatalf("initial authorization: %v", err)
+	}
+	updated := "g, group:admins, role:admin\np, role:admin, profile:dev, encrypt, deny\n"
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatalf("write updated policy: %v", err)
+	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatalf("touch updated policy: %v", err)
+	}
+	if err := authorizer.Authorize(principal, ActionEncrypt, ProfileResource("dev")); err != ErrForbidden {
+		t.Fatalf("authorization after policy update = %v, want ErrForbidden", err)
 	}
 }
