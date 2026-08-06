@@ -11,10 +11,6 @@ import (
 
 type sessionLockContextKey struct{}
 
-type sessionLockState struct {
-	token string
-}
-
 type sessionLockLease struct {
 	mutex *redsync.Mutex
 	stop  chan struct{}
@@ -34,15 +30,13 @@ func (lease *sessionLockLease) keepAlive(ttl, timeout time.Duration) {
 		select {
 		case <-ticker.C:
 			ctx := context.Background()
+			cancel := func() {}
 			if timeout > 0 {
-				var cancel context.CancelFunc
 				ctx, cancel = context.WithTimeout(ctx, timeout)
-				ok, err := lease.mutex.ExtendContext(ctx)
-				cancel()
-				if err != nil || !ok {
-					return
-				}
-			} else if ok, err := lease.mutex.ExtendContext(ctx); err != nil || !ok {
+			}
+			ok, err := lease.mutex.ExtendContext(ctx)
+			cancel()
+			if err != nil || !ok {
 				return
 			}
 		case <-lease.stop:
@@ -74,8 +68,8 @@ func sessionLockHeld(ctx context.Context, token string) bool {
 	if ctx == nil || token == "" {
 		return false
 	}
-	state, ok := ctx.Value(sessionLockContextKey{}).(sessionLockState)
-	return ok && state.token == token
+	value, ok := ctx.Value(sessionLockContextKey{}).(string)
+	return ok && value == token
 }
 
 func withSessionLock(ctx context.Context, token string) context.Context {
@@ -85,7 +79,7 @@ func withSessionLock(ctx context.Context, token string) context.Context {
 	if token == "" {
 		return ctx
 	}
-	return context.WithValue(ctx, sessionLockContextKey{}, sessionLockState{token: token})
+	return context.WithValue(ctx, sessionLockContextKey{}, token)
 }
 
 func (a *Authenticator) acquireSessionLock(ctx context.Context, token string) (func(), error) {
