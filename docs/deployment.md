@@ -40,7 +40,7 @@ The edge is responsible for:
 - TLS termination and certificate policy.
 - Authentication and the policy that decides which callers may use the UI and API.
 - Request-size, upstream-timeout, and rate-limit tripwires.
-- Stripping client-supplied identity and authentication headers before forwarding to the app.
+- Stripping client-supplied identity and authentication headers before forwarding to the app; preserve Vaultsmith's session and CSRF cookies and strip only edge-specific credential cookies.
 - Disabling request-body logging at every layer. Do not add a request body to an access-log format.
 - Keeping `/healthz` and `/readyz` on an internal probe path, not an authenticated public route.
 
@@ -52,17 +52,18 @@ The following contract applies regardless of the selected gateway implementation
 
 ### Authentication and TLS
 
-Terminate TLS at the private edge and require the edge's maintained authentication policy before forwarding to Vaultsmith. The authentication component may receive the original credentials. Vaultsmith must not receive caller `Authorization`, `Cookie`, or identity headers unless the application contract is deliberately changed and reviewed.
+Terminate TLS at the private edge and require the edge's maintained authentication policy before forwarding to Vaultsmith. The authentication component may receive the original credentials, but native Vaultsmith authentication still requires Vaultsmith's own session and CSRF cookies. Do not forward client-supplied `Authorization` or identity headers to the app. If the edge has its own credential cookie, strip that cookie selectively; do not remove the complete `Cookie` header.
 
 Gateway API does not define one portable authentication policy. Use the selected maintained implementation's current authentication extension or policy, and verify an unauthenticated request, an authenticated request, and a denied request against the live deployment. Do not treat a `Gateway`, `HTTPRoute`, NetworkPolicy, or chart annotation as proof that authentication is active.
 
 ### Header boundary
 
-Use an explicit upstream allowlist. Remove client-supplied authentication, identity, and forwarding headers before the request reaches Vaultsmith. Preserve only headers required by the application and generate forwarding headers at the trusted edge:
+Use an explicit upstream allowlist. Remove client-supplied authentication, identity, and forwarding headers before the request reaches Vaultsmith. Preserve Vaultsmith session material and generate forwarding headers at the trusted edge:
 
 | Header material | Edge authentication component | Vaultsmith upstream request |
 | --- | --- | --- |
-| `Authorization`, `Cookie` | Forward only to the authentication component | Not forwarded |
+| `Authorization` | Forward only to the authentication component | Not forwarded |
+| `Cookie` | Preserve Vaultsmith session/CSRF cookies; strip only edge-specific credential cookies | Forwarded as required by native session authentication |
 | `X-Auth-Request-*`, `X-Forwarded-User`, `X-Forwarded-Email`, `X-Remote-User` | Not accepted from the client | Not forwarded |
 | `X-Original-URI`, `X-Original-Method` | Set by the edge for authentication | Not forwarded |
 | `Host`, `Accept`, `Content-Type`, `Content-Length` | Not required | Explicit allowlist |
@@ -129,6 +130,19 @@ networkPolicy:
         matchLabels:
           app.kubernetes.io/component: gateway
   allowedEgress:
+    # Allow cluster DNS before hostname-based OIDC and Redis connections.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
     - to:
         - ipBlock:
             cidr: 10.0.0.0/8
@@ -282,14 +296,14 @@ spec:
         - path:
             type: PathPrefix
             value: /
-      # This standard filter removes client-controlled trust headers. The
-      # selected implementation must also generate canonical X-Forwarded-*.
+      # This standard filter removes client-controlled trust headers. Preserve
+      # Vaultsmith session/CSRF cookies; strip only edge-specific cookies by name.
+      # The selected implementation must also generate canonical X-Forwarded-*.
       filters:
         - type: RequestHeaderModifier
           requestHeaderModifier:
             remove:
               - Authorization
-              - Cookie
               - X-Auth-Request-User
               - X-Auth-Request-Email
               - X-Forwarded-User

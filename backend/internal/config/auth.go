@@ -283,8 +283,11 @@ func parseNativeOptions(cfg *AuthConfig, lookup EnvLookup) error {
 	if !cfg.Session.Secure {
 		return errors.New("native mode requires COOKIE_SECURE=true")
 	}
+	if cfg.Session.SameSite == http.SameSiteStrictMode {
+		return errors.New("native mode does not support COOKIE_SAME_SITE=strict because the OIDC callback is cross-site")
+	}
 
-	cfg.OIDC.IssuerURL = strings.TrimRight(issuerURL.String(), "/")
+	cfg.OIDC.IssuerURL = issuerURL.String()
 	cfg.OIDC.ClientID = clientID
 	cfg.OIDC.ClientSecret = clientSecret
 	cfg.OIDC.RedirectURL = redirectURL.String()
@@ -332,7 +335,7 @@ func parseRedisOptions(cfg *RedisConfig, lookup EnvLookup, required bool) error 
 	}
 	var err error
 	if raw, ok := lookup("REDIS_DB"); ok && strings.TrimSpace(raw) != "" {
-		cfg.Database, err = intOption("REDIS_DB", raw, 0)
+		cfg.Database, err = intOption("REDIS_DB", raw)
 		if err != nil || cfg.Database < 0 {
 			return errors.New("REDIS_DB must be a non-negative integer")
 		}
@@ -356,7 +359,7 @@ func parseRedisOptions(cfg *RedisConfig, lookup EnvLookup, required bool) error 
 		return errors.New("redis timeouts must be positive")
 	}
 	if raw, ok := lookup("REDIS_POOL_SIZE"); ok && strings.TrimSpace(raw) != "" {
-		cfg.PoolSize, err = intOption("REDIS_POOL_SIZE", raw, defaultRedisPoolSize)
+		cfg.PoolSize, err = intOption("REDIS_POOL_SIZE", raw)
 		if err != nil || cfg.PoolSize <= 0 {
 			return errors.New("REDIS_POOL_SIZE must be a positive integer")
 		}
@@ -428,7 +431,7 @@ func boolOption(key, raw string) (bool, error) {
 	return value, nil
 }
 
-func intOption(key, raw string, _ int) (int, error) {
+func intOption(key, raw string) (int, error) {
 	value, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil {
 		return 0, fmt.Errorf("%s must be an integer", key)

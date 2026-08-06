@@ -32,6 +32,7 @@ const (
 	sessionRefreshTokenKey   = "auth.refresh_token"
 	sessionVersionKey        = "auth.version"
 	sessionRefreshCheckedKey = "auth.refresh_checked_at"
+	sessionFenceKey          = "auth.session_fence"
 	pendingStateKey          = "auth.pending_state"
 )
 
@@ -56,6 +57,12 @@ func NewSessionManager(store scs.Store, cfg config.SessionConfig) *scs.SessionMa
 	manager.Lifetime = cfg.AbsoluteLifetime
 	manager.IdleTimeout = cfg.IdleLifetime
 	manager.HashTokenInStore = true
+	if binder, ok := store.(interface{ SetCodec(scs.Codec) }); ok {
+		binder.SetCodec(manager.Codec)
+	}
+	if binder, ok := store.(interface{ SetHashTokenInStore(bool) }); ok {
+		binder.SetHashTokenInStore(manager.HashTokenInStore)
+	}
 	manager.Cookie = scs.SessionCookie{
 		Name:     cfg.CookieName,
 		Domain:   "",
@@ -154,6 +161,7 @@ func ClearPrincipal(ctx context.Context, manager *scs.SessionManager) {
 		sessionRefreshTokenKey,
 		sessionVersionKey,
 		sessionRefreshCheckedKey,
+		sessionFenceKey,
 		pendingStateKey,
 	} {
 		manager.Remove(ctx, key)

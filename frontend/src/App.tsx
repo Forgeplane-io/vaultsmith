@@ -20,6 +20,7 @@ import './styles.css'
 export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [session, setSession] = useState<Session | null>(null)
+  const [signedOut, setSignedOut] = useState(false)
   const [profileId, setProfileId] = useState('')
   const [destinationProfileId, setDestinationProfileId] = useState('')
   const [mode, setMode] = useState<OperationMode>('encrypt')
@@ -357,7 +358,16 @@ export default function App() {
     try {
       await logout()
       setSession(null)
-      redirectToLogin()
+      setProfiles([])
+      setValue('')
+      setOutput('')
+      setAnsibleVariableName('')
+      setAnsibleSnippetFallback('')
+      setRevealed(false)
+      setModeNotice('')
+      setError('')
+      setStatus('')
+      setSignedOut(true)
     } catch (reason) {
       setStatus('')
       setError(safeErrorMessage(reason, 'Could not sign out. Try again.'))
@@ -377,6 +387,32 @@ export default function App() {
     setError('')
     setStatus('')
     setModeNotice('')
+  }
+
+  if (signedOut) {
+    return (
+      <div className="console-app signed-out-view">
+        <header className="console-topbar">
+          <div className="topbar-inner">
+            <div className="brand-lockup">
+              <img className="brand-mark" src="/vaultsmith-logo.png" alt="Vaultsmith logo" width="32" height="32" />
+              <span className="brand-name">Vaultsmith</span>
+            </div>
+          </div>
+        </header>
+        <main className="console-content">
+          <section className="workbench-card signed-out-card" aria-labelledby="signed-out-heading">
+            <div className="content-heading">
+              <div className="heading-copy">
+                <h1 id="signed-out-heading">Signed out</h1>
+                <p>Your Vaultsmith session has ended. Sign in again when you are ready.</p>
+              </div>
+            </div>
+            <button className="primary-button" type="button" onClick={redirectToLogin}>Sign in again</button>
+          </section>
+        </main>
+      </div>
+    )
   }
 
   return (

@@ -56,6 +56,23 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.queryByText('Where this value will be used.')).not.toBeInTheDocument()
   })
 
+  it('keeps the user on an explicit signed-out screen after logout', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ authenticated: true, authRequired: true, email: 'user@example.test', csrfToken: 'csrf-token' }))
+      .mockResolvedValueOnce(profilesResponse())
+      .mockResolvedValueOnce(jsonResponse({}))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Signed out' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign in again' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenLastCalledWith('/auth/logout', expect.objectContaining({ method: 'POST' }))
+  })
+
   it('loads a public profile label without exposing its environment name', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(profilesResponse())
 

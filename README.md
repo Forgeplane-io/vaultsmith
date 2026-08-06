@@ -206,8 +206,27 @@ auth:
     key: policy.csv
 networkPolicy:
   enabled: true
-  allowedIngress: []
+  allowedIngress:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: edge-system
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: gateway
   allowedEgress:
+    # Allow cluster DNS before hostname-based OIDC and Redis connections.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
     - to:
         - ipBlock:
             cidr: 10.0.0.0/8
@@ -268,6 +287,7 @@ secret:
 
 networkPolicy:
   enabled: true
+  denyAllIngress: true
   allowedIngress: []
 ```
 
@@ -280,7 +300,7 @@ helm upgrade --install vaultsmith deploy/helm/vaultsmith \
   -f /path/to/vaultsmith-values.yaml
 ```
 
-An empty `allowedIngress` list is deny-all when enforced by the cluster CNI. NetworkPolicy is not authentication. Put an authenticated or private edge in front of the service before enabling Ingress.
+An empty `allowedIngress` list is deny-all only when `networkPolicy.denyAllIngress: true` is set; with `denyAllIngress: false`, the chart does not add ingress policy types unless explicit ingress rules are supplied. NetworkPolicy is not authentication. Put an authenticated or private edge in front of the service before enabling Ingress.
 
 ## Security
 

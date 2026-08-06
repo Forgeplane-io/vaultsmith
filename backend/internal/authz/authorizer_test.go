@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,6 +64,39 @@ func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
 	got := authorizer.FilterProfiles(reader, []string{"dev", "prod", "stageblue"})
 	if want := []string{"stageblue"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("FilterProfiles() = %#v, want %#v", got, want)
+	}
+}
+
+func TestAuthorizeRotateUsesOnePolicySnapshot(t *testing.T) {
+	initial := "g, group:admins, role:admin\np, role:admin, profile:dev, decrypt, allow\np, role:admin, profile:prod, encrypt, allow\n"
+	path := policyFile(t, initial)
+	policy, err := LoadPolicy(path, []string{"dev", "prod"})
+	if err != nil {
+		t.Fatalf("LoadPolicy() error = %v", err)
+	}
+	authorizer, err := NewAuthorizer(policy)
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+
+	var rewrite sync.Once
+	authorizer.policy.enforcer.AddFunction("vaultsmithMatch", func(args ...interface{}) (interface{}, error) {
+		rewrite.Do(func() {
+			updated := "g, group:admins, role:admin\np, role:admin, profile:dev, decrypt, allow\np, role:admin, profile:prod, encrypt, deny\n"
+			if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+				t.Errorf("rewrite policy: %v", err)
+			}
+		})
+		resource, resourceOK := args[0].(string)
+		selector, selectorOK := args[1].(string)
+		if !resourceOK || !selectorOK {
+			return false, nil
+		}
+		return matchesPolicyObject(resource, selector), nil
+	})
+
+	if err := authorizer.AuthorizeRotate(principalWithGroups("admins"), "dev", "prod"); err != nil {
+		t.Fatalf("AuthorizeRotate() error = %v, want one consistent pre-reload snapshot", err)
 	}
 }
 

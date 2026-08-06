@@ -143,6 +143,18 @@ networkPolicy:
           app.kubernetes.io/name: operator-shell
   allowedEgress:
     - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
         - ipBlock:
             cidr: 10.0.0.0/8
       ports:
@@ -171,8 +183,10 @@ grep -Fq 'name: REDIS_REFRESH_LOCK_WAIT' "$TMP_DIR/native-render.yaml" || fail '
 grep -Fq 'name: REDIS_REFRESH_LOCK_RETRY' "$TMP_DIR/native-render.yaml" || fail 'native refresh lock retry env is missing'
 grep -Fq 'name: REDIS_PROVIDER_TIMEOUT' "$TMP_DIR/native-render.yaml" || fail 'native provider timeout env is missing'
 grep -Fq 'key: "custom.csv"' "$TMP_DIR/native-render.yaml" || fail 'custom inline policy key is missing'
+grep -Eq 'value: "?/etc/vaultsmith/policy/policy\.csv"?$' "$TMP_DIR/native-render.yaml" || fail 'policy file path is not canonical'
 grep -Fq 'path: policy.csv' "$TMP_DIR/native-render.yaml" || fail 'policy mount path is missing'
 grep -Fq '    - Egress' "$TMP_DIR/native-render.yaml" || fail 'native NetworkPolicy egress type is missing'
+grep -Fq 'port: 53' "$TMP_DIR/native-render.yaml" || fail 'native cluster DNS egress port is missing'
 grep -Fq 'port: 6379' "$TMP_DIR/native-render.yaml" || fail 'native Redis egress port is missing'
 
 cat > "$TMP_DIR/incomplete-native.yaml" <<'VALUES'
@@ -180,6 +194,17 @@ auth:
   mode: native
 VALUES
 assert_render_fails "$TMP_DIR/incomplete-native.yaml"
+if render -f "$TMP_DIR/native.yaml" --set auth.session.sameSite=strict > "$TMP_DIR/strict-native.yaml" 2> "$TMP_DIR/strict-native.err"; then
+  fail 'native SameSite=Strict render unexpectedly succeeded'
+fi
+
+cat > "$TMP_DIR/custom-policy-path.yaml" <<'VALUES'
+auth:
+  mode: off
+  policy:
+    file: /tmp/policy.csv
+VALUES
+assert_render_fails "$TMP_DIR/custom-policy-path.yaml"
 
 cat > "$TMP_DIR/conflicting-policy.yaml" <<'VALUES'
 auth:
@@ -272,5 +297,15 @@ networkPolicy:
     - {}
 VALUES
 assert_render_fails "$TMP_DIR/broad-policy.yaml"
+
+cat > "$TMP_DIR/empty-egress.yaml" <<'VALUES'
+auth:
+  mode: off
+networkPolicy:
+  enabled: true
+  allowedEgress:
+    - {}
+VALUES
+assert_render_fails "$TMP_DIR/empty-egress.yaml"
 
 printf 'chart tests: ok\n'

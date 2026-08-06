@@ -29,9 +29,6 @@ func (a *Authenticator) AuthenticatedPrincipal(ctx context.Context) (Principal, 
 		return Principal{}, false, nil
 	}
 	now := time.Now()
-	if !principal.ExpiresAt.After(now) {
-		return Principal{}, false, ErrRefreshRequired
-	}
 	if principal.ExpiresAt.After(now.Add(refreshSkew)) {
 		return principal, true, nil
 	}
@@ -40,7 +37,7 @@ func (a *Authenticator) AuthenticatedPrincipal(ctx context.Context) (Principal, 
 		return Principal{}, false, ErrRefreshRequired
 	}
 	lastChecked := a.Sessions.GetTime(ctx, sessionRefreshCheckedKey)
-	if !lastChecked.IsZero() && now.Before(lastChecked.Add(refreshRetryWindow)) {
+	if principal.ExpiresAt.After(now) && !lastChecked.IsZero() && now.Before(lastChecked.Add(refreshRetryWindow)) {
 		return principal, true, nil
 	}
 	return a.refreshSession(ctx)
@@ -54,12 +51,15 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 	if sessionToken == "" {
 		return Principal{}, false, ErrNotAuthenticated
 	}
-	unlock, err := a.acquireSessionLock(ctx, sessionToken)
+	lock, err := a.acquireSessionLock(ctx, sessionToken)
 	if err != nil {
 		return Principal{}, false, err
 	}
-	defer unlock()
-	ctx = withSessionLock(ctx, sessionToken)
+	defer lock.release()
+	if lock.fence != "" {
+		a.Sessions.Put(lock.ctx, sessionFenceKey, lock.fence)
+	}
+	ctx = withSessionLock(lock.ctx, sessionToken, lock.fence, lock.healthy)
 
 	freshCtx, err := a.Sessions.Load(contextWithoutSession(ctx), sessionToken)
 	if err != nil {
@@ -74,9 +74,6 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 	}
 	freshRefreshToken := RefreshTokenFromSession(freshCtx, a.Sessions)
 	now := time.Now()
-	if !freshPrincipal.ExpiresAt.After(now) {
-		return Principal{}, false, ErrRefreshRequired
-	}
 	if freshPrincipal.ExpiresAt.After(now.Add(refreshSkew)) {
 		if err := a.syncSession(ctx, freshCtx, freshPrincipal, freshRefreshToken, 0, false); err != nil {
 			return Principal{}, false, err
@@ -84,7 +81,7 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 		return freshPrincipal, true, nil
 	}
 	lastChecked := a.Sessions.GetTime(freshCtx, sessionRefreshCheckedKey)
-	if !lastChecked.IsZero() && now.Before(lastChecked.Add(refreshRetryWindow)) {
+	if !lastChecked.IsZero() && freshPrincipal.ExpiresAt.After(now) && now.Before(lastChecked.Add(refreshRetryWindow)) {
 		if err := a.syncSession(ctx, freshCtx, freshPrincipal, freshRefreshToken, 0, false); err != nil {
 			return Principal{}, false, err
 		}
@@ -94,7 +91,7 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 		return Principal{}, false, ErrRefreshRequired
 	}
 
-	exchangeCtx, cancel := context.WithTimeout(ctx, a.Config.Redis.ProviderTimeout)
+	exchangeCtx, cancel := context.WithTimeout(a.oidcContext(ctx), a.Config.Redis.ProviderTimeout)
 	defer cancel()
 	exchange := a.refreshExchange
 	if exchange == nil {
@@ -175,7 +172,7 @@ func (a *Authenticator) verifyRefreshedIDToken(ctx context.Context, rawIDToken s
 	if a.Verifier == nil {
 		return Principal{}, ErrInvalidCallback
 	}
-	idToken, err := a.Verifier.Verify(ctx, rawIDToken)
+	idToken, err := a.Verifier.Verify(a.oidcContext(ctx), rawIDToken)
 	if err != nil {
 		return Principal{}, ErrInvalidCallback
 	}

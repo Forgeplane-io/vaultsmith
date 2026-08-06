@@ -124,6 +124,11 @@ func TestLoadAuthRejectsUnsafeNativeCookieAndCORSCombinations(t *testing.T) {
 			patch: map[string]string{"COOKIE_SAME_SITE": "none", "CORS_ALLOWED_ORIGINS": ""},
 			want:  "COOKIE_SAME_SITE",
 		},
+		{
+			name:  "same-site strict for native callback",
+			patch: map[string]string{"COOKIE_SAME_SITE": "strict"},
+			want:  "COOKIE_SAME_SITE",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -136,6 +141,18 @@ func TestLoadAuthRejectsUnsafeNativeCookieAndCORSCombinations(t *testing.T) {
 				t.Fatalf("LoadAuth() error = %v, want mention %s", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoadAuthPreservesCanonicalOIDCIssuer(t *testing.T) {
+	values := nativeEnv()
+	values["OIDC_ISSUER_URL"] = "https://id.example.test/realms/vaultsmith/"
+	cfg, err := LoadAuth(envLookup(values))
+	if err != nil {
+		t.Fatalf("LoadAuth() error = %v", err)
+	}
+	if cfg.OIDC.IssuerURL != values["OIDC_ISSUER_URL"] {
+		t.Fatalf("OIDC issuer = %q, want configured canonical issuer %q", cfg.OIDC.IssuerURL, values["OIDC_ISSUER_URL"])
 	}
 }
 

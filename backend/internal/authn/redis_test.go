@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alexedwards/scs/v2"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 	"github.com/gomodule/redigo/redis"
@@ -37,11 +38,57 @@ func TestRedisRuntimeProbeAndSessionPrefix(t *testing.T) {
 		t.Fatalf("Probe() error = %v", err)
 	}
 
-	if err := runtime.SessionStore().Commit("token", []byte("session"), time.Now().Add(time.Minute)); err != nil {
+	data, err := (scs.GobCodec{}).Encode(time.Now().Add(time.Minute), map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("GobCodec.Encode() error = %v", err)
+	}
+	if err := runtime.SessionStore().Commit("token", data, time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("SessionStore().Commit() error = %v", err)
 	}
 	if !server.Exists("vaultsmith:test:session:token") {
 		t.Fatalf("session key was not written with the configured prefix")
+	}
+}
+
+func TestRedisSessionStoreRejectsMalformedSessionCommit(t *testing.T) {
+	server := miniredis.RunT(t)
+	runtime, err := NewRedisRuntime(testRedisConfig(server.Addr()))
+	if err != nil {
+		t.Fatalf("NewRedisRuntime() error = %v", err)
+	}
+	defer runtime.Close()
+
+	if err := runtime.SessionStore().Commit("token", []byte("malformed"), time.Now().Add(time.Minute)); err == nil {
+		t.Fatal("malformed session commit succeeded")
+	}
+}
+
+func TestRedisSessionStoreReleasesFenceProbeBeforeCommit(t *testing.T) {
+	server := miniredis.RunT(t)
+	cfg := testRedisConfig(server.Addr())
+	cfg.PoolSize = 1
+	runtime, err := NewRedisRuntime(cfg)
+	if err != nil {
+		t.Fatalf("NewRedisRuntime() error = %v", err)
+	}
+	defer runtime.Close()
+
+	data, err := (scs.GobCodec{}).Encode(time.Now().Add(time.Minute), map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("GobCodec.Encode() error = %v", err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		result <- runtime.SessionStore().Commit("token", data, time.Now().Add(time.Minute))
+	}()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("SessionStore().Commit() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SessionStore().Commit() blocked with a single pooled connection")
 	}
 }
 
@@ -110,6 +157,33 @@ func TestRedisRuntimeRefreshLockIsBoundedAndOwnerSafe(t *testing.T) {
 	}
 	if unlocked, err := third.UnlockContext(context.Background()); err != nil || !unlocked {
 		t.Fatalf("third UnlockContext() = (%t, %v), want true, nil", unlocked, err)
+	}
+}
+
+func TestRedisRuntimeActivatesSessionFence(t *testing.T) {
+	server := miniredis.RunT(t)
+	runtime, err := NewRedisRuntime(testRedisConfig(server.Addr()))
+	if err != nil {
+		t.Fatalf("NewRedisRuntime() error = %v", err)
+	}
+	defer runtime.Close()
+
+	mutex := runtime.NewSessionMutex("session-id")
+	if err := mutex.TryLockContext(context.Background()); err != nil {
+		t.Fatalf("TryLockContext() error = %v", err)
+	}
+	defer mutex.Unlock()
+
+	fence := mutex.Name() + fenceSeparator + mutex.Value()
+	if err := runtime.ActivateSessionFence(context.Background(), "session-id", fence, time.Hour); err != nil {
+		t.Fatalf("ActivateSessionFence() error = %v", err)
+	}
+	got, err := server.Get("vaultsmith:test:fence:session-id")
+	if err != nil {
+		t.Fatalf("read fence key: %v", err)
+	}
+	if got != fence {
+		t.Fatalf("fence value = %q, want %q", got, fence)
 	}
 }
 

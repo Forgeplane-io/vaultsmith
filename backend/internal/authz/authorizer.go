@@ -174,6 +174,13 @@ func (a *Authorizer) Authorize(principal authn.Principal, action, resource strin
 	if err != nil {
 		return err
 	}
+	return authorizeWithPolicy(policy, principal, action, resource)
+}
+
+func authorizeWithPolicy(policy *Policy, principal authn.Principal, action, resource string) error {
+	if policy == nil || policy.enforcer == nil {
+		return ErrPolicy
+	}
 	roles := policy.rolesForGroups(principal.Groups)
 	if len(roles) == 0 {
 		return ErrForbidden
@@ -193,13 +200,14 @@ func (a *Authorizer) Can(principal authn.Principal, action, resource string) boo
 }
 
 func (a *Authorizer) FilterProfiles(principal authn.Principal, profileIDs []string) []string {
-	if a.Authorize(principal, ActionListProfiles, ResourceProfiles) != nil {
+	policy, err := a.currentPolicy()
+	if err != nil || authorizeWithPolicy(policy, principal, ActionListProfiles, ResourceProfiles) != nil {
 		return nil
 	}
 	filtered := make([]string, 0, len(profileIDs))
 	for _, profileID := range profileIDs {
 		resource := ProfileResource(profileID)
-		if a.Can(principal, ActionEncrypt, resource) || a.Can(principal, ActionDecrypt, resource) {
+		if authorizeWithPolicy(policy, principal, ActionEncrypt, resource) == nil || authorizeWithPolicy(policy, principal, ActionDecrypt, resource) == nil {
 			filtered = append(filtered, profileID)
 		}
 	}
@@ -207,18 +215,26 @@ func (a *Authorizer) FilterProfiles(principal authn.Principal, profileIDs []stri
 }
 
 func (a *Authorizer) Capabilities(principal authn.Principal, profileID string) map[string]bool {
-	resource := ProfileResource(profileID)
-	return map[string]bool{
-		ActionEncrypt: a.Can(principal, ActionEncrypt, resource),
-		ActionDecrypt: a.Can(principal, ActionDecrypt, resource),
+	capabilities := map[string]bool{ActionEncrypt: false, ActionDecrypt: false}
+	policy, err := a.currentPolicy()
+	if err != nil {
+		return capabilities
 	}
+	resource := ProfileResource(profileID)
+	capabilities[ActionEncrypt] = authorizeWithPolicy(policy, principal, ActionEncrypt, resource) == nil
+	capabilities[ActionDecrypt] = authorizeWithPolicy(policy, principal, ActionDecrypt, resource) == nil
+	return capabilities
 }
 
 func (a *Authorizer) AuthorizeRotate(principal authn.Principal, sourceProfileID, destinationProfileID string) error {
-	if err := a.Authorize(principal, ActionDecrypt, ProfileResource(sourceProfileID)); err != nil {
+	policy, err := a.currentPolicy()
+	if err != nil {
 		return err
 	}
-	return a.Authorize(principal, ActionEncrypt, ProfileResource(destinationProfileID))
+	if err := authorizeWithPolicy(policy, principal, ActionDecrypt, ProfileResource(sourceProfileID)); err != nil {
+		return err
+	}
+	return authorizeWithPolicy(policy, principal, ActionEncrypt, ProfileResource(destinationProfileID))
 }
 
 func ProfileResource(profileID string) string {

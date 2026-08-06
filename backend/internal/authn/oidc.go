@@ -145,7 +145,7 @@ func (a *Authenticator) BeginLogin(ctx context.Context, returnTo string) (string
 		ExpiresAt:      time.Now().Add(loginTransactionLifetime),
 	}
 	if err := a.Redis.SaveLoginTransaction(ctx, transaction); err != nil {
-		_ = a.Sessions.Destroy(ctx)
+		_ = a.Logout(ctx)
 		return "", ErrTemporaryUnavailable
 	}
 	return a.OAuth2.AuthCodeURL(
@@ -187,10 +187,16 @@ func (a *Authenticator) CompleteLogin(ctx context.Context, state, code string) (
 	if err := a.Sessions.RenewToken(ctx); err != nil {
 		return "", Principal{}, ErrTemporaryUnavailable
 	}
+	rebindSessionLock(ctx, a.Sessions.Token(ctx))
+	if fence := sessionLockFence(ctx); fence != "" {
+		if err := a.Redis.ActivateSessionFence(ctx, a.Sessions.Token(ctx), fence, a.Config.Session.AbsoluteLifetime); err != nil {
+			return "", Principal{}, ErrTemporaryUnavailable
+		}
+	}
 	StorePrincipal(ctx, a.Sessions, principal, token.RefreshToken)
 	a.Sessions.Remove(ctx, pendingStateKey)
 	if token.RefreshToken == "" {
-		a.Sessions.SetDeadline(ctx, principal.ExpiresAt)
+		a.Sessions.SetDeadline(ctx, refreshedSessionExpiry(a.Sessions, ctx, principal.ExpiresAt))
 	}
 	return transaction.ReturnTo, principal, nil
 }
