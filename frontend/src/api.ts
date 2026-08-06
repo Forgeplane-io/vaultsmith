@@ -54,10 +54,6 @@ type ErrorEnvelope = {
 let csrfToken = ''
 let legacyProfiles: Profile[] | null = null
 
-export function currentCSRFToken(): string {
-  return csrfToken
-}
-
 async function requestJSON(path: string, init?: RequestInit): Promise<unknown> {
   const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) }
   const method = (init?.method || 'GET').toUpperCase()
@@ -166,10 +162,6 @@ export function utf8ByteLength(value: string): number {
 
 export function maxInputBytes(mode: OperationMode): number {
   return mode === 'encrypt' ? MAX_PLAINTEXT_BYTES : MAX_VAULT_TEXT_BYTES
-}
-
-export function isWithinInputLimit(mode: OperationMode, value: string): boolean {
-  return utf8ByteLength(value) <= maxInputBytes(mode)
 }
 
 function isErrorEnvelope(value: unknown): value is ErrorEnvelope & { error: NonNullable<ErrorEnvelope['error']> } {
