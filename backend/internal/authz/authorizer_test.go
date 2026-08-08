@@ -24,6 +24,19 @@ func principalWithGroups(groups ...string) authn.Principal {
 	return authn.Principal{Issuer: "https://issuer", Subject: "subject", Groups: groups}
 }
 
+func loadAuthorizer(t *testing.T, path string, profileIDs []string) *Authorizer {
+	t.Helper()
+	policy, err := LoadPolicy(path, profileIDs)
+	if err != nil {
+		t.Fatalf("LoadPolicy() error = %v", err)
+	}
+	authorizer, err := NewAuthorizer(policy)
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+	return authorizer
+}
+
 func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
 	path := policyFile(t, strings.TrimSpace(`
  g, group:admins, role:admin
@@ -38,14 +51,7 @@ func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
  p, role:reader, profile:dev, decrypt, deny
  p, role:reader, profile:stage*, decrypt, allow
  `))
-	policy, err := LoadPolicy(path, []string{"dev", "prod", "stageblue"})
-	if err != nil {
-		t.Fatalf("LoadPolicy() error = %v", err)
-	}
-	authorizer, err := NewAuthorizer(policy)
-	if err != nil {
-		t.Fatalf("NewAuthorizer() error = %v", err)
-	}
+	authorizer := loadAuthorizer(t, path, []string{"dev", "prod", "stageblue"})
 	admin := principalWithGroups("admins")
 	if err := authorizer.Authorize(admin, ActionEncrypt, ProfileResource("dev")); err != nil {
 		t.Fatalf("admin encrypt dev: %v", err)
@@ -69,14 +75,7 @@ func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
 func TestAuthorizeRotateUsesOnePolicySnapshot(t *testing.T) {
 	initial := "g, group:admins, role:admin\np, role:admin, profile:dev, decrypt, allow\np, role:admin, profile:prod, encrypt, allow\n"
 	path := policyFile(t, initial)
-	policy, err := LoadPolicy(path, []string{"dev", "prod"})
-	if err != nil {
-		t.Fatalf("LoadPolicy() error = %v", err)
-	}
-	authorizer, err := NewAuthorizer(policy)
-	if err != nil {
-		t.Fatalf("NewAuthorizer() error = %v", err)
-	}
+	authorizer := loadAuthorizer(t, path, []string{"dev", "prod"})
 
 	var rewrite sync.Once
 	authorizer.policy.enforcer.AddFunction("vaultsmithMatch", func(args ...interface{}) (interface{}, error) {
@@ -134,14 +133,7 @@ func TestLoadPolicyRejectsRoleCyclesAndDeepInheritance(t *testing.T) {
 
 func TestAuthorizerIsFailClosedForUnknownGroups(t *testing.T) {
 	path := policyFile(t, "g, group:admins, role:admin\np, role:admin, profile:dev, encrypt, allow\n")
-	policy, err := LoadPolicy(path, []string{"dev"})
-	if err != nil {
-		t.Fatalf("LoadPolicy() error = %v", err)
-	}
-	authorizer, err := NewAuthorizer(policy)
-	if err != nil {
-		t.Fatalf("NewAuthorizer() error = %v", err)
-	}
+	authorizer := loadAuthorizer(t, path, []string{"dev"})
 	if err := authorizer.Authorize(principalWithGroups("unknown"), ActionEncrypt, ProfileResource("dev")); err == nil {
 		t.Fatal("unknown group was authorized")
 	}
@@ -149,14 +141,7 @@ func TestAuthorizerIsFailClosedForUnknownGroups(t *testing.T) {
 
 func TestAuthorizerReloadsChangedPolicyFile(t *testing.T) {
 	path := policyFile(t, "g, group:admins, role:admin\np, role:admin, profile:dev, encrypt, allow\n")
-	policy, err := LoadPolicy(path, []string{"dev"})
-	if err != nil {
-		t.Fatalf("LoadPolicy() error = %v", err)
-	}
-	authorizer, err := NewAuthorizer(policy)
-	if err != nil {
-		t.Fatalf("NewAuthorizer() error = %v", err)
-	}
+	authorizer := loadAuthorizer(t, path, []string{"dev"})
 	principal := principalWithGroups("admins")
 	if err := authorizer.Authorize(principal, ActionEncrypt, ProfileResource("dev")); err != nil {
 		t.Fatalf("initial authorization: %v", err)

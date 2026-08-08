@@ -1,7 +1,6 @@
 package authn
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -84,10 +83,7 @@ func TestPrincipalFromSessionTreatsNilGroupsAsEmpty(t *testing.T) {
 		AbsoluteLifetime: time.Hour,
 		IdleLifetime:     time.Minute,
 	})
-	ctx, err := manager.Load(context.Background(), "")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
+	ctx := mustLoadSession(t, manager, "")
 	StorePrincipal(ctx, manager, Principal{
 		Issuer:        "issuer",
 		Subject:       "subject",

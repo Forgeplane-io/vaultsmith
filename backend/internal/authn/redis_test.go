@@ -26,16 +26,41 @@ func testRedisConfig(address string) config.RedisConfig {
 	}
 }
 
-func newTestRedisRuntime(t *testing.T) (*miniredis.Miniredis, *RedisRuntime, config.RedisConfig) {
+func newRedisRuntimeForTest(t *testing.T, cfg config.RedisConfig) *RedisRuntime {
 	t.Helper()
-	server := miniredis.RunT(t)
-	cfg := testRedisConfig(server.Addr())
 	runtime, err := NewRedisRuntime(cfg)
 	if err != nil {
 		t.Fatalf("NewRedisRuntime() error = %v", err)
 	}
 	t.Cleanup(func() { _ = runtime.Close() })
-	return server, runtime, cfg
+	return runtime
+}
+
+func newTestRedisRuntime(t *testing.T) (*miniredis.Miniredis, *RedisRuntime, config.RedisConfig) {
+	t.Helper()
+	server := miniredis.RunT(t)
+	cfg := testRedisConfig(server.Addr())
+	return server, newRedisRuntimeForTest(t, cfg), cfg
+}
+
+func mustLoadSession(t *testing.T, sessions *scs.SessionManager, token string) context.Context {
+	t.Helper()
+	ctx, err := sessions.Load(context.Background(), token)
+	if err != nil {
+		t.Fatalf("Sessions.Load() error = %v", err)
+	}
+	return ctx
+}
+
+func seedSession(t *testing.T, sessions *scs.SessionManager, marker string) string {
+	t.Helper()
+	ctx := mustLoadSession(t, sessions, "")
+	sessions.Put(ctx, "marker", marker)
+	token, _, err := sessions.Commit(ctx)
+	if err != nil {
+		t.Fatalf("Sessions.Commit() error = %v", err)
+	}
+	return token
 }
 
 func TestRedisRuntimeProbeAndSessionPrefix(t *testing.T) {
@@ -69,11 +94,7 @@ func TestRedisSessionStoreReleasesFenceProbeBeforeCommit(t *testing.T) {
 	server := miniredis.RunT(t)
 	cfg := testRedisConfig(server.Addr())
 	cfg.PoolSize = 1
-	runtime, err := NewRedisRuntime(cfg)
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	runtime := newRedisRuntimeForTest(t, cfg)
 
 	data, err := (scs.GobCodec{}).Encode(time.Now().Add(time.Minute), map[string]interface{}{})
 	if err != nil {
@@ -100,11 +121,7 @@ func TestRedisRuntimeSupportsConfiguredAuthentication(t *testing.T) {
 	cfg := testRedisConfig(server.Addr())
 	cfg.Password = "redis-password"
 
-	runtime, err := NewRedisRuntime(cfg)
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	runtime := newRedisRuntimeForTest(t, cfg)
 
 	if err := runtime.Probe(context.Background()); err != nil {
 		t.Fatalf("authenticated Probe() error = %v", err)
@@ -117,11 +134,7 @@ func TestRedisRuntimeDoesNotDowngradeRejectedCredentials(t *testing.T) {
 	cfg := testRedisConfig(server.Addr())
 	cfg.Password = "wrong-password"
 
-	runtime, err := NewRedisRuntime(cfg)
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	runtime := newRedisRuntimeForTest(t, cfg)
 
 	if err := runtime.Probe(context.Background()); err == nil {
 		t.Fatal("Probe() error = nil, want configured credential rejection")
@@ -184,11 +197,7 @@ func TestRedisRuntimePoolRejectsConnectionErrors(t *testing.T) {
 	address := server.Addr()
 	server.Close()
 	cfg := testRedisConfig(address)
-	runtime, err := NewRedisRuntime(cfg)
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	runtime := newRedisRuntimeForTest(t, cfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()

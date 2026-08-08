@@ -190,11 +190,9 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_request", "rotate requires source and destination profiles")
 			return
 		}
-		if _, ok := h.profiles[request.SourceProfileID]; !ok {
-			writeProfileAccessError(w, h.authConfig.Mode)
-			return
-		}
-		if _, ok := h.profiles[request.DestinationProfileID]; !ok {
+		_, sourceOK := h.profiles[request.SourceProfileID]
+		_, destinationOK := h.profiles[request.DestinationProfileID]
+		if !sourceOK || !destinationOK {
 			writeProfileAccessError(w, h.authConfig.Mode)
 			return
 		}

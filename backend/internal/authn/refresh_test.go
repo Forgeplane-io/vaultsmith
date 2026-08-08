@@ -21,17 +21,14 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func newRefreshService(t *testing.T, exchange func(context.Context, string) (*oauth2.Token, error)) (*Authenticator, *RedisRuntime, string) {
+func newRefreshService(t *testing.T, exchange func(context.Context, string) (*oauth2.Token, error)) (*Authenticator, string) {
 	t.Helper()
 	server := miniredis.RunT(t)
 	redisConfig := testRedisConfig(server.Addr())
 	redisConfig.RefreshLockTTL = 500 * time.Millisecond
 	redisConfig.RefreshLockWait = 250 * time.Millisecond
 	redisConfig.RefreshLockRetry = 10 * time.Millisecond
-	runtime, err := NewRedisRuntime(redisConfig)
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
+	runtime := newRedisRuntimeForTest(t, redisConfig)
 	sessionConfig := config.SessionConfig{
 		CookieName:       "__Host-vaultsmith_session",
 		AbsoluteLifetime: 8 * time.Hour,
@@ -45,11 +42,7 @@ func newRefreshService(t *testing.T, exchange func(context.Context, string) (*oa
 		Sessions:        NewSessionManager(runtime.SessionStore(), sessionConfig),
 		refreshExchange: exchange,
 	}
-	ctx, err := service.Sessions.Load(context.Background(), "")
-	if err != nil {
-		runtime.Close()
-		t.Fatalf("Sessions.Load() error = %v", err)
-	}
+	ctx := mustLoadSession(t, service.Sessions, "")
 	principal := Principal{
 		Issuer:    "https://issuer.example",
 		Subject:   "user-123",
@@ -60,25 +53,20 @@ func newRefreshService(t *testing.T, exchange func(context.Context, string) (*oa
 	StorePrincipal(ctx, service.Sessions, principal, "old-refresh")
 	token, _, err := service.Sessions.Commit(ctx)
 	if err != nil {
-		runtime.Close()
 		t.Fatalf("Sessions.Commit() error = %v", err)
 	}
-	return service, runtime, token
+	return service, token
 }
 
 func TestAuthenticatedPrincipalRotatesRefreshTokenAndExtendsSessionExpiryWithoutIDToken(t *testing.T) {
-	service, runtime, token := newRefreshService(t, func(_ context.Context, refreshToken string) (*oauth2.Token, error) {
+	service, token := newRefreshService(t, func(_ context.Context, refreshToken string) (*oauth2.Token, error) {
 		if refreshToken != "old-refresh" {
 			t.Fatalf("refresh token = %q, want old-refresh", refreshToken)
 		}
 		return &oauth2.Token{RefreshToken: "new-refresh", Expiry: time.Now().Add(time.Hour)}, nil
 	})
-	defer runtime.Close()
 
-	ctx, err := service.Sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("Sessions.Load() error = %v", err)
-	}
+	ctx := mustLoadSession(t, service.Sessions, token)
 	principal, found, err := service.AuthenticatedPrincipal(ctx)
 	if err != nil || !found {
 		t.Fatalf("AuthenticatedPrincipal() = (%+v, %t, %v)", principal, found, err)
@@ -94,21 +82,14 @@ func TestAuthenticatedPrincipalRotatesRefreshTokenAndExtendsSessionExpiryWithout
 func TestLogoutSerializesWithInFlightRefresh(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	service, runtime, token := newRefreshService(t, func(_ context.Context, _ string) (*oauth2.Token, error) {
+	service, token := newRefreshService(t, func(_ context.Context, _ string) (*oauth2.Token, error) {
 		close(started)
 		<-release
 		return &oauth2.Token{RefreshToken: "rotated", Expiry: time.Now().Add(time.Hour)}, nil
 	})
-	defer runtime.Close()
 
-	refreshCtx, err := service.Sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("refresh Sessions.Load() error = %v", err)
-	}
-	logoutCtx, err := service.Sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("logout Sessions.Load() error = %v", err)
-	}
+	refreshCtx := mustLoadSession(t, service.Sessions, token)
+	logoutCtx := mustLoadSession(t, service.Sessions, token)
 
 	refreshErr := make(chan error, 1)
 	go func() {
@@ -128,10 +109,7 @@ func TestLogoutSerializesWithInFlightRefresh(t *testing.T) {
 	if err := <-logoutErr; err != nil {
 		t.Fatalf("logout error = %v", err)
 	}
-	fresh, err := service.Sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("fresh Sessions.Load() error = %v", err)
-	}
+	fresh := mustLoadSession(t, service.Sessions, token)
 	if _, found, err := PrincipalFromSession(fresh, service.Sessions); err != nil || found {
 		t.Fatalf("session after serialized logout = (found=%t, err=%v), want absent", found, err)
 	}
@@ -139,20 +117,15 @@ func TestLogoutSerializesWithInFlightRefresh(t *testing.T) {
 
 func TestAuthenticatedPrincipalSerializesConcurrentRefresh(t *testing.T) {
 	var calls atomic.Int32
-	service, runtime, token := newRefreshService(t, func(_ context.Context, _ string) (*oauth2.Token, error) {
+	service, token := newRefreshService(t, func(_ context.Context, _ string) (*oauth2.Token, error) {
 		calls.Add(1)
 		time.Sleep(40 * time.Millisecond)
 		return &oauth2.Token{RefreshToken: "rotated"}, nil
 	})
-	defer runtime.Close()
 
 	contexts := make([]context.Context, 2)
 	for index := range contexts {
-		ctx, err := service.Sessions.Load(context.Background(), token)
-		if err != nil {
-			t.Fatalf("Sessions.Load() error = %v", err)
-		}
-		contexts[index] = ctx
+		contexts[index] = mustLoadSession(t, service.Sessions, token)
 	}
 	var wg sync.WaitGroup
 	errs := make(chan error, len(contexts))
@@ -177,64 +150,46 @@ func TestAuthenticatedPrincipalSerializesConcurrentRefresh(t *testing.T) {
 }
 
 func TestAuthenticatedPrincipalDestroysSessionOnInvalidGrant(t *testing.T) {
-	service, runtime, token := newRefreshService(t, func(_ context.Context, _ string) (*oauth2.Token, error) {
+	service, token := newRefreshService(t, func(_ context.Context, _ string) (*oauth2.Token, error) {
 		return nil, &oauth2.RetrieveError{ErrorCode: "invalid_grant"}
 	})
-	defer runtime.Close()
 
-	ctx, err := service.Sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("Sessions.Load() error = %v", err)
-	}
-	_, _, err = service.AuthenticatedPrincipal(ctx)
+	ctx := mustLoadSession(t, service.Sessions, token)
+	_, _, err := service.AuthenticatedPrincipal(ctx)
 	if !errors.Is(err, ErrNotAuthenticated) {
 		t.Fatalf("AuthenticatedPrincipal() error = %v, want ErrNotAuthenticated", err)
 	}
-	fresh, err := service.Sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("fresh Sessions.Load() error = %v", err)
-	}
+	fresh := mustLoadSession(t, service.Sessions, token)
 	if _, found, err := PrincipalFromSession(fresh, service.Sessions); err != nil || found {
 		t.Fatalf("destroyed session state = (found=%t, err=%v), want absent", found, err)
 	}
 }
 
 func TestAuthenticatedPrincipalPreservesSessionOnTransientRefreshFailure(t *testing.T) {
-	service, runtime, token := newRefreshService(t, func(_ context.Context, _ string) (*oauth2.Token, error) {
+	service, token := newRefreshService(t, func(_ context.Context, _ string) (*oauth2.Token, error) {
 		return nil, errors.New("provider unavailable")
 	})
-	defer runtime.Close()
 
-	ctx, err := service.Sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("Sessions.Load() error = %v", err)
-	}
-	_, _, err = service.AuthenticatedPrincipal(ctx)
+	ctx := mustLoadSession(t, service.Sessions, token)
+	_, _, err := service.AuthenticatedPrincipal(ctx)
 	if !errors.Is(err, ErrTemporaryUnavailable) {
 		t.Fatalf("AuthenticatedPrincipal() error = %v, want ErrTemporaryUnavailable", err)
 	}
-	fresh, err := service.Sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("fresh Sessions.Load() error = %v", err)
-	}
+	fresh := mustLoadSession(t, service.Sessions, token)
 	if _, found, err := PrincipalFromSession(fresh, service.Sessions); err != nil || !found {
 		t.Fatalf("preserved session state = (found=%t, err=%v), want present", found, err)
 	}
 }
 
 func TestAuthenticatedPrincipalRefreshesExpiredPrincipalWhenRefreshTokenExists(t *testing.T) {
-	service, runtime, token := newRefreshService(t, func(_ context.Context, refreshToken string) (*oauth2.Token, error) {
+	service, token := newRefreshService(t, func(_ context.Context, refreshToken string) (*oauth2.Token, error) {
 		if refreshToken != "old-refresh" {
 			t.Fatalf("refresh token = %q, want old-refresh", refreshToken)
 		}
 		return &oauth2.Token{RefreshToken: "new-refresh", Expiry: time.Now().Add(time.Hour)}, nil
 	})
-	defer runtime.Close()
 
-	ctx, err := service.Sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("Sessions.Load() error = %v", err)
-	}
+	ctx := mustLoadSession(t, service.Sessions, token)
 	service.Sessions.Put(ctx, sessionExpiresAtKey, time.Now().Add(-time.Minute))
 	if _, _, err := service.Sessions.Commit(ctx); err != nil {
 		t.Fatalf("Sessions.Commit() error = %v", err)
@@ -250,16 +205,12 @@ func TestAuthenticatedPrincipalRefreshesExpiredPrincipalWhenRefreshTokenExists(t
 }
 
 func TestAuthenticatedPrincipalRejectsExpiredPrincipalWithoutRefreshToken(t *testing.T) {
-	service, runtime, token := newRefreshService(t, func(context.Context, string) (*oauth2.Token, error) {
+	service, token := newRefreshService(t, func(context.Context, string) (*oauth2.Token, error) {
 		t.Fatal("refresh exchange called without a refresh token")
 		return nil, nil
 	})
-	defer runtime.Close()
 
-	ctx, err := service.Sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("Sessions.Load() error = %v", err)
-	}
+	ctx := mustLoadSession(t, service.Sessions, token)
 	StorePrincipal(ctx, service.Sessions, Principal{
 		Issuer:    "https://issuer.example",
 		Subject:   "user-123",
@@ -270,15 +221,14 @@ func TestAuthenticatedPrincipalRejectsExpiredPrincipalWithoutRefreshToken(t *tes
 		t.Fatalf("Sessions.Commit() error = %v", err)
 	}
 
-	_, _, err = service.AuthenticatedPrincipal(ctx)
+	_, _, err := service.AuthenticatedPrincipal(ctx)
 	if err != ErrRefreshRequired {
 		t.Fatalf("AuthenticatedPrincipal() error = %v, want ErrRefreshRequired", err)
 	}
 }
 
 func TestRefreshExchangeUsesConfiguredOIDCClientContext(t *testing.T) {
-	service, runtime, token := newRefreshService(t, nil)
-	defer runtime.Close()
+	service, token := newRefreshService(t, nil)
 
 	service.OAuth2 = oauth2.Config{Endpoint: oauth2.Endpoint{TokenURL: "https://issuer.example.test/token"}}
 	var calls atomic.Int32
@@ -293,10 +243,7 @@ func TestRefreshExchangeUsesConfiguredOIDCClientContext(t *testing.T) {
 	})}
 	service.refreshExchange = service.exchangeRefreshToken
 
-	ctx, err := service.Sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("Sessions.Load() error = %v", err)
-	}
+	ctx := mustLoadSession(t, service.Sessions, token)
 	if _, _, err := service.AuthenticatedPrincipal(ctx); err != nil {
 		t.Fatalf("AuthenticatedPrincipal() error = %v", err)
 	}

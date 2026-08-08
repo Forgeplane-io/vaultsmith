@@ -17,15 +17,7 @@ func TestRedisSessionFenceAllowsTokenRenewal(t *testing.T) {
 
 	sessionCfg := config.SessionConfig{CookieName: "__Host-vaultsmith_session", AbsoluteLifetime: time.Hour}
 	sessions := NewSessionManager(runtime.SessionStore(), sessionCfg)
-	initial, err := sessions.Load(context.Background(), "")
-	if err != nil {
-		t.Fatalf("initial Load() error = %v", err)
-	}
-	sessions.Put(initial, "marker", "initial")
-	token, _, err := sessions.Commit(initial)
-	if err != nil {
-		t.Fatalf("initial Commit() error = %v", err)
-	}
+	token := seedSession(t, sessions, "initial")
 	authenticator := &Authenticator{
 		Config:   config.AuthConfig{Mode: config.AuthModeNative, Session: sessionCfg, Redis: cfg},
 		Redis:    runtime,
@@ -36,10 +28,7 @@ func TestRedisSessionFenceAllowsTokenRenewal(t *testing.T) {
 		t.Fatalf("lease acquisition error = %v", err)
 	}
 	defer lease.release()
-	ctx, err := sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("session Load() error = %v", err)
-	}
+	ctx := mustLoadSession(t, sessions, token)
 	sessions.Put(ctx, sessionFenceKey, lease.fence)
 	if _, _, err := sessions.Commit(ctx); err != nil {
 		t.Fatalf("fenced Commit() error = %v", err)
@@ -58,15 +47,7 @@ func TestRedisSessionFenceRejectsStaleWholeSessionCommit(t *testing.T) {
 
 	sessionCfg := config.SessionConfig{CookieName: "__Host-vaultsmith_session", AbsoluteLifetime: time.Hour}
 	sessions := NewSessionManager(runtime.SessionStore(), sessionCfg)
-	initial, err := sessions.Load(context.Background(), "")
-	if err != nil {
-		t.Fatalf("initial Load() error = %v", err)
-	}
-	sessions.Put(initial, "marker", "initial")
-	token, _, err := sessions.Commit(initial)
-	if err != nil {
-		t.Fatalf("initial Commit() error = %v", err)
-	}
+	token := seedSession(t, sessions, "initial")
 
 	authenticator := &Authenticator{
 		Config:   config.AuthConfig{Mode: config.AuthModeNative, Session: sessionCfg, Redis: cfg},
@@ -77,10 +58,7 @@ func TestRedisSessionFenceRejectsStaleWholeSessionCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lease A acquisition error = %v", err)
 	}
-	ctxA, err := sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("lease A Load() error = %v", err)
-	}
+	ctxA := mustLoadSession(t, sessions, token)
 	sessions.Put(ctxA, sessionFenceKey, leaseA.fence)
 	sessions.Put(ctxA, "marker", "lease-a")
 	if _, _, err := sessions.Commit(ctxA); err != nil {
@@ -94,10 +72,7 @@ func TestRedisSessionFenceRejectsStaleWholeSessionCommit(t *testing.T) {
 		t.Fatalf("lease B acquisition error = %v", err)
 	}
 	defer leaseB.release()
-	ctxB, err := sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("lease B Load() error = %v", err)
-	}
+	ctxB := mustLoadSession(t, sessions, token)
 	sessions.Put(ctxB, sessionFenceKey, leaseB.fence)
 	sessions.Put(ctxB, "marker", "lease-b")
 	if _, _, err := sessions.Commit(ctxB); err != nil {
@@ -115,10 +90,7 @@ func TestRedisSessionFenceRejectsStaleWholeSessionCommit(t *testing.T) {
 		t.Fatal("stale lease A RenewToken() succeeded after lease B acquired the session")
 	}
 
-	check, err := sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("verification Load() error = %v", err)
-	}
+	check := mustLoadSession(t, sessions, token)
 	if got := sessions.GetString(check, "marker"); got != "lease-b" {
 		t.Fatalf("stored marker = %q, want lease-b", got)
 	}
@@ -134,15 +106,7 @@ func TestSessionMiddlewareRecoversFromEvictedSessionCookie(t *testing.T) {
 		Secure:           true,
 	}
 	sessions := NewSessionManager(runtime.SessionStore(), sessionCfg)
-	initial, err := sessions.Load(context.Background(), "")
-	if err != nil {
-		t.Fatalf("initial Load() error = %v", err)
-	}
-	sessions.Put(initial, "marker", "before")
-	token, _, err := sessions.Commit(initial)
-	if err != nil {
-		t.Fatalf("initial Commit() error = %v", err)
-	}
+	token := seedSession(t, sessions, "before")
 
 	authenticator := &Authenticator{
 		Config:   config.AuthConfig{Mode: config.AuthModeNative, Session: sessionCfg, Redis: cfg},
@@ -171,10 +135,7 @@ func TestSessionMiddlewareRecoversFromEvictedSessionCookie(t *testing.T) {
 		t.Fatalf("replacement session cookie = %q, want a new non-empty token", cookies[0].Value)
 	}
 
-	check, err := sessions.Load(context.Background(), cookies[0].Value)
-	if err != nil {
-		t.Fatalf("recovered session Load() error = %v", err)
-	}
+	check := mustLoadSession(t, sessions, cookies[0].Value)
 	if got := sessions.GetString(check, "marker"); got != "recovered" {
 		t.Fatalf("recovered session marker = %q, want recovered", got)
 	}
@@ -187,11 +148,7 @@ func TestSessionMiddlewareFencesCommitAfterLeaseLoss(t *testing.T) {
 	cfg.RefreshLockWait = 100 * time.Millisecond
 	cfg.RefreshLockRetry = 5 * time.Millisecond
 	cfg.WriteTimeout = 20 * time.Millisecond
-	runtime, err := NewRedisRuntime(cfg)
-	if err != nil {
-		t.Fatalf("NewRedisRuntime() error = %v", err)
-	}
-	defer runtime.Close()
+	runtime := newRedisRuntimeForTest(t, cfg)
 
 	sessions := NewSessionManager(memstore.New(), config.SessionConfig{
 		CookieName:       "__Host-vaultsmith_session",
@@ -199,15 +156,7 @@ func TestSessionMiddlewareFencesCommitAfterLeaseLoss(t *testing.T) {
 		IdleLifetime:     time.Minute,
 		Secure:           true,
 	})
-	initial, err := sessions.Load(context.Background(), "")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	sessions.Put(initial, "marker", "before")
-	token, _, err := sessions.Commit(initial)
-	if err != nil {
-		t.Fatalf("Commit() error = %v", err)
-	}
+	token := seedSession(t, sessions, "before")
 
 	authenticator := &Authenticator{
 		Config:   config.AuthConfig{Mode: config.AuthModeNative, Session: config.SessionConfig{CookieName: "__Host-vaultsmith_session"}, Redis: cfg},
@@ -234,10 +183,7 @@ func TestSessionMiddlewareFencesCommitAfterLeaseLoss(t *testing.T) {
 		t.Fatalf("response status = %d, want %d after lease loss", response.Code, http.StatusServiceUnavailable)
 	}
 
-	check, err := sessions.Load(context.Background(), token)
-	if err != nil {
-		t.Fatalf("re-load session: %v", err)
-	}
+	check := mustLoadSession(t, sessions, token)
 	if got := sessions.GetString(check, "marker"); got != "before" {
 		t.Fatalf("session marker = %q, want stale write fenced", got)
 	}
