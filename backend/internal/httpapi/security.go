@@ -107,9 +107,6 @@ func requestOrigin(r *http.Request) string {
 }
 
 func (h *Handler) requirePrincipal(r *http.Request) (authn.Principal, bool, int, string) {
-	if h.authConfig.Mode != config.AuthModeNative {
-		return authn.Principal{}, true, 0, ""
-	}
 	if h.auth == nil || h.authorizer == nil {
 		return authn.Principal{}, false, http.StatusServiceUnavailable, "not_ready"
 	}

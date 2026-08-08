@@ -77,7 +77,6 @@ func NewAuthenticator(ctx context.Context, cfg config.AuthConfig, runtime *Redis
 		Config: cfg,
 		Redis:  runtime,
 	}
-	service.refreshExchange = service.exchangeRefreshToken
 	if cfg.Mode == config.AuthModeOff {
 		service.Sessions = NewSessionManager(memstore.New(), cfg.Session)
 		return service, nil

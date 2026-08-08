@@ -23,8 +23,6 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			switch {
 			case errors.Is(err, authn.ErrNotAuthenticated), errors.Is(err, authn.ErrRefreshRequired):
-				writeJSON(w, http.StatusOK, response)
-				return
 			case errors.Is(err, authn.ErrTemporaryUnavailable):
 				writeAuthError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
 				return

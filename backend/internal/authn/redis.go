@@ -96,9 +96,7 @@ func (store *fencedSessionStore) Commit(token string, data []byte, expiry time.T
 func (store *fencedSessionStore) Delete(token string) error {
 	conn := store.pool.Get()
 	defer conn.Close()
-	if _, err := redis.String(conn.Do("GET", store.fenceKey(token))); err == redis.ErrNil {
-		return ErrTemporaryUnavailable
-	} else if err != nil {
+	if _, err := redis.String(conn.Do("GET", store.fenceKey(token))); err != nil && err != redis.ErrNil {
 		return err
 	}
 	return ErrTemporaryUnavailable
