@@ -1,12 +1,14 @@
 # Native authentication integration harness
 
-This harness exercises the native OIDC path against disposable Redis and Keycloak containers. It generates all admin, client, user, CSRF, and Vault password values at runtime in a temporary directory; no credential fixture is committed.
+This harness runs Vaultsmith against disposable Redis, Keycloak, and local-TLS containers. It generates all passwords, tokens, policy files, cookies, and certificates at runtime. No credential fixture is committed.
 
-Requirements:
+## Requirements
 
 - Docker Engine with Compose v2
-- Go 1.25+
-- `curl`, `openssl`, and Python 3
+- Go 1.25 or newer
+- Bash, `curl`, `openssl`, and Python 3
+
+## Automated run
 
 Run from the repository root:
 
@@ -14,22 +16,40 @@ Run from the repository root:
 ./scripts/integration-native.sh
 ```
 
-For a manual browser session, keep the disposable environment running instead of executing assertions:
+The script checks:
 
-```bash
+- OIDC discovery and Authorization Code + PKCE login.
+- Redis-backed sessions, CSRF-protected operations, and logout invalidation.
+- Casbin profile filtering and encryption for an authorized user.
+- Authentication with no authorization for a user with no matching group.
+
+The automated run uses the `dev` profile. It prints a final success line when all checks pass.
+
+## Interactive run
+
+Keep the disposable stack running for browser testing:
+
+```sh
 ./scripts/integration-native.sh --interactive
 ```
 
-Open the printed `https://localhost:18443/` URL. The harness prints two disposable accounts: `integration-user` is in the operator group and can use `dev` and `prod`; `integration-denied` authenticates but has no group or Casbin permissions. It also prints the two local CA certificate paths. Exercise sign-in, profile listing, encrypt, decrypt, rotate, and sign-out as the authorized user; then sign in as `integration-denied`, verify the session is authenticated with an empty profile list, and verify protected operations return `403`. Press `Ctrl-C` in the harness terminal to stop Vaultsmith and remove all containers and temporary credentials. On macOS, you can open the two `.crt` files in Keychain Access and trust them in the Login keychain for this session; remove those temporary trust entries afterward.
+The script prints disposable credentials and certificate paths. Treat that output as sensitive.
 
-The automated harness starts Keycloak with a private admin HTTP port on `127.0.0.1:18082`, exposes its OIDC issuer through a disposable local-TLS Caddy edge on `127.0.0.1:18081`, Redis on `127.0.0.1:16379`, the Vaultsmith process on `127.0.0.1:18080`, and a second local-TLS Caddy edge on `127.0.0.1:18443`. The generated IdP CA is trusted only through the temporary `OIDC_CA_FILE` configuration. It performs:
+1. Open the printed `https://localhost:18443/` URL.
+2. Trust the printed IdP and Vaultsmith local CA certificates for this session if your browser requires it.
+3. Sign in as `integration-user` and test `dev` and `prod`.
+4. Sign out, then sign in as `integration-denied`.
+5. Confirm that the denied user is authenticated but sees no profiles and receives `403` for a protected operation.
+6. Press `Ctrl-C` in the harness terminal to stop the process and remove the containers and temporary state.
 
-1. OIDC discovery and provider configuration;
-2. Authorization Code + PKCE login through the Keycloak login form;
-3. Redis-backed session bootstrap and CSRF token issuance;
-4. Casbin group-to-role mapping and profile filtering for an authorized user;
-5. authenticated no-permission login with an empty profile set and a forbidden operation;
-6. an authorized encrypt request with origin/CSRF enforcement; and
-7. CSRF-protected logout and session invalidation.
+To retain the temporary directory for debugging, set `KEEP_INTEGRATION_TMP=1`. The directory contains generated credentials; remove it after use.
 
-The script removes the temporary Compose project, volumes, binary, policy, cookies, and generated environment on exit. Do not point it at a shared Docker project or production credentials.
+## Local endpoints
+
+| Component | Address |
+| --- | --- |
+| Vaultsmith HTTPS edge | `https://localhost:18443/` |
+| Vaultsmith HTTP process | `http://127.0.0.1:18080/` |
+| Keycloak OIDC edge | `https://localhost:18081/` |
+| Keycloak admin port | `http://127.0.0.1:18082/` |
+| Redis | `127.0.0.1:16379` |
