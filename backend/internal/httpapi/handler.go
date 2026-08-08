@@ -77,10 +77,6 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
-func New(profiles []Profile, executor Executor) http.Handler {
-	return newHandler(profiles, executor)
-}
-
 func newHandler(profiles []Profile, executor Executor) *Handler {
 	public := make([]Profile, 0, len(profiles))
 	profileSet := make(map[string]struct{}, len(profiles))

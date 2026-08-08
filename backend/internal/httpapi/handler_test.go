@@ -35,7 +35,7 @@ func (f *fakeExecutor) Rotate(sourceProfileID, destinationProfileID, value strin
 
 func TestProfilesEndpoint(t *testing.T) {
 	executor := &fakeExecutor{}
-	handler := New([]Profile{{ID: "dev", Label: "Development"}}, executor)
+	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, executor)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/profiles", nil)
 	response := httptest.NewRecorder()
 
@@ -55,7 +55,7 @@ func TestProfilesEndpoint(t *testing.T) {
 
 func TestOperationEndpoint(t *testing.T) {
 	executor := &fakeExecutor{value: "$ANSIBLE_VAULT;1.1;AES256\nsynthetic"}
-	handler := New([]Profile{{ID: "dev", Label: "Development"}}, executor)
+	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, executor)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(`{"profileId":"dev","mode":"encrypt","value":"fixture-value"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -76,7 +76,7 @@ func TestOperationEndpoint(t *testing.T) {
 
 func TestRotateOperationEndpoint(t *testing.T) {
 	executor := &fakeExecutor{value: "$ANSIBLE_VAULT;1.2;AES256;destination\nsynthetic"}
-	handler := New([]Profile{
+	handler := newHandler([]Profile{
 		{ID: "source", Label: "Source"},
 		{ID: "destination", Label: "Destination"},
 	}, executor)
@@ -101,7 +101,7 @@ func TestRotateOperationEndpoint(t *testing.T) {
 
 func TestOperationFailureIsGeneric(t *testing.T) {
 	executor := &fakeExecutor{err: errors.New("wrong password: do-not-leak-this-secret")}
-	handler := New([]Profile{{ID: "dev", Label: "Development"}}, executor)
+	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, executor)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(`{"profileId":"dev","mode":"decrypt","value":"secret-looking-input"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -123,7 +123,7 @@ func TestOperationFailureIsGeneric(t *testing.T) {
 
 func TestRotateOperationFailureIsGeneric(t *testing.T) {
 	executor := &fakeExecutor{err: errors.New("non-UTF-8 plaintext: \xff\xfe")}
-	handler := New([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, executor)
+	handler := newHandler([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, executor)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(`{"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":"secret-looking-vault"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -161,7 +161,7 @@ func TestValidationAndMethodErrors(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			handler := New([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
+			handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
 			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
 			if test.contentType != "" {
 				request.Header.Set("Content-Type", test.contentType)
@@ -189,7 +189,7 @@ func TestRotateValidation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			handler := New([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, &fakeExecutor{})
+			handler := newHandler([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, &fakeExecutor{})
 			request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(test.body))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -213,7 +213,7 @@ func TestLimitValidation(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			handler := New([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
+			handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
 			body := `{"profileId":"dev","mode":"` + test.mode + `","value":"` + test.value + `"}`
 			request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(body))
 			request.Header.Set("Content-Type", "application/json")
@@ -227,7 +227,7 @@ func TestLimitValidation(t *testing.T) {
 }
 
 func TestRotateInputLimitValidation(t *testing.T) {
-	handler := New([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, &fakeExecutor{})
+	handler := newHandler([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, &fakeExecutor{})
 	body := `{"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":"` + strings.Repeat("x", MaxVaultTextBytes+1) + `"}`
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -241,7 +241,7 @@ func TestRotateInputLimitValidation(t *testing.T) {
 }
 
 func TestJSONBodyLimit(t *testing.T) {
-	handler := New([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
+	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
 	body := `{"profileId":"dev","mode":"encrypt","value":"` + strings.Repeat("x", MaxRequestBodyBytes) + `"}`
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -255,8 +255,8 @@ func TestJSONBodyLimit(t *testing.T) {
 }
 
 func TestReadinessAndSecurityHeaders(t *testing.T) {
-	readyHandler := New([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
-	notReadyHandler := New(nil, nil)
+	readyHandler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
+	notReadyHandler := newHandler(nil, nil)
 	for _, test := range []struct {
 		name    string
 		handler http.Handler
@@ -286,7 +286,7 @@ func TestReadinessAndSecurityHeaders(t *testing.T) {
 }
 
 func TestNotFoundIsJSON(t *testing.T) {
-	handler := New([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
+	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
 	request := httptest.NewRequest(http.MethodGet, "/not-found", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
