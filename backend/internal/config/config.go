@@ -71,7 +71,7 @@ func LoadApplicationFromEnv() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	auth, err := LoadAuthFromEnv()
+	auth, err := LoadAuth(os.LookupEnv)
 	if err != nil {
 		return nil, err
 	}

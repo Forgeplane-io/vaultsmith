@@ -163,10 +163,6 @@ func LoadAuth(lookup EnvLookup) (*AuthConfig, error) {
 	return cfg, nil
 }
 
-func LoadAuthFromEnv() (*AuthConfig, error) {
-	return LoadAuth(os.LookupEnv)
-}
-
 func parseAuthMode(lookup EnvLookup) (AuthMode, error) {
 	raw, ok := lookup(authModeEnv)
 	if !ok || strings.TrimSpace(raw) == "" {
