@@ -2,6 +2,13 @@
 
 All notable changes to Vaultsmith are documented here. Release Please maintains this file from Conventional Commits.
 
+## [0.2.1](https://github.com/Forgeplane-io/vaultsmith/compare/v0.2.0...v0.2.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* harden bootstrap readiness handling ([02137c4](https://github.com/Forgeplane-io/vaultsmith/commit/02137c4a7223e7e5d215d8784c2f7e5d14565d96))
+
 ## [0.2.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.1.1...v0.2.0) (2026-08-09)
 
 
