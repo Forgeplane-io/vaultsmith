@@ -71,7 +71,7 @@ func (h *Handler) serveCallback(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusServiceUnavailable, "not_ready")
 		return
 	}
-	location, _, err := h.auth.CompleteLogin(r.Context(), r.URL.Query().Get("state"), r.URL.Query().Get("code"))
+	location, err := h.auth.CompleteLogin(r.Context(), r.URL.Query().Get("state"), r.URL.Query().Get("code"))
 	if err != nil {
 		authn.ClearSessionCookie(w, h.authConfig.Session)
 		if errors.Is(err, authn.ErrTemporaryUnavailable) {

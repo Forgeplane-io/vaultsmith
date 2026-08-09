@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -83,9 +82,6 @@ func LoadPolicy(path string, profileIDs []string) (*Policy, error) {
 		}
 		return matchesPolicyObject(resource, selector), nil
 	})
-	if err := enforcer.LoadPolicy(); err != nil {
-		return nil, fmt.Errorf("%w: policy load failed", ErrPolicy)
-	}
 	policy := &Policy{
 		enforcer:   enforcer,
 		groupRoles: make(map[string][]string),
@@ -225,44 +221,31 @@ func ProfileResource(profileID string) string {
 	return "profile:" + profileID
 }
 
-func (p *Policy) rolesForGroups(groups []string) []string {
-	seen := make(map[string]struct{})
-	var roles []string
+func (p *Policy) rolesForGroups(groups []string) map[string]struct{} {
+	roles := make(map[string]struct{})
 	for _, group := range groups {
 		for _, role := range p.groupRoles["group:"+group] {
 			for current := role; current != ""; current = p.parents[current] {
-				if _, exists := seen[current]; exists {
+				if _, exists := roles[current]; exists {
 					break
 				}
-				seen[current] = struct{}{}
-				roles = append(roles, current)
+				roles[current] = struct{}{}
 			}
 		}
 	}
-	sort.Strings(roles)
 	return roles
 }
 
-func (p *Policy) evaluate(roles []string, object, action string) (allow, deny bool, err error) {
-	roleSet := make(map[string]struct{}, len(roles))
-	for _, role := range roles {
-		roleSet[role] = struct{}{}
-		ok, enforceErr := p.enforcer.Enforce(role, object, action)
+func (p *Policy) evaluate(roles map[string]struct{}, object, action string) (allow, deny bool, err error) {
+	for role := range roles {
+		ok, matched, enforceErr := p.enforcer.EnforceEx(role, object, action)
 		if enforceErr != nil {
 			return false, false, fmt.Errorf("%w: policy enforcement failed", ErrPolicy)
 		}
 		if ok {
 			allow = true
 		}
-	}
-	for _, rule := range p.rules {
-		if _, exists := roleSet[rule.Subject]; !exists || rule.Action != action || !matchesPolicyObject(object, rule.Object) {
-			continue
-		}
-		switch rule.Effect {
-		case "allow":
-			allow = true
-		case "deny":
+		if len(matched) == 4 && matched[3] == "deny" {
 			deny = true
 		}
 	}

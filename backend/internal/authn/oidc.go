@@ -26,7 +26,6 @@ type Authenticator struct {
 	Config   config.AuthConfig
 	Redis    *RedisRuntime
 	Sessions *scs.SessionManager
-	Provider *oidc.Provider
 	Verifier *oidc.IDTokenVerifier
 	OAuth2   oauth2.Config
 
@@ -102,7 +101,6 @@ func NewAuthenticator(ctx context.Context, cfg config.AuthConfig, runtime *Redis
 	if err != nil {
 		return nil, fmt.Errorf("OIDC discovery failed")
 	}
-	service.Provider = provider
 	service.Verifier = provider.Verifier(&oidc.Config{ClientID: cfg.OIDC.ClientID})
 	service.OAuth2 = oauth2.Config{
 		ClientID:     cfg.OIDC.ClientID,
@@ -160,42 +158,42 @@ func (a *Authenticator) BeginLogin(ctx context.Context, returnTo string) (string
 	), nil
 }
 
-func (a *Authenticator) CompleteLogin(ctx context.Context, state, code string) (string, Principal, error) {
+func (a *Authenticator) CompleteLogin(ctx context.Context, state, code string) (string, error) {
 	if a.Config.Mode != config.AuthModeNative || a.Redis == nil {
-		return "", Principal{}, ErrAuthenticationDisabled
+		return "", ErrAuthenticationDisabled
 	}
 	if state == "" || code == "" {
-		return "", Principal{}, ErrInvalidCallback
+		return "", ErrInvalidCallback
 	}
 	transaction, found, err := a.Redis.ConsumeLoginTransaction(ctx, state)
 	if err != nil {
-		return "", Principal{}, ErrTemporaryUnavailable
+		return "", ErrTemporaryUnavailable
 	}
 	if !found || a.Sessions.Token(ctx) == "" || a.Sessions.Token(ctx) != transaction.PreAuthSession {
-		return "", Principal{}, ErrInvalidCallback
+		return "", ErrInvalidCallback
 	}
 
 	exchangeCtx, cancel := a.oidcTimeoutContext(ctx)
 	defer cancel()
 	token, err := a.OAuth2.Exchange(exchangeCtx, code, oauth2.VerifierOption(transaction.PKCEVerifier))
 	if err != nil {
-		return "", Principal{}, ErrInvalidCallback
+		return "", ErrInvalidCallback
 	}
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok || rawIDToken == "" {
-		return "", Principal{}, ErrInvalidCallback
+		return "", ErrInvalidCallback
 	}
 	principal, err := a.verifyIDToken(ctx, rawIDToken, transaction.Nonce)
 	if err != nil {
-		return "", Principal{}, ErrInvalidCallback
+		return "", ErrInvalidCallback
 	}
 	if err := a.Sessions.RenewToken(ctx); err != nil {
-		return "", Principal{}, ErrTemporaryUnavailable
+		return "", ErrTemporaryUnavailable
 	}
 	rebindSessionLock(ctx, a.Sessions.Token(ctx))
 	if fence := sessionLockFence(ctx); fence != "" {
 		if err := a.Redis.ActivateSessionFence(ctx, a.Sessions.Token(ctx), fence, a.Config.Session.AbsoluteLifetime); err != nil {
-			return "", Principal{}, ErrTemporaryUnavailable
+			return "", ErrTemporaryUnavailable
 		}
 	}
 	StorePrincipal(ctx, a.Sessions, principal, token.RefreshToken)
@@ -203,7 +201,7 @@ func (a *Authenticator) CompleteLogin(ctx context.Context, state, code string) (
 	if token.RefreshToken == "" {
 		a.Sessions.SetDeadline(ctx, refreshedSessionExpiry(a.Sessions.Deadline(ctx), principal.ExpiresAt))
 	}
-	return transaction.ReturnTo, principal, nil
+	return transaction.ReturnTo, nil
 }
 
 func (a *Authenticator) verifyIDToken(ctx context.Context, rawIDToken, expectedNonce string) (Principal, error) {

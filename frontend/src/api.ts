@@ -52,7 +52,6 @@ type ErrorEnvelope = {
 }
 
 let csrfToken = ''
-let legacyProfiles: Profile[] | null = null
 
 async function requestJSON(path: string, init?: RequestInit): Promise<unknown> {
   const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) }
@@ -90,10 +89,6 @@ export async function fetchSession(signal?: AbortSignal): Promise<Session> {
     signal,
   })
   if (!isSessionEnvelope(payload)) {
-    if (isProfileEnvelope(payload)) {
-      legacyProfiles = payload.profiles
-      return { authenticated: false, authRequired: false, csrfToken: '' }
-    }
     throw new ApiError('The service returned an invalid session response', 'invalid_response')
   }
   csrfToken = payload.csrfToken
@@ -102,11 +97,6 @@ export async function fetchSession(signal?: AbortSignal): Promise<Session> {
 export async function fetchProfiles(signal?: AbortSignal): Promise<Profile[]> {
   if (signal?.aborted) {
     throw new DOMException('The operation was aborted', 'AbortError')
-  }
-  if (legacyProfiles) {
-    const cachedProfiles = legacyProfiles
-    legacyProfiles = null
-    return cachedProfiles
   }
   const timeoutController = new AbortController()
   let timedOut = false

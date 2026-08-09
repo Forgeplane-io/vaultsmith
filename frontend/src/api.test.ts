@@ -22,6 +22,12 @@ describe('API client', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/profiles', expect.objectContaining({ headers: { Accept: 'application/json' } }))
   })
 
+  it('rejects a legacy profile envelope from the session endpoint', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ profiles: [{ id: 'dev', label: 'Development' }] }))
+
+    await expect(fetchSession()).rejects.toMatchObject({ name: 'ApiError', code: 'invalid_response' })
+  })
+
   it('sends the exact operation contract', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ value: 'vault-output' }))
 

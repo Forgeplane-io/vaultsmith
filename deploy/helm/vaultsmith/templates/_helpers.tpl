@@ -65,7 +65,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- $mode := required "auth.mode must be explicitly set to native or off" .Values.auth.mode -}}
 {{- if not (has $mode (list "off" "native")) }}{{ fail (printf "auth.mode must be off or native, got %q" $mode) }}{{ end }}
-{{- if ne .Values.auth.policy.file "/etc/vaultsmith/policy/policy.csv" }}{{ fail "auth.policy.file must be /etc/vaultsmith/policy/policy.csv because the chart mounts that fixed path" }}{{ end }}
+{{- if and (hasKey .Values.auth.policy "file") (ne .Values.auth.policy.file "/etc/vaultsmith/policy/policy.csv") }}{{ fail "auth.policy.file must be /etc/vaultsmith/policy/policy.csv because the chart mounts that fixed path" }}{{ end }}
 {{- if and .Values.auth.policy.data .Values.auth.policy.existingConfigMap }}{{ fail "auth.policy.data and auth.policy.existingConfigMap are mutually exclusive" }}{{ end }}
 {{- if eq $mode "native" }}
 {{- $_ := required "auth.csrf.existingSecret is required in native mode" .Values.auth.csrf.existingSecret }}

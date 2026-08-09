@@ -30,7 +30,6 @@ const (
 	sessionIssuedAtKey       = "auth.issued_at"
 	sessionExpiresAtKey      = "auth.expires_at"
 	sessionRefreshTokenKey   = "auth.refresh_token"
-	sessionVersionKey        = "auth.version"
 	sessionRefreshCheckedKey = "auth.refresh_checked_at"
 	sessionFenceKey          = "auth.session_fence"
 	pendingStateKey          = "auth.pending_state"
@@ -91,9 +90,6 @@ func StorePrincipal(ctx context.Context, manager *scs.SessionManager, principal 
 	manager.Put(ctx, sessionGroupsKey, groups)
 	manager.Put(ctx, sessionIssuedAtKey, principal.IssuedAt)
 	manager.Put(ctx, sessionExpiresAtKey, principal.ExpiresAt)
-	if manager.GetInt64(ctx, sessionVersionKey) == 0 {
-		manager.Put(ctx, sessionVersionKey, int64(1))
-	}
 	if refreshToken == "" {
 		manager.Remove(ctx, sessionRefreshTokenKey)
 	} else {

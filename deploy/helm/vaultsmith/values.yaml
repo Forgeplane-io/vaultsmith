@@ -55,7 +55,6 @@ auth:
     providerTimeout: 10s
     keyPrefix: "vaultsmith:"
   policy:
-    file: /etc/vaultsmith/policy/policy.csv
     existingConfigMap: ""
     key: policy.csv
     data: ""

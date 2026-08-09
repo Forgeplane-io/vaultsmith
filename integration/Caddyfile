@@ -1,6 +1,4 @@
 https://localhost:443 {
   tls internal
-  @health path /healthz
-  respond @health 200
   reverse_proxy host.docker.internal:18080
 }

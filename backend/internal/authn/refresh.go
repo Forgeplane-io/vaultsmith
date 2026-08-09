@@ -75,14 +75,14 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 	freshRefreshToken := RefreshTokenFromSession(freshCtx, a.Sessions)
 	now := time.Now()
 	if freshPrincipal.ExpiresAt.After(now.Add(refreshSkew)) {
-		if err := a.syncSession(ctx, freshCtx, freshPrincipal, freshRefreshToken, 0, false); err != nil {
+		if err := a.syncSession(ctx, freshPrincipal, freshRefreshToken, false); err != nil {
 			return Principal{}, false, err
 		}
 		return freshPrincipal, true, nil
 	}
 	lastChecked := a.Sessions.GetTime(freshCtx, sessionRefreshCheckedKey)
 	if !lastChecked.IsZero() && freshPrincipal.ExpiresAt.After(now) && now.Before(lastChecked.Add(refreshRetryWindow)) {
-		if err := a.syncSession(ctx, freshCtx, freshPrincipal, freshRefreshToken, 0, false); err != nil {
+		if err := a.syncSession(ctx, freshPrincipal, freshRefreshToken, false); err != nil {
 			return Principal{}, false, err
 		}
 		return freshPrincipal, true, nil
@@ -135,25 +135,14 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 	if newRefreshToken == "" {
 		newRefreshToken = freshRefreshToken
 	}
-	version := a.Sessions.GetInt64(freshCtx, sessionVersionKey) + 1
-	if version <= 0 {
-		version = 1
-	}
-	if err := a.syncSession(ctx, freshCtx, refreshedPrincipal, newRefreshToken, version, true); err != nil {
+	if err := a.syncSession(ctx, refreshedPrincipal, newRefreshToken, true); err != nil {
 		return Principal{}, false, err
 	}
 	return refreshedPrincipal, true, nil
 }
 
-func (a *Authenticator) syncSession(ctx, freshCtx context.Context, principal Principal, refreshToken string, version int64, markRefresh bool) error {
+func (a *Authenticator) syncSession(ctx context.Context, principal Principal, refreshToken string, markRefresh bool) error {
 	StorePrincipal(ctx, a.Sessions, principal, refreshToken)
-	if version <= 0 {
-		version = a.Sessions.GetInt64(freshCtx, sessionVersionKey)
-		if version <= 0 {
-			version = 1
-		}
-	}
-	a.Sessions.Put(ctx, sessionVersionKey, version)
 	if markRefresh {
 		a.Sessions.Put(ctx, sessionRefreshCheckedKey, time.Now())
 	}

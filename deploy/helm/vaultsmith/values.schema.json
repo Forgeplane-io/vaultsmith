@@ -206,7 +206,7 @@
         },
         "policy": {
           "type": "object",
-          "required": ["file", "existingConfigMap", "key", "data"],
+          "required": ["existingConfigMap", "key", "data"],
           "properties": {
             "file": { "type": "string", "const": "/etc/vaultsmith/policy/policy.csv" },
             "existingConfigMap": { "type": "string" },

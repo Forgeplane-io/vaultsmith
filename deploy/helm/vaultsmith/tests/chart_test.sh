@@ -28,6 +28,15 @@ assert_render_fails() {
   fi
 }
 
+assert_render_fails_with() {
+  local expected="$1"
+  shift
+  if render "$@" > "$TMP_DIR/negative.yaml" 2> "$TMP_DIR/negative.err"; then
+    fail "expected Helm render to fail: $*"
+  fi
+  grep -Fq "$expected" "$TMP_DIR/negative.err" || fail "missing expected Helm error: $expected"
+}
+
 cat > "$TMP_DIR/valid.yaml" <<'VALUES'
 auth:
   mode: "off"
@@ -189,6 +198,11 @@ grep -Fq '    - Egress' "$TMP_DIR/native-render.yaml" || fail 'native NetworkPol
 grep -Fq 'port: 53' "$TMP_DIR/native-render.yaml" || fail 'native cluster DNS egress port is missing'
 grep -Fq 'port: 6379' "$TMP_DIR/native-render.yaml" || fail 'native Redis egress port is missing'
 
+egress_error='networkPolicy.allowedEgress must allow OIDC and Redis egress in native mode, or disable networkPolicy explicitly'
+assert_render_fails_with "$egress_error" -f "$TMP_DIR/native.yaml" --set-json 'networkPolicy.allowedEgress=[]'
+assert_render_fails_with "$egress_error" -f "$TMP_DIR/native.yaml" --set-json 'networkPolicy.allowedEgress=[]' --skip-schema-validation
+assert_render_fails_with "$egress_error" -f "$TMP_DIR/native.yaml" --set-json 'networkPolicy.allowedEgress=[]' --show-only templates/networkpolicy.yaml --skip-schema-validation
+
 cat > "$TMP_DIR/incomplete-native.yaml" <<'VALUES'
 auth:
   mode: native
@@ -200,11 +214,12 @@ fi
 
 cat > "$TMP_DIR/custom-policy-path.yaml" <<'VALUES'
 auth:
-  mode: off
+  mode: "off"
   policy:
     file: /tmp/policy.csv
 VALUES
 assert_render_fails "$TMP_DIR/custom-policy-path.yaml"
+assert_render_fails_with 'auth.policy.file must be /etc/vaultsmith/policy/policy.csv because the chart mounts that fixed path' -f "$TMP_DIR/custom-policy-path.yaml" --skip-schema-validation
 
 cat > "$TMP_DIR/conflicting-policy.yaml" <<'VALUES'
 auth:

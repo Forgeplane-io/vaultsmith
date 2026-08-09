@@ -76,7 +76,7 @@ spec:
             - name: OIDC_SCOPES
               value: {{ join " " .Values.auth.oidc.scopes | quote }}
             - name: AUTHZ_POLICY_FILE
-              value: {{ .Values.auth.policy.file | quote }}
+              value: "/etc/vaultsmith/policy/policy.csv"
             - name: SESSION_ABSOLUTE_LIFETIME
               value: {{ .Values.auth.session.absoluteLifetime | quote }}
             - name: SESSION_IDLE_LIFETIME

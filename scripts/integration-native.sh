@@ -65,22 +65,20 @@ EOF
 chmod 600 "$TMP_DIR/.env"
 
 compose=(docker compose --project-name "$PROJECT" --env-file "$TMP_DIR/.env" -f "$COMPOSE_FILE")
-"${compose[@]}" up -d redis keycloak >/dev/null
-for _ in $(seq 1 60); do
-  if curl -fsS http://localhost:18082/realms/master >/dev/null 2>&1; then break; fi
-  sleep 1
-done
-curl -fsS http://localhost:18082/realms/master >/dev/null
-"${compose[@]}" up -d --wait idp-edge >/dev/null
-docker compose -p "$PROJECT" -f "$COMPOSE_FILE" cp idp-edge:/data/caddy/pki/authorities/local/root.crt "$TMP_DIR/idp-root.crt" >/dev/null
-for _ in $(seq 1 30); do
-  if [[ "$("${compose[@]}" exec -T redis redis-cli ping 2>/dev/null | tr -d '\r')" == "PONG" ]]; then break; fi
-  sleep 1
-done
-if [[ "$("${compose[@]}" exec -T redis redis-cli ping 2>/dev/null | tr -d '\r')" != "PONG" ]]; then
-  printf 'integration: Redis did not become ready\n' >&2
+dump_startup_diagnostics() {
+  printf 'native integration startup failed; container state follows\n' >&2
+  "${compose[@]}" ps >&2 || true
+  "${compose[@]}" logs --no-color >&2 || true
+  if [[ -s "$TMP_DIR/server.log" ]]; then
+    printf 'Vaultsmith server log follows\n' >&2
+    tail -n 200 "$TMP_DIR/server.log" >&2
+  fi
+}
+if ! "${compose[@]}" up -d --wait redis idp-edge >/dev/null; then
+  dump_startup_diagnostics
   exit 1
 fi
+docker compose -p "$PROJECT" -f "$COMPOSE_FILE" cp idp-edge:/data/caddy/pki/authorities/local/root.crt "$TMP_DIR/idp-root.crt" >/dev/null
 
 kc() {
   "${compose[@]}" exec -T keycloak /opt/keycloak/bin/kcadm.sh "$@"
@@ -178,12 +176,10 @@ go build -o "$TMP_DIR/vaultsmith" ./backend/cmd/server
 ) &
 SERVER_PID=$!
 
-for _ in $(seq 1 60); do
-  if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; then break; fi
-  sleep 1
-done
-curl -fsS http://127.0.0.1:18080/healthz >/dev/null
-"${compose[@]}" up -d --wait edge >/dev/null
+if ! "${compose[@]}" up -d --wait edge >/dev/null; then
+  dump_startup_diagnostics
+  exit 1
+fi
 
 BASE_URL='https://localhost:18443'
 if (( INTERACTIVE )); then

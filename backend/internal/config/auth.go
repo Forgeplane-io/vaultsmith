@@ -125,23 +125,12 @@ func LoadAuth(lookup EnvLookup) (*AuthConfig, error) {
 	cfg := &AuthConfig{
 		Mode: mode,
 		Session: SessionConfig{
-			CookieName:       defaultSessionCookieName,
-			AbsoluteLifetime: defaultAbsoluteLifetime,
-			IdleLifetime:     defaultIdleLifetime,
-			Secure:           mode == AuthModeNative,
-			SameSite:         http.SameSiteLaxMode,
+			CookieName: defaultSessionCookieName,
+			Secure:     mode == AuthModeNative,
+			SameSite:   http.SameSiteLaxMode,
 		},
-		Redis: RedisConfig{
-			ConnectTimeout:   defaultRedisConnect,
-			ReadTimeout:      defaultRedisRead,
-			WriteTimeout:     defaultRedisWrite,
-			PoolSize:         defaultRedisPoolSize,
-			RefreshLockTTL:   defaultRefreshLockTTL,
-			RefreshLockWait:  defaultRefreshLockWait,
-			RefreshLockRetry: defaultRefreshLockRetry,
-			ProviderTimeout:  defaultProviderTimeout,
-		},
-		CSRF: CSRFConfig{Secret: csrfSecret},
+		Redis: RedisConfig{PoolSize: defaultRedisPoolSize},
+		CSRF:  CSRFConfig{Secret: csrfSecret},
 		OIDC: OIDCConfig{
 			GroupsClaim: defaultGroupsClaim,
 			Scopes:      []string{"openid", "profile", "offline_access"},

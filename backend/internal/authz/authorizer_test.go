@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -8,6 +9,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/casbin/casbin/v2"
+	"github.com/casbin/casbin/v2/model"
+	"github.com/casbin/casbin/v2/persist/file-adapter"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
 )
 
@@ -37,6 +41,27 @@ func loadAuthorizer(t *testing.T, path string, profileIDs []string) *Authorizer 
 	return authorizer
 }
 
+func replacePolicyMatcher(t *testing.T, authorizer *Authorizer, path string, matcher func(...interface{}) (interface{}, error)) {
+	t.Helper()
+	m, err := model.NewModelFromString(embeddedModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enforcer, err := casbin.NewEnforcer(m, fileadapter.NewAdapter(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	enforcer.AddFunction("vaultsmithMatch", matcher)
+	authorizer.policy.enforcer = enforcer
+}
+
+func TestNewAuthorizerRejectsUninitializedPolicy(t *testing.T) {
+	_, err := NewAuthorizer(&Policy{})
+	if !errors.Is(err, ErrPolicy) {
+		t.Fatalf("NewAuthorizer() error = %v, want %v", err, ErrPolicy)
+	}
+}
+
 func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
 	path := policyFile(t, strings.TrimSpace(`
  g, group:admins, role:admin
@@ -63,6 +88,9 @@ func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
 	if err := authorizer.Authorize(reader, ActionDecrypt, ProfileResource("dev")); err == nil {
 		t.Fatal("reader decrypt dev allowed despite explicit deny")
 	}
+	if err := authorizer.Authorize(principalWithGroups("admins", "readers"), ActionDecrypt, ProfileResource("dev")); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("conflicting roles error = %v, want %v", err, ErrForbidden)
+	}
 	if err := authorizer.Authorize(reader, ActionDecrypt, ProfileResource("stageblue")); err != nil {
 		t.Fatalf("reader decrypt stageblue: %v", err)
 	}
@@ -78,12 +106,15 @@ func TestAuthorizeRotateUsesOnePolicySnapshot(t *testing.T) {
 	authorizer := loadAuthorizer(t, path, []string{"dev", "prod"})
 
 	var rewrite sync.Once
-	authorizer.policy.enforcer.AddFunction("vaultsmithMatch", func(args ...interface{}) (interface{}, error) {
+	rewritten := false
+	replacePolicyMatcher(t, authorizer, path, func(args ...interface{}) (interface{}, error) {
 		rewrite.Do(func() {
 			updated := "g, group:admins, role:admin\np, role:admin, profile:dev, decrypt, allow\np, role:admin, profile:prod, encrypt, deny\n"
 			if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
 				t.Errorf("rewrite policy: %v", err)
+				return
 			}
+			rewritten = true
 		})
 		resource, resourceOK := args[0].(string)
 		selector, selectorOK := args[1].(string)
@@ -95,6 +126,20 @@ func TestAuthorizeRotateUsesOnePolicySnapshot(t *testing.T) {
 
 	if err := authorizer.AuthorizeRotate(principalWithGroups("admins"), "dev", "prod"); err != nil {
 		t.Fatalf("AuthorizeRotate() error = %v, want one consistent pre-reload snapshot", err)
+	}
+	if !rewritten {
+		t.Fatal("policy rewrite hook was not exercised")
+	}
+}
+
+func TestAuthorizeReturnsPolicyErrorWhenMatcherFails(t *testing.T) {
+	path := policyFile(t, "g, group:admins, role:admin\np, role:admin, profile:dev, encrypt, allow\n")
+	authorizer := loadAuthorizer(t, path, []string{"dev"})
+	replacePolicyMatcher(t, authorizer, path, func(...interface{}) (interface{}, error) {
+		return false, errors.New("matcher failed")
+	})
+	if err := authorizer.Authorize(principalWithGroups("admins"), ActionEncrypt, ProfileResource("dev")); !errors.Is(err, ErrPolicy) {
+		t.Fatalf("Authorize() error = %v, want %v", err, ErrPolicy)
 	}
 }
 
