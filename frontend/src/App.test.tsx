@@ -1,4 +1,4 @@
-import { act, cleanup, createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { MAX_PLAINTEXT_BYTES, OPERATION_TIMEOUT_MS } from './api'
@@ -11,8 +11,15 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
     ...init,
   })
 
-const defaultProfiles = [{ id: 'dev', label: 'Development' }]
-const sourceAndDestinationProfiles = [...defaultProfiles, { id: 'prod', label: 'Production' }]
+const defaultProfiles = [{ id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true } }]
+const sourceAndDestinationProfiles = [
+  ...defaultProfiles,
+  { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: true } },
+]
+const asymmetricProfiles = [
+  { id: 'write', label: 'Write only', capabilities: { encrypt: true, decrypt: false } },
+  { id: 'read', label: 'Read only', capabilities: { encrypt: false, decrypt: true } },
+]
 
 function profilesResponse(profiles = defaultProfiles) {
   return jsonResponse({ profiles })
@@ -452,6 +459,74 @@ describe('Vaultsmith operator experience', () => {
     expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: '$ANSIBLE_VAULT;1.1;AES256\nfixture' })
   })
 
+  it('filters selectors by action and clears ineligible selections across modes', async () => {
+    const fetchMock = mockProfileLoad(asymmetricProfiles)
+    const user = userEvent.setup()
+
+    render(<App />)
+    const encryptSelect = await screen.findByRole('combobox', { name: 'Environment' })
+    expect(within(encryptSelect).getByRole('option', { name: 'Write only' })).toBeInTheDocument()
+    expect(within(encryptSelect).queryByRole('option', { name: 'Read only' })).not.toBeInTheDocument()
+    expect(encryptSelect).toHaveValue('write')
+
+    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
+    const decryptSelect = screen.getByRole('combobox', { name: 'Environment' })
+    expect(within(decryptSelect).getByRole('option', { name: 'Read only' })).toBeInTheDocument()
+    expect(within(decryptSelect).queryByRole('option', { name: 'Write only' })).not.toBeInTheDocument()
+    expect(decryptSelect).toHaveValue('')
+
+    await user.type(screen.getByRole('textbox', { name: 'Protected value to read' }), 'vault-text')
+    expect(screen.getByRole('button', { name: 'Decrypt' })).toBeDisabled()
+    fireEvent.submit(screen.getByRole('form', { name: 'Vault operation form' }))
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(0)
+
+    await user.selectOptions(decryptSelect, 'read')
+    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
+    const sourceSelect = screen.getByRole('combobox', { name: 'From environment' })
+    const destinationSelect = screen.getByRole('combobox', { name: 'To environment' })
+    expect(within(sourceSelect).getByRole('option', { name: 'Read only' })).toBeInTheDocument()
+    expect(within(sourceSelect).queryByRole('option', { name: 'Write only' })).not.toBeInTheDocument()
+    expect(within(destinationSelect).getByRole('option', { name: 'Write only' })).toBeInTheDocument()
+    expect(within(destinationSelect).queryByRole('option', { name: 'Read only' })).not.toBeInTheDocument()
+    expect(sourceSelect).toHaveValue('read')
+    expect(destinationSelect).toHaveValue('write')
+  })
+
+  it('disables unavailable modes and exposes the reason', async () => {
+    mockProfileLoad([asymmetricProfiles[0]])
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Write only' })
+
+    expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toHaveAccessibleDescription('No environments are available for decryption.')
+    expect(screen.getByText('No environments are available for decryption.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Set rotate mode' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Set rotate mode' })).toHaveAccessibleDescription('Rotate requires an available decrypt source and encrypt destination.')
+    expect(screen.getByText('Rotate requires an available decrypt source and encrypt destination.')).toBeVisible()
+  })
+
+  it('does not hand a rotated result to an ineligible decrypt destination', async () => {
+    mockProfileLoad(asymmetricProfiles)
+      .mockResolvedValueOnce(jsonResponse({ value: '$ANSIBLE_VAULT;1.2;AES256;write\nrotated' }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Write only' })
+    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'From environment' }), 'read')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'To environment' }), 'write')
+    await user.type(screen.getByRole('textbox', { name: 'Protected value to move' }), 'vault-text')
+    await user.click(screen.getByRole('button', { name: 'Rotate' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Moved protected value' })).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;write\nrotated'))
+
+    const handoff = screen.getByRole('button', { name: 'Use result as input' })
+    expect(handoff).toBeDisabled()
+    expect(handoff).toHaveAccessibleDescription('The destination environment is not available for decryption.')
+    expect(screen.getByText('The destination environment is not available for decryption.')).toBeVisible()
+  })
+
   it('does not restore a late operation result after cancellation', async () => {
     let resolveOperation!: (response: Response) => void
     const operation = new Promise<Response>((resolve) => {
@@ -475,14 +550,15 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
   })
 
-  it('disables rotate submission when no profiles are available', async () => {
+  it('disables rotate mode when no profiles are available', async () => {
     mockProfileLoad([])
-    const user = userEvent.setup()
 
     render(<App />)
-    await user.click(await screen.findByRole('button', { name: 'Set rotate mode' }))
+    await screen.findByRole('option', { name: 'No environments available' })
 
-    expect(screen.getByRole('button', { name: 'Rotate' })).toBeDisabled()
+    const rotateMode = screen.getByRole('button', { name: 'Set rotate mode' })
+    expect(rotateMode).toBeDisabled()
+    expect(rotateMode).toHaveAccessibleDescription('Rotate requires an available decrypt source and encrypt destination.')
   })
 
   it('enforces the encrypt UTF-8 byte limit before submission', async () => {
@@ -628,6 +704,127 @@ describe('Vaultsmith operator experience', () => {
     await user.click(screen.getByRole('button', { name: 'Retry loading environments' }))
 
     expect(await screen.findByRole('option', { name: 'Development' })).toBeInTheDocument()
+  })
+
+  it('refreshes stale capabilities after forbidden without retrying the operation', async () => {
+    let resolveRefresh!: (response: Response) => void
+    const refreshResponse = new Promise<Response>((resolve) => {
+      resolveRefresh = resolve
+    })
+    const refreshedProfiles = [
+      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false } },
+      { id: 'prod', label: 'Production', capabilities: { encrypt: false, decrypt: true } },
+    ]
+    const fetchMock = mockProfileLoad(sourceAndDestinationProfiles)
+      .mockResolvedValueOnce(jsonResponse(
+        { error: { code: 'forbidden', message: 'private-policy-detail' } },
+        { status: 403 },
+      ))
+      .mockReturnValueOnce(refreshResponse)
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to move' })
+    await user.type(input, 'vault-text')
+    await user.click(screen.getByRole('button', { name: 'Rotate' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
+    expect(screen.getByRole('status')).toHaveTextContent('Refreshing environments…')
+    expect(screen.getByRole('status')).not.toHaveTextContent('Environments were refreshed')
+    expect(screen.getByRole('button', { name: 'Rotate' })).toBeDisabled()
+    expect(input).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Clear values' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: 'Clear values' }))
+    expect(input).toHaveValue('')
+    expect(input).toBeEnabled()
+    expect(screen.getByRole('status')).toHaveTextContent('Refreshing environments…')
+    await user.type(input, 'replacement-value')
+    expect(screen.getByRole('status')).toHaveTextContent('Refreshing environments…')
+    expect(screen.getByRole('button', { name: 'Rotate' })).toBeDisabled()
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+
+    resolveRefresh(profilesResponse(refreshedProfiles))
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Your permissions changed. Environments were refreshed; review the selection and try again.'))
+    expect(screen.getByRole('button', { name: 'Set rotate mode' })).toHaveAttribute('aria-pressed', 'true')
+    expect(input).toHaveValue('replacement-value')
+    expect(screen.getByRole('combobox', { name: 'From environment' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'To environment' })).toHaveValue('')
+    expect(within(screen.getByRole('combobox', { name: 'From environment' })).getByRole('option', { name: 'Production' })).toBeInTheDocument()
+    expect(within(screen.getByRole('combobox', { name: 'To environment' })).getByRole('option', { name: 'Development' })).toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+  })
+
+  it('keeps recovery and clearing available when stale-capability refresh fails', async () => {
+    let resolveRetry!: (response: Response) => void
+    const retryResponse = new Promise<Response>((resolve) => {
+      resolveRetry = resolve
+    })
+    const fetchMock = mockProfileLoad()
+      .mockResolvedValueOnce(jsonResponse(
+        { error: { code: 'forbidden', message: 'private-policy-detail' } },
+        { status: 403 },
+      ))
+      .mockRejectedValueOnce(new Error('private-network-detail'))
+      .mockResolvedValueOnce(sessionResponse())
+      .mockReturnValueOnce(retryResponse)
+    const user = userEvent.setup()
+
+    render(<App />)
+    const input = await findReadyValueInput()
+    await user.type(input, 'fixture-value')
+    await user.click(screen.getByRole('button', { name: 'Encrypt' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Your permissions changed, but environments could not be refreshed. Check the service and retry loading environments.')
+    expect(alert).not.toHaveTextContent('private')
+    expect(input).toHaveValue('fixture-value')
+    expect(input).toBeEnabled()
+    expect(screen.getByRole('combobox', { name: 'Environment' })).toHaveValue('dev')
+    expect(screen.getByRole('combobox', { name: 'Environment' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Encrypt' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Clear values' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Retry loading environments' })).toBeEnabled()
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+
+    await user.click(screen.getByRole('button', { name: 'Clear values' }))
+    expect(input).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Retry loading environments' })).toBeEnabled()
+
+    await user.click(screen.getByRole('button', { name: 'Retry loading environments' }))
+    expect(input).toBeEnabled()
+    expect(screen.getByRole('status')).toHaveTextContent('Refreshing environments…')
+    await user.type(input, 'replacement-value')
+    expect(screen.getByRole('status')).toHaveTextContent('Refreshing environments…')
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+
+    resolveRetry(profilesResponse(defaultProfiles))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Your permissions changed. Environments were refreshed; review the selection and try again.'))
+    expect(input).toHaveValue('replacement-value')
+  })
+
+  it.each([
+    { status: 409, code: 'forbidden' },
+    { status: 403, code: 'not_ready' },
+  ])('does not refresh capabilities for $status + $code', async ({ status, code }) => {
+    const fetchMock = mockProfileLoad()
+      .mockResolvedValueOnce(jsonResponse(
+        { error: { code, message: 'private-error-detail' } },
+        { status },
+      ))
+    const user = userEvent.setup()
+
+    render(<App />)
+    const input = await findReadyValueInput()
+    await user.type(input, 'fixture-value')
+    await user.click(screen.getByRole('button', { name: 'Encrypt' }))
+
+    await screen.findByRole('alert')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/profiles')).toHaveLength(1)
   })
 
   it('gives safe, actionable guidance when decryption fails', async () => {

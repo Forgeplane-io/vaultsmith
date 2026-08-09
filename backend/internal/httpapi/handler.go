@@ -22,8 +22,14 @@ const (
 )
 
 type Profile struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID           string              `json:"id"`
+	Label        string              `json:"label"`
+	Capabilities ProfileCapabilities `json:"capabilities"`
+}
+
+type ProfileCapabilities struct {
+	Encrypt bool `json:"encrypt"`
+	Decrypt bool `json:"decrypt"`
 }
 
 type Executor interface {
@@ -111,21 +117,25 @@ func (h *Handler) serveProfiles(w http.ResponseWriter, r *http.Request) {
 			writeAuthError(w, status, code)
 			return
 		}
-		allowedIDs := h.authorizer.FilterProfiles(principal, profileIDs(h.public))
-		allowed := make(map[string]struct{}, len(allowedIDs))
-		for _, id := range allowedIDs {
-			allowed[id] = struct{}{}
-		}
-		filtered := make([]Profile, 0, len(allowedIDs))
+		allowed := h.authorizer.CapabilitiesForProfiles(principal, profileIDs(h.public))
+		filtered := make([]Profile, 0, len(allowed))
 		for _, profile := range h.public {
-			if _, exists := allowed[profile.ID]; exists {
-				filtered = append(filtered, profile)
+			capabilities, exists := allowed[profile.ID]
+			if !exists {
+				continue
 			}
+			profile.Capabilities = ProfileCapabilities{Encrypt: capabilities.Encrypt, Decrypt: capabilities.Decrypt}
+			filtered = append(filtered, profile)
 		}
 		writeJSON(w, http.StatusOK, profilesResponse{Profiles: filtered})
 		return
 	}
-	writeJSON(w, http.StatusOK, profilesResponse{Profiles: h.public})
+	profiles := make([]Profile, len(h.public))
+	copy(profiles, h.public)
+	for index := range profiles {
+		profiles[index].Capabilities = ProfileCapabilities{Encrypt: true, Decrypt: true}
+	}
+	writeJSON(w, http.StatusOK, profilesResponse{Profiles: profiles})
 }
 
 func profileIDs(profiles []Profile) []string {

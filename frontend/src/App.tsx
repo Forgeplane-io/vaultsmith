@@ -31,6 +31,9 @@ export default function App() {
   const [revealed, setRevealed] = useState(false)
   const [loadingProfiles, setLoadingProfiles] = useState(true)
   const [profileLoadFailed, setProfileLoadFailed] = useState(false)
+  const [profileLoadError, setProfileLoadError] = useState('')
+  const [profileSnapshotValid, setProfileSnapshotValid] = useState(false)
+  const [recoveringStaleCapabilities, setRecoveringStaleCapabilities] = useState(false)
   const [profileLoadAttempt, setProfileLoadAttempt] = useState(0)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('Loading environments')
@@ -41,12 +44,36 @@ export default function App() {
   const operationControllerRef = useRef<AbortController | null>(null)
   const operationAbortReasonRef = useRef<'cancelled' | 'timeout' | null>(null)
   const operationGenerationRef = useRef(0)
+  const profileRefreshControllerRef = useRef<AbortController | null>(null)
+  const initialProfileSelectionRef = useRef(true)
+  const modeRef = useRef(mode)
+  const valueRef = useRef(value)
+  modeRef.current = mode
+  valueRef.current = value
+
+  function applyLoadedProfiles(loadedProfiles: Profile[]) {
+    const selectedMode = modeRef.current
+    const eligibleProfiles = profilesForMode(loadedProfiles, selectedMode)
+    const encryptProfiles = profilesForMode(loadedProfiles, 'encrypt')
+    const allowInitialSelection = initialProfileSelectionRef.current && valueRef.current.length === 0
+    initialProfileSelectionRef.current = false
+    setProfiles(loadedProfiles)
+    setProfileId((current) => profileIsEligible(eligibleProfiles, current)
+      ? current
+      : allowInitialSelection ? eligibleProfiles[0]?.id || '' : '')
+    setDestinationProfileId((current) => profileIsEligible(encryptProfiles, current)
+      ? current
+      : allowInitialSelection ? encryptProfiles[1]?.id || encryptProfiles[0]?.id || '' : '')
+  }
 
   useEffect(() => {
     let active = true
+    const recoveringStaleSnapshot = recoveringStaleCapabilities
+    setProfileSnapshotValid(false)
     setLoadingProfiles(true)
     setProfileLoadFailed(false)
-    setStatus('Loading environments…')
+    setProfileLoadError('')
+    setStatus(recoveringStaleSnapshot ? 'Refreshing environments…' : 'Loading environments…')
     const controller = new AbortController()
     fetchSession(controller.signal)
       .then((session) => {
@@ -57,16 +84,19 @@ export default function App() {
           setStatus('Sign-in required…')
           return undefined
         }
-        setStatus('Loading environments…')
+        setStatus(recoveringStaleSnapshot ? 'Refreshing environments…' : 'Loading environments…')
         return fetchProfiles(controller.signal)
       })
       .then((loadedProfiles) => {
         if (!active || !loadedProfiles) return
-        setProfiles(loadedProfiles)
-        setProfileId((current) => current || loadedProfiles[0]?.id || '')
-        setDestinationProfileId((current) => current || loadedProfiles[1]?.id || loadedProfiles[0]?.id || '')
+        applyLoadedProfiles(loadedProfiles)
+        setProfileSnapshotValid(true)
+        setRecoveringStaleCapabilities(false)
         setError('')
-        setStatus('')
+        setProfileLoadError('')
+        setStatus(recoveringStaleSnapshot
+          ? 'Your permissions changed. Environments were refreshed; review the selection and try again.'
+          : '')
       })
       .catch((reason: unknown) => {
         if (!active) return
@@ -76,7 +106,9 @@ export default function App() {
           return
         }
         setProfileLoadFailed(true)
-        setError(safeErrorMessage(reason, 'Profiles could not be loaded.', 'profiles'))
+        setProfileLoadError(recoveringStaleSnapshot
+          ? 'Your permissions changed, but environments could not be refreshed. Check the service and retry loading environments.'
+          : safeErrorMessage(reason, 'Profiles could not be loaded.', 'profiles'))
         setStatus('')
       })
       .finally(() => {
@@ -91,14 +123,27 @@ export default function App() {
   useEffect(() => () => {
     operationGenerationRef.current += 1
     operationControllerRef.current?.abort()
+    const profileRefreshController = profileRefreshControllerRef.current
+    profileRefreshControllerRef.current = null
+    profileRefreshController?.abort()
   }, [])
 
   const byteLength = useMemo(() => utf8ByteLength(value), [value])
   const byteLimit = maxInputBytes(mode)
   const overLimit = byteLength > byteLimit
-  const visibleError = overLimit ? limitMessage(mode) : error
-  const canSubmit = !loadingProfiles && !busy && profiles.length > 0 && profileId.length > 0 && (mode !== 'rotate' || destinationProfileId.length > 0) && value.length > 0 && !overLimit
-  const canClear = !profileLoadFailed && Boolean(value || output || ansibleVariableName || error)
+  const visibleError = overLimit ? limitMessage(mode) : error || profileLoadError
+  const encryptProfiles = useMemo(() => profilesForMode(profiles, 'encrypt'), [profiles])
+  const decryptProfiles = useMemo(() => profilesForMode(profiles, 'decrypt'), [profiles])
+  const eligibleProfiles = mode === 'encrypt' ? encryptProfiles : decryptProfiles
+  const profileSnapshotReady = profileSnapshotValid && !loadingProfiles && !profileLoadFailed
+  const encryptAvailable = encryptProfiles.length > 0
+  const decryptAvailable = decryptProfiles.length > 0
+  const rotateAvailable = encryptAvailable && decryptAvailable
+  const modeAvailable = mode === 'encrypt' ? encryptAvailable : mode === 'decrypt' ? decryptAvailable : rotateAvailable
+  const selectedProfileEligible = profileIsEligible(eligibleProfiles, profileId)
+  const selectedDestinationEligible = mode !== 'rotate' || profileIsEligible(encryptProfiles, destinationProfileId)
+  const canSubmit = profileSnapshotReady && !busy && modeAvailable && selectedProfileEligible && selectedDestinationEligible && value.length > 0 && !overLimit
+  const canClear = Boolean(value || output || ansibleVariableName)
   const inputName = mode === 'encrypt' ? 'Value to protect' : mode === 'decrypt' ? 'Protected value to read' : 'Protected value to move'
   const outputName = mode === 'encrypt' ? 'Protected value' : mode === 'decrypt' ? 'Decrypted value' : 'Moved protected value'
   const modeGuidance = mode === 'encrypt'
@@ -110,6 +155,15 @@ export default function App() {
   const copyDisabled = !output
   const copyLabel = mode === 'decrypt' && output && !revealed ? 'Copy without revealing' : 'Copy result'
   const canCopyAnsibleSnippet = Boolean(output) && (mode === 'encrypt' || mode === 'rotate') && isValidAnsibleVariableIdentifier(ansibleVariableName)
+  const handoffTargetProfileId = mode === 'rotate' ? destinationProfileId : profileId
+  const handoffTargetMode: OperationMode = mode === 'decrypt' ? 'encrypt' : 'decrypt'
+  const handoffEligible = profileSnapshotReady && profileIsEligible(profilesForMode(profiles, handoffTargetMode), handoffTargetProfileId)
+  const canUseResultAsInput = Boolean(output) && handoffEligible
+  const handoffUnavailableReason = mode === 'rotate'
+    ? 'The destination environment is not available for decryption.'
+    : handoffTargetMode === 'decrypt'
+      ? 'The selected environment is not available for decryption.'
+      : 'The selected environment is not available for encryption.'
   const formatInspection = useMemo(
     () => mode === 'encrypt' ? null : inspectVaultFormat(value, profileId, byteLength),
     [byteLength, mode, profileId, value],
@@ -131,11 +185,14 @@ export default function App() {
     setRevealed(false)
     setAnsibleSnippetFallback('')
     setError('')
-    setStatus('')
+    if (!recoveringStaleCapabilities) setStatus('')
   }
 
   function changeMode(nextMode: OperationMode) {
     const retainedInput = Boolean(value) && nextMode !== mode
+    const nextProfiles = profilesForMode(profiles, nextMode)
+    setProfileId((current) => profileIsEligible(nextProfiles, current) ? current : '')
+    setDestinationProfileId((current) => profileIsEligible(encryptProfiles, current) ? current : '')
     setMode(nextMode)
     invalidateOutput()
     setModeNotice(retainedInput
@@ -176,7 +233,7 @@ export default function App() {
   }
 
   function useResultAsInput() {
-    if (busy || !output) return
+    if (busy || !canUseResultAsInput) return
 
     const nextMode: OperationMode = mode === 'decrypt' ? 'encrypt' : 'decrypt'
     const result = output
@@ -203,19 +260,62 @@ export default function App() {
     return `${prefix}; ${nextStep}`
   }
 
-  function retryProfiles() {
-    if (busy) return
-    setProfiles([])
-    setProfileId('')
-    setDestinationProfileId('')
+  async function refreshCapabilitiesAfterForbidden() {
+    profileRefreshControllerRef.current?.abort()
+    const controller = new AbortController()
+    profileRefreshControllerRef.current = controller
+    setRecoveringStaleCapabilities(true)
+    setProfileSnapshotValid(false)
     setLoadingProfiles(true)
     setProfileLoadFailed(false)
+    setProfileLoadError('')
     setError('')
-    setStatus('Loading environments…')
+    setStatus('Refreshing environments…')
+
+    try {
+      const loadedProfiles = await fetchProfiles(controller.signal)
+      if (profileRefreshControllerRef.current !== controller || controller.signal.aborted) return
+      applyLoadedProfiles(loadedProfiles)
+      setProfileSnapshotValid(true)
+      setRecoveringStaleCapabilities(false)
+      setStatus('Your permissions changed. Environments were refreshed; review the selection and try again.')
+    } catch (reason: unknown) {
+      if (profileRefreshControllerRef.current !== controller || controller.signal.aborted) return
+      if (reason instanceof ApiError && reason.code === 'unauthorized') {
+        setRecoveringStaleCapabilities(false)
+        redirectToLogin()
+        setStatus('Sign-in required…')
+        return
+      }
+      setProfileLoadFailed(true)
+      setProfileLoadError('Your permissions changed, but environments could not be refreshed. Check the service and retry loading environments.')
+      setStatus('')
+    } finally {
+      if (profileRefreshControllerRef.current === controller) {
+        profileRefreshControllerRef.current = null
+        setLoadingProfiles(false)
+      }
+    }
+  }
+
+  function retryProfiles() {
+    if (busy) return
+    setProfileSnapshotValid(false)
+    setLoadingProfiles(true)
+    setProfileLoadFailed(false)
+    setProfileLoadError('')
+    setError('')
+    setStatus(recoveringStaleCapabilities ? 'Refreshing environments…' : 'Loading environments…')
     setProfileLoadAttempt((attempt) => attempt + 1)
   }
 
   async function submit() {
+    if (!profileSnapshotReady || !selectedProfileEligible || !selectedDestinationEligible) {
+      setError(mode === 'rotate'
+        ? 'Select an available source and destination environment.'
+        : 'Select an available environment.')
+      return
+    }
     if (!value) {
       setError('Enter a value first')
       return
@@ -277,6 +377,14 @@ export default function App() {
         if (reason instanceof ApiError && reason.code === 'unauthorized') {
           redirectToLogin()
           setStatus('Sign-in required…')
+          return
+        }
+        if (reason instanceof ApiError && reason.status === 403 && reason.code === 'forbidden') {
+          window.clearTimeout(timeoutId)
+          operationControllerRef.current = null
+          operationAbortReasonRef.current = null
+          setBusy(false)
+          await refreshCapabilitiesAfterForbidden()
           return
         }
         setError(operationErrorMessage(reason, operationMode))
@@ -359,6 +467,10 @@ export default function App() {
       await logout()
       setSession(null)
       setProfiles([])
+      setProfileSnapshotValid(false)
+      setRecoveringStaleCapabilities(false)
+      setProfileLoadFailed(false)
+      setProfileLoadError('')
       setValue('')
       setOutput('')
       setAnsibleVariableName('')
@@ -385,7 +497,7 @@ export default function App() {
     setAnsibleSnippetFallback('')
     setRevealed(false)
     setError('')
-    setStatus('')
+    if (!recoveringStaleCapabilities) setStatus('')
     setModeNotice('')
   }
 
@@ -452,6 +564,7 @@ export default function App() {
 
           <form
             className="operation-form"
+            aria-label="Vault operation form"
             aria-busy={busy}
             onSubmit={(event) => {
               event.preventDefault()
@@ -466,10 +579,11 @@ export default function App() {
                     <select
                       id="source-profile-select"
                       value={profileId}
-                      disabled={loadingProfiles || busy || profiles.length === 0}
+                      disabled={!profileSnapshotReady || busy || decryptProfiles.length === 0}
                       onChange={(event) => changeProfile(event.target.value)}
                     >
-                      {profiles.map((profile) => (
+                      {!profileIsEligible(decryptProfiles, profileId) && <option value="">Select an environment</option>}
+                      {decryptProfiles.map((profile) => (
                         <option key={profile.id} value={profile.id}>{profile.label}</option>
                       ))}
                     </select>
@@ -479,10 +593,11 @@ export default function App() {
                     <select
                       id="destination-profile-select"
                       value={destinationProfileId}
-                      disabled={loadingProfiles || busy || profiles.length === 0}
+                      disabled={!profileSnapshotReady || busy || encryptProfiles.length === 0}
                       onChange={(event) => changeDestinationProfile(event.target.value)}
                     >
-                      {profiles.map((profile) => (
+                      {!profileIsEligible(encryptProfiles, destinationProfileId) && <option value="">Select an environment</option>}
+                      {encryptProfiles.map((profile) => (
                         <option key={profile.id} value={profile.id}>{profile.label}</option>
                       ))}
                     </select>
@@ -494,11 +609,13 @@ export default function App() {
                   <select
                     id="profile-select"
                     value={profileId}
-                    disabled={loadingProfiles || busy || profiles.length === 0}
+                    disabled={!profileSnapshotReady || busy || eligibleProfiles.length === 0}
                     onChange={(event) => changeProfile(event.target.value)}
                   >
-                    {profiles.length === 0 && <option value="">No profiles available</option>}
-                    {profiles.map((profile) => (
+                    {!profileIsEligible(eligibleProfiles, profileId) && (
+                      <option value="">{eligibleProfiles.length === 0 ? 'No environments available' : 'Select an environment'}</option>
+                    )}
+                    {eligibleProfiles.map((profile) => (
                       <option key={profile.id} value={profile.id}>{profile.label}</option>
                     ))}
                   </select>
@@ -508,10 +625,17 @@ export default function App() {
               <fieldset className="mode-fieldset">
                 <legend>Operation</legend>
                 <div className="mode-switch">
-                  <button type="button" className={mode === 'encrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set encrypt mode" aria-pressed={mode === 'encrypt'} onClick={() => changeMode('encrypt')} disabled={busy}>Encrypt</button>
-                  <button type="button" className={mode === 'decrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set decrypt mode" aria-pressed={mode === 'decrypt'} onClick={() => changeMode('decrypt')} disabled={busy}>Decrypt</button>
-                  <button type="button" className={mode === 'rotate' ? 'mode-button active' : 'mode-button'} aria-label="Set rotate mode" aria-pressed={mode === 'rotate'} onClick={() => changeMode('rotate')} disabled={busy}>Rotate</button>
+                  <button type="button" className={mode === 'encrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set encrypt mode" aria-pressed={mode === 'encrypt'} aria-describedby={profileSnapshotReady && !encryptAvailable ? 'encrypt-mode-unavailable' : undefined} onClick={() => changeMode('encrypt')} disabled={busy || !profileSnapshotReady || !encryptAvailable}>Encrypt</button>
+                  <button type="button" className={mode === 'decrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set decrypt mode" aria-pressed={mode === 'decrypt'} aria-describedby={profileSnapshotReady && !decryptAvailable ? 'decrypt-mode-unavailable' : undefined} onClick={() => changeMode('decrypt')} disabled={busy || !profileSnapshotReady || !decryptAvailable}>Decrypt</button>
+                  <button type="button" className={mode === 'rotate' ? 'mode-button active' : 'mode-button'} aria-label="Set rotate mode" aria-pressed={mode === 'rotate'} aria-describedby={profileSnapshotReady && !rotateAvailable ? 'rotate-mode-unavailable' : undefined} onClick={() => changeMode('rotate')} disabled={busy || !profileSnapshotReady || !rotateAvailable}>Rotate</button>
                 </div>
+                {profileSnapshotReady && (!encryptAvailable || !decryptAvailable || !rotateAvailable) && (
+                  <div className="mode-availability-list">
+                    {!encryptAvailable && <p id="encrypt-mode-unavailable">No environments are available for encryption.</p>}
+                    {!decryptAvailable && <p id="decrypt-mode-unavailable">No environments are available for decryption.</p>}
+                    {!rotateAvailable && <p id="rotate-mode-unavailable">Rotate requires an available decrypt source and encrypt destination.</p>}
+                  </div>
+                )}
               </fieldset>
             </div>
 
@@ -529,7 +653,7 @@ export default function App() {
                   onChange={(event) => changeValue(event.target.value)}
                   onPaste={handlePaste}
                   placeholder={mode === 'encrypt' ? 'Paste a value…' : 'Paste protected text…'}
-                  disabled={loadingProfiles || busy || profiles.length === 0}
+                  disabled={busy || (!recoveringStaleCapabilities && (loadingProfiles || !modeAvailable) && value.length === 0)}
                   spellCheck={false}
                   autoComplete="off"
                   autoCorrect="off"
@@ -609,8 +733,9 @@ export default function App() {
                   </div>
                 )}
                 <div className="panel-actions output-actions">
+                  {output && !handoffEligible && <span className="result-handoff-notice" id="result-handoff-unavailable">{handoffUnavailableReason}</span>}
                   {mode === 'decrypt' && output && <button className="secondary-button" type="button" onClick={() => { setRevealed((current) => !current); setError('') }}>{revealed ? 'Hide result' : 'Reveal result'}</button>}
-                  <button className="secondary-button" type="button" onClick={useResultAsInput} disabled={busy || !output}>Use result as input</button>
+                  <button className="secondary-button" type="button" onClick={useResultAsInput} aria-describedby={output && !handoffEligible ? 'result-handoff-unavailable' : undefined} disabled={busy || !canUseResultAsInput}>Use result as input</button>
                   <button className="secondary-button" type="button" onClick={() => void copyResult()} disabled={copyDisabled}>{copyLabel}</button>
                 </div>
               </div>
@@ -620,6 +745,15 @@ export default function App() {
       </main>
     </div>
   )
+}
+
+function profilesForMode(profiles: Profile[], mode: OperationMode): Profile[] {
+  const capability = mode === 'encrypt' ? 'encrypt' : 'decrypt'
+  return profiles.filter((profile) => profile.capabilities[capability])
+}
+
+function profileIsEligible(profiles: Profile[], profileId: string): boolean {
+  return profileId.length > 0 && profiles.some((profile) => profile.id === profileId)
 }
 
 function VaultFormatDiagnostics({ inspection, selectedProfileId, selectedProfileLabel }: { inspection: VaultFormatInspection; selectedProfileId: string; selectedProfileLabel: string }) {

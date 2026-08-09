@@ -287,7 +287,11 @@ login("integration-user", user_password)
 session = json_response(request("/api/v1/session"))
 assert session["authenticated"] is True and session["email"] == "integration-user@example.test"
 profiles = json_response(request("/api/v1/profiles"))["profiles"]
-assert profiles == [{"id": "dev", "label": "Development"}], profiles
+assert profiles == [{
+    "id": "dev",
+    "label": "Development",
+    "capabilities": {"encrypt": True, "decrypt": True},
+}], profiles
 
 body = json.dumps({"profileId": "dev", "mode": "encrypt", "value": "integration"}).encode("utf-8")
 operation = json_response(request("/api/v1/operations", body, {
