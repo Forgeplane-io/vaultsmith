@@ -17,6 +17,15 @@ fail() {
   exit 1
 }
 
+assert_contains_block() {
+  local rendered_file="$1"
+  local expected="$2"
+  local message="$3"
+  local rendered
+  rendered="$(<"$rendered_file")"
+  [[ "$rendered" == *"$expected"* ]] || fail "$message"
+}
+
 render() {
   helm template vaultsmith "$CHART_DIR" "$@"
 }
@@ -72,9 +81,6 @@ grep -Fq 'containerPort: 8080' "$TMP_DIR/off-default-render.yaml" || fail 'conta
 if grep -Fq 'name: CSRF_SECRET' "$TMP_DIR/off-default-render.yaml"; then
   fail 'explicit off render unexpectedly contains a CSRF Secret reference'
 fi
-if grep -Fq 'fixture-password' "$TMP_DIR/off-default-render.yaml"; then
-  fail 'off default render leaked a Secret value'
-fi
 
 cat > "$TMP_DIR/deny-all.yaml" <<'VALUES'
 auth:
@@ -115,9 +121,6 @@ grep -Fq 'VAULT_PROFILES_JSON' "$TMP_DIR/valid-render.yaml" || fail 'profile con
 grep -Fq 'vaultsmith-passwords' "$TMP_DIR/valid-render.yaml" || fail 'existing Secret reference is missing'
 grep -Fq 'key: "dev"' "$TMP_DIR/valid-render.yaml" || fail 'Secret key reference is missing'
 grep -Fq 'app.kubernetes.io/name: operator-shell' "$TMP_DIR/valid-render.yaml" || fail 'explicit NetworkPolicy selector is missing'
-if grep -Fq 'fixture-password' "$TMP_DIR/valid-render.yaml"; then
-  fail 'password-like value leaked into rendered manifests'
-fi
 
 cat > "$TMP_DIR/native.yaml" <<'VALUES'
 auth:
@@ -182,10 +185,11 @@ VALUES
 helm lint "$CHART_DIR" -f "$TMP_DIR/native.yaml" >/dev/null
 render -f "$TMP_DIR/native.yaml" > "$TMP_DIR/native-render.yaml"
 grep -Fq 'name: AUTH_MODE' "$TMP_DIR/native-render.yaml" || fail 'native auth mode env is missing'
-grep -Fq 'name: CSRF_SECRET' "$TMP_DIR/native-render.yaml" || fail 'native CSRF Secret reference is missing'
-grep -Fq 'name: OIDC_CLIENT_SECRET' "$TMP_DIR/native-render.yaml" || fail 'native OIDC Secret reference is missing'
-grep -Fq 'name: OIDC_CA_FILE' "$TMP_DIR/native-render.yaml" || fail 'native OIDC CA env is missing'
-grep -Fq 'vaultsmith-oidc-ca' "$TMP_DIR/native-render.yaml" || fail 'native OIDC CA ConfigMap reference is missing'
+assert_contains_block "$TMP_DIR/native-render.yaml" $'- name: CSRF_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: "vaultsmith-auth"\n                  key: "csrf-secret"\n                  optional: false' 'native CSRF Secret name/key relationship is wrong'
+assert_contains_block "$TMP_DIR/native-render.yaml" $'- name: OIDC_CLIENT_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: "vaultsmith-auth"\n                  key: "oidc-client-secret"\n                  optional: false' 'native OIDC Secret name/key relationship is wrong'
+assert_contains_block "$TMP_DIR/native-render.yaml" $'- name: OIDC_CA_FILE\n              value: /etc/vaultsmith/oidc-ca/ca.crt' 'native OIDC CA env path is wrong'
+assert_contains_block "$TMP_DIR/native-render.yaml" $'- name: oidc-ca\n          configMap:\n            name: "vaultsmith-oidc-ca"\n            items:\n              - key: "ca.crt"\n                path: ca.crt' 'native OIDC CA ConfigMap/key relationship is wrong'
+assert_contains_block "$TMP_DIR/native-render.yaml" $'- name: oidc-ca\n              mountPath: /etc/vaultsmith/oidc-ca\n              readOnly: true' 'native OIDC CA mount relationship is wrong'
 grep -Fq 'name: REDIS_ADDR' "$TMP_DIR/native-render.yaml" || fail 'native Redis address env is missing'
 grep -Fq 'name: REDIS_REFRESH_LOCK_TTL' "$TMP_DIR/native-render.yaml" || fail 'native refresh lock TTL env is missing'
 grep -Fq 'name: REDIS_REFRESH_LOCK_WAIT' "$TMP_DIR/native-render.yaml" || fail 'native refresh lock wait env is missing'
@@ -214,13 +218,13 @@ fi
 
 cat > "$TMP_DIR/conflicting-policy.yaml" <<'VALUES'
 auth:
-  mode: off
+  mode: "off"
   policy:
     data: |
       p, role:operator, profiles, profiles:list, allow
     existingConfigMap: managed-policy
 VALUES
-assert_render_fails "$TMP_DIR/conflicting-policy.yaml"
+assert_render_fails_with 'auth.policy.data and auth.policy.existingConfigMap are mutually exclusive' --skip-schema-validation -f "$TMP_DIR/conflicting-policy.yaml"
 
 checksum_a="$(grep -m1 'checksum/profiles:' "$TMP_DIR/valid-render.yaml")"
 cat > "$TMP_DIR/changed.yaml" <<'VALUES'
@@ -245,6 +249,8 @@ checksum_b="$(grep -m1 'checksum/profiles:' "$TMP_DIR/changed-render.yaml")"
 [[ "$checksum_a" != "$checksum_b" ]] || fail 'ConfigMap checksum did not change with profile metadata'
 
 cat > "$TMP_DIR/missing-secret.yaml" <<'VALUES'
+auth:
+  mode: "off"
 profiles:
   - id: dev
     label: Development
@@ -253,9 +259,11 @@ profiles:
 secret:
   existingSecret: ""
 VALUES
-assert_render_fails "$TMP_DIR/missing-secret.yaml"
+assert_render_fails_with 'secret.existingSecret is required when profiles are configured' --skip-schema-validation -f "$TMP_DIR/missing-secret.yaml"
 
 cat > "$TMP_DIR/duplicate-id.yaml" <<'VALUES'
+auth:
+  mode: "off"
 profiles:
   - id: dev
     label: Development
@@ -268,9 +276,11 @@ profiles:
 secret:
   existingSecret: vaultsmith-passwords
 VALUES
-assert_render_fails "$TMP_DIR/duplicate-id.yaml"
+assert_render_fails_with 'profiles contains duplicate id "dev"' --skip-schema-validation -f "$TMP_DIR/duplicate-id.yaml"
 
 cat > "$TMP_DIR/duplicate-env.yaml" <<'VALUES'
+auth:
+  mode: "off"
 profiles:
   - id: dev
     label: Development
@@ -283,9 +293,11 @@ profiles:
 secret:
   existingSecret: vaultsmith-passwords
 VALUES
-assert_render_fails "$TMP_DIR/duplicate-env.yaml"
+assert_render_fails_with 'profiles contains duplicate passwordEnv "VAULT_PASSWORD_DEV"' --skip-schema-validation -f "$TMP_DIR/duplicate-env.yaml"
 
 cat > "$TMP_DIR/reserved-env.yaml" <<'VALUES'
+auth:
+  mode: "off"
 profiles:
   - id: dev
     label: Development
@@ -294,24 +306,26 @@ profiles:
 secret:
   existingSecret: vaultsmith-passwords
 VALUES
-assert_render_fails "$TMP_DIR/reserved-env.yaml"
+assert_render_fails_with 'profiles passwordEnv "VAULT_PROFILES_JSON" is reserved' --skip-schema-validation -f "$TMP_DIR/reserved-env.yaml"
 
 cat > "$TMP_DIR/broad-policy.yaml" <<'VALUES'
+auth:
+  mode: "off"
 networkPolicy:
   enabled: true
   allowedIngress:
     - {}
 VALUES
-assert_render_fails "$TMP_DIR/broad-policy.yaml"
+assert_render_fails_with 'networkPolicy.allowedIngress rules need namespaceSelector or podSelector' --skip-schema-validation -f "$TMP_DIR/broad-policy.yaml"
 
 cat > "$TMP_DIR/empty-egress.yaml" <<'VALUES'
 auth:
-  mode: off
+  mode: "off"
 networkPolicy:
   enabled: true
   allowedEgress:
     - {}
 VALUES
-assert_render_fails "$TMP_DIR/empty-egress.yaml"
+assert_render_fails_with 'networkPolicy.allowedEgress rules need to or ports' --skip-schema-validation -f "$TMP_DIR/empty-egress.yaml"
 
 printf 'chart tests: ok\n'

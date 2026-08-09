@@ -47,7 +47,6 @@ func newRefreshService(t *testing.T, exchange func(context.Context, string) (*oa
 		Issuer:    "https://issuer.example",
 		Subject:   "user-123",
 		Groups:    []string{"vault-readers"},
-		IssuedAt:  time.Now().Add(-time.Hour),
 		ExpiresAt: time.Now().Add(5 * time.Second),
 	}
 	StorePrincipal(ctx, service.Sessions, principal, "old-refresh")
@@ -214,7 +213,6 @@ func TestAuthenticatedPrincipalRejectsExpiredPrincipalWithoutRefreshToken(t *tes
 	StorePrincipal(ctx, service.Sessions, Principal{
 		Issuer:    "https://issuer.example",
 		Subject:   "user-123",
-		IssuedAt:  time.Now().Add(-time.Hour),
 		ExpiresAt: time.Now().Add(-time.Minute),
 	}, "")
 	if _, _, err := service.Sessions.Commit(ctx); err != nil {
@@ -383,10 +381,23 @@ func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
 }
 
-func TestRefreshedSessionExpiryIsBoundedByAbsoluteLifetime(t *testing.T) {
-	deadline := time.Now().Add(time.Minute)
-	got := refreshedSessionExpiry(deadline, time.Now().Add(time.Hour))
-	if got.After(deadline) {
-		t.Fatalf("refreshed expiry = %s, exceeds absolute deadline %s", got, deadline)
+func TestRefreshedSessionExpiryUsesEarliestAvailableLimit(t *testing.T) {
+	earlier := time.Unix(1, 0)
+	later := earlier.Add(time.Hour)
+	tests := []struct {
+		name                  string
+		deadline, token, want time.Time
+	}{
+		{"absolute deadline", earlier, later, earlier},
+		{"token expiry", later, earlier, earlier},
+		{"token only", time.Time{}, later, later},
+		{"deadline only", later, time.Time{}, later},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := refreshedSessionExpiry(tt.deadline, tt.token); !got.Equal(tt.want) {
+				t.Fatalf("refreshedSessionExpiry() = %s, want %s", got, tt.want)
+			}
+		})
 	}
 }

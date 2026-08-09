@@ -9,16 +9,14 @@ import (
 
 func TestLoginTransactionIsAtomicAndSingleUse(t *testing.T) {
 	_, runtime, _ := newTestRedisRuntime(t)
-
+	const state = "state-1"
 	transaction := LoginTransaction{
-		State:          "state-1",
 		Nonce:          "nonce-1",
 		PKCEVerifier:   "verifier-1",
 		PreAuthSession: "session-1",
 		ReturnTo:       "/",
-		ExpiresAt:      time.Now().Add(time.Minute),
 	}
-	if err := runtime.SaveLoginTransaction(context.Background(), transaction); err != nil {
+	if err := runtime.SaveLoginTransaction(context.Background(), state, transaction); err != nil {
 		t.Fatalf("SaveLoginTransaction() error = %v", err)
 	}
 
@@ -33,7 +31,7 @@ func TestLoginTransactionIsAtomicAndSingleUse(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			consumed, found, err := runtime.ConsumeLoginTransaction(context.Background(), transaction.State)
+			consumed, found, err := runtime.ConsumeLoginTransaction(context.Background(), state)
 			if err != nil {
 				t.Errorf("ConsumeLoginTransaction() error = %v", err)
 				return
@@ -60,19 +58,17 @@ func TestLoginTransactionIsAtomicAndSingleUse(t *testing.T) {
 	}
 }
 
-func TestLoginTransactionRejectsDuplicateStateAndExpiredValues(t *testing.T) {
-	_, runtime, _ := newTestRedisRuntime(t)
-
-	transaction := LoginTransaction{State: "duplicate", ExpiresAt: time.Now().Add(time.Minute)}
-	if err := runtime.SaveLoginTransaction(context.Background(), transaction); err != nil {
+func TestLoginTransactionRejectsDuplicateStateAndExpires(t *testing.T) {
+	server, runtime, _ := newTestRedisRuntime(t)
+	transaction := LoginTransaction{Nonce: "nonce"}
+	if err := runtime.SaveLoginTransaction(context.Background(), "duplicate", transaction); err != nil {
 		t.Fatalf("SaveLoginTransaction() error = %v", err)
 	}
-	if err := runtime.SaveLoginTransaction(context.Background(), transaction); err == nil {
+	if err := runtime.SaveLoginTransaction(context.Background(), "duplicate", transaction); err == nil {
 		t.Fatal("second SaveLoginTransaction() error = nil, want duplicate rejection")
 	}
-
-	expired := LoginTransaction{State: "expired", ExpiresAt: time.Now().Add(-time.Second)}
-	if err := runtime.SaveLoginTransaction(context.Background(), expired); err == nil {
-		t.Fatal("expired SaveLoginTransaction() error = nil, want expiry rejection")
+	server.FastForward(loginTransactionLifetime + time.Millisecond)
+	if _, found, err := runtime.ConsumeLoginTransaction(context.Background(), "duplicate"); err != nil || found {
+		t.Fatalf("expired transaction = (found=%t, error=%v), want absent", found, err)
 	}
 }

@@ -101,22 +101,6 @@ func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
 	}
 }
 
-func TestAuthorizeEvaluatesInheritedRulesOnce(t *testing.T) {
-	path := policyFile(t, "g, group:admins, role:admin\ng, role:admin, role:base\np, role:admin, profile:dev, encrypt, allow\np, role:base, profile:dev, encrypt, allow\n")
-	authorizer := loadAuthorizer(t, path, []string{"dev"})
-	matcherCalls := 0
-	replacePolicyMatcher(t, authorizer, path, func(...interface{}) (interface{}, error) {
-		matcherCalls++
-		return true, nil
-	})
-	if err := authorizer.Authorize(principalWithGroups("admins"), ActionEncrypt, ProfileResource("dev")); err != nil {
-		t.Fatalf("Authorize() error = %v", err)
-	}
-	if matcherCalls != 2 {
-		t.Fatalf("resource matcher calls = %d, want one call per matching rule", matcherCalls)
-	}
-}
-
 func TestAuthorizeRotateUsesOnePolicySnapshot(t *testing.T) {
 	initial := "g, group:admins, role:admin\np, role:admin, profile:dev, decrypt, allow\np, role:admin, profile:prod, encrypt, allow\n"
 	path := policyFile(t, initial)

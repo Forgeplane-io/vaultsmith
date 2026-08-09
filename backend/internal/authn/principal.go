@@ -25,9 +25,7 @@ const (
 	sessionIssuerKey         = "auth.issuer"
 	sessionSubjectKey        = "auth.subject"
 	sessionEmailKey          = "auth.email"
-	sessionEmailVerifiedKey  = "auth.email_verified"
 	sessionGroupsKey         = "auth.groups"
-	sessionIssuedAtKey       = "auth.issued_at"
 	sessionExpiresAtKey      = "auth.expires_at"
 	sessionRefreshTokenKey   = "auth.refresh_token"
 	sessionRefreshCheckedKey = "auth.refresh_checked_at"
@@ -41,13 +39,11 @@ func init() {
 }
 
 type Principal struct {
-	Issuer        string
-	Subject       string
-	Email         string
-	EmailVerified bool
-	Groups        []string
-	IssuedAt      time.Time
-	ExpiresAt     time.Time
+	Issuer    string
+	Subject   string
+	Email     string
+	Groups    []string
+	ExpiresAt time.Time
 }
 
 func NewSessionManager(store scs.Store, cfg config.SessionConfig) *scs.SessionManager {
@@ -84,11 +80,9 @@ func StorePrincipal(ctx context.Context, manager *scs.SessionManager, principal 
 	manager.Put(ctx, sessionIssuerKey, principal.Issuer)
 	manager.Put(ctx, sessionSubjectKey, principal.Subject)
 	manager.Put(ctx, sessionEmailKey, principal.Email)
-	manager.Put(ctx, sessionEmailVerifiedKey, principal.EmailVerified)
 	groups := make([]string, len(principal.Groups))
 	copy(groups, principal.Groups)
 	manager.Put(ctx, sessionGroupsKey, groups)
-	manager.Put(ctx, sessionIssuedAtKey, principal.IssuedAt)
 	manager.Put(ctx, sessionExpiresAtKey, principal.ExpiresAt)
 	if refreshToken == "" {
 		manager.Remove(ctx, sessionRefreshTokenKey)
@@ -107,37 +101,22 @@ func PrincipalFromSession(ctx context.Context, manager *scs.SessionManager) (Pri
 		return Principal{}, false, fmt.Errorf("malformed authentication session")
 	}
 
-	groupsValue := manager.Get(ctx, sessionGroupsKey)
-	groups, ok := groupsValue.([]string)
+	groups, ok := manager.Get(ctx, sessionGroupsKey).([]string)
 	if !ok {
-		if groupsValue != nil {
-			return Principal{}, false, fmt.Errorf("malformed authentication session groups")
-		}
-		groups = []string{}
-	}
-	issuedAt, ok := manager.Get(ctx, sessionIssuedAtKey).(time.Time)
-	if !ok {
-		return Principal{}, false, fmt.Errorf("malformed authentication session issued time")
+		return Principal{}, false, fmt.Errorf("malformed authentication session groups")
 	}
 	expiresAt, ok := manager.Get(ctx, sessionExpiresAtKey).(time.Time)
 	if !ok || expiresAt.IsZero() {
 		return Principal{}, false, fmt.Errorf("malformed authentication session expiry")
 	}
-	verified, ok := manager.Get(ctx, sessionEmailVerifiedKey).(bool)
-	if !ok {
-		return Principal{}, false, fmt.Errorf("malformed authentication session email state")
-	}
-
 	principalGroups := make([]string, len(groups))
 	copy(principalGroups, groups)
 	return Principal{
-		Issuer:        issuer,
-		Subject:       subject,
-		Email:         manager.GetString(ctx, sessionEmailKey),
-		EmailVerified: verified,
-		Groups:        principalGroups,
-		IssuedAt:      issuedAt,
-		ExpiresAt:     expiresAt,
+		Issuer:    issuer,
+		Subject:   subject,
+		Email:     manager.GetString(ctx, sessionEmailKey),
+		Groups:    principalGroups,
+		ExpiresAt: expiresAt,
 	}, true, nil
 }
 
@@ -145,7 +124,7 @@ func RefreshTokenFromSession(ctx context.Context, manager *scs.SessionManager) s
 	return manager.GetString(ctx, sessionRefreshTokenKey)
 }
 
-func principalFromClaims(issuer string, claims map[string]any, groupsClaim string, issuedAt, expiresAt time.Time) (Principal, error) {
+func principalFromClaims(issuer string, claims map[string]any, groupsClaim string, expiresAt time.Time) (Principal, error) {
 	if strings.TrimSpace(issuer) == "" {
 		return Principal{}, fmt.Errorf("issuer claim is required")
 	}
@@ -169,13 +148,11 @@ func principalFromClaims(issuer string, claims map[string]any, groupsClaim strin
 		email = ""
 	}
 	return Principal{
-		Issuer:        issuer,
-		Subject:       subject,
-		Email:         email,
-		EmailVerified: emailVerified,
-		Groups:        groups,
-		IssuedAt:      issuedAt,
-		ExpiresAt:     expiresAt,
+		Issuer:    issuer,
+		Subject:   subject,
+		Email:     email,
+		Groups:    groups,
+		ExpiresAt: expiresAt,
 	}, nil
 }
 
@@ -196,15 +173,6 @@ func claimPathValue(claims map[string]any, path string) (any, bool) {
 
 func strictStringArray(value any) ([]string, error) {
 	switch typed := value.(type) {
-	case []string:
-		groups := make([]string, len(typed))
-		for index, group := range typed {
-			if strings.TrimSpace(group) == "" {
-				return nil, fmt.Errorf("empty group")
-			}
-			groups[index] = group
-		}
-		return groups, nil
 	case []any:
 		groups := make([]string, len(typed))
 		for index, item := range typed {

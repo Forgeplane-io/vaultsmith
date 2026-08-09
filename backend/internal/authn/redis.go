@@ -312,10 +312,6 @@ func (r *RedisRuntime) Probe(ctx context.Context) error {
 	return nil
 }
 
-func (r *RedisRuntime) Pool() *redis.Pool {
-	return r.pool
-}
-
 func (r *RedisRuntime) SessionStore() scs.Store {
 	return r.sessionStore
 }

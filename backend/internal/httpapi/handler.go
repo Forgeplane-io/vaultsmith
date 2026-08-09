@@ -77,21 +77,6 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
-func newHandler(profiles []Profile, executor Executor) *Handler {
-	public := make([]Profile, 0, len(profiles))
-	profileSet := make(map[string]struct{}, len(profiles))
-	for _, profile := range profiles {
-		public = append(public, profile)
-		profileSet[profile.ID] = struct{}{}
-	}
-	return &Handler{
-		profiles: profileSet,
-		public:   public,
-		executor: executor,
-		ready:    len(public) > 0 && executor != nil,
-	}
-}
-
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/v1/profiles":

@@ -107,6 +107,7 @@ func NewAuthenticator(ctx context.Context, cfg config.AuthConfig, runtime *Redis
 		RedirectURL:  cfg.OIDC.RedirectURL,
 		Scopes:       append([]string(nil), cfg.OIDC.Scopes...),
 	}
+	service.refreshExchange = service.exchangeRefreshToken
 	service.Sessions = NewSessionManager(runtime.SessionStore(), cfg.Session)
 	return service, nil
 }
@@ -138,14 +139,12 @@ func (a *Authenticator) BeginLogin(ctx context.Context, returnTo string) (string
 		return "", fmt.Errorf("create pre-authentication session")
 	}
 	transaction := LoginTransaction{
-		State:          state,
 		Nonce:          nonce,
 		PKCEVerifier:   verifier,
 		PreAuthSession: preAuthSession,
 		ReturnTo:       returnTo,
-		ExpiresAt:      time.Now().Add(loginTransactionLifetime),
 	}
-	if err := a.Redis.SaveLoginTransaction(ctx, transaction); err != nil {
+	if err := a.Redis.SaveLoginTransaction(ctx, state, transaction); err != nil {
 		_ = a.Logout(ctx)
 		return "", ErrTemporaryUnavailable
 	}
@@ -216,7 +215,7 @@ func (a *Authenticator) verifyIDToken(ctx context.Context, rawIDToken, expectedN
 	if err := idToken.Claims(&claims); err != nil {
 		return Principal{}, ErrInvalidCallback
 	}
-	return principalFromClaims(a.Config.OIDC.IssuerURL, claims, a.Config.OIDC.GroupsClaim, idToken.IssuedAt, idToken.Expiry)
+	return principalFromClaims(a.Config.OIDC.IssuerURL, claims, a.Config.OIDC.GroupsClaim, idToken.Expiry)
 }
 
 func randomURLToken(size int) (string, error) {

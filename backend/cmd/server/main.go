@@ -22,12 +22,6 @@ import (
 
 const defaultAddress = ":8080"
 
-const startupBoundaryWarning = "Vaultsmith does not authenticate requests; run it only behind an authenticated private boundary."
-
-func logStartupWarning(logger *log.Logger) {
-	logger.Printf("WARNING: %s", startupBoundaryWarning)
-}
-
 func main() {
 	showVersion := flag.Bool("version", false, "print the Vaultsmith version and exit")
 	flag.Parse()
@@ -48,7 +42,7 @@ func run() error {
 	}
 	authConfig := loaded.Auth()
 	if authConfig.Mode == config.AuthModeOff {
-		logStartupWarning(log.Default())
+		log.Print("WARNING: Vaultsmith does not authenticate requests; run it only behind an authenticated private boundary.")
 	}
 
 	startupContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)

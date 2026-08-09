@@ -21,24 +21,15 @@ return value
 `)
 
 type LoginTransaction struct {
-	State          string    `json:"state"`
-	Nonce          string    `json:"nonce"`
-	PKCEVerifier   string    `json:"pkce_verifier"`
-	PreAuthSession string    `json:"pre_auth_session"`
-	ReturnTo       string    `json:"return_to"`
-	ExpiresAt      time.Time `json:"expires_at"`
+	Nonce          string `json:"nonce"`
+	PKCEVerifier   string `json:"pkce_verifier"`
+	PreAuthSession string `json:"pre_auth_session"`
+	ReturnTo       string `json:"return_to"`
 }
 
-func (r *RedisRuntime) SaveLoginTransaction(ctx context.Context, transaction LoginTransaction) error {
-	if transaction.State == "" {
+func (r *RedisRuntime) SaveLoginTransaction(ctx context.Context, state string, transaction LoginTransaction) error {
+	if state == "" {
 		return fmt.Errorf("login transaction state is required")
-	}
-	if transaction.ExpiresAt.IsZero() {
-		transaction.ExpiresAt = time.Now().Add(loginTransactionLifetime)
-	}
-	ttl := time.Until(transaction.ExpiresAt)
-	if ttl <= 0 {
-		return fmt.Errorf("login transaction is expired")
 	}
 	payload, err := json.Marshal(transaction)
 	if err != nil {
@@ -49,8 +40,8 @@ func (r *RedisRuntime) SaveLoginTransaction(ctx context.Context, transaction Log
 		return fmt.Errorf("login transaction connection failed: %w", err)
 	}
 	defer conn.Close()
-	key := r.TransactionPrefix() + transaction.State
-	reply, err := redis.String(conn.Do("SET", key, payload, "NX", "PX", ttl.Milliseconds()))
+	key := r.TransactionPrefix() + state
+	reply, err := redis.String(conn.Do("SET", key, payload, "NX", "PX", loginTransactionLifetime.Milliseconds()))
 	if err != nil {
 		return fmt.Errorf("save login transaction: %w", err)
 	}
@@ -79,9 +70,6 @@ func (r *RedisRuntime) ConsumeLoginTransaction(ctx context.Context, state string
 	var transaction LoginTransaction
 	if err := json.Unmarshal(raw, &transaction); err != nil {
 		return LoginTransaction{}, false, fmt.Errorf("decode login transaction: %w", err)
-	}
-	if transaction.State != state || time.Now().After(transaction.ExpiresAt) {
-		return LoginTransaction{}, false, nil
 	}
 	return transaction, true, nil
 }

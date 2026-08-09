@@ -33,9 +33,7 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request) {
 		}
 		if found {
 			response.Authenticated = true
-			if principal.EmailVerified {
-				response.Email = principal.Email
-			}
+			response.Email = principal.Email
 		}
 	}
 	writeJSON(w, http.StatusOK, response)

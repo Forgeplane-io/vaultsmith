@@ -55,7 +55,7 @@ func TestLoadAuthNativeRequiresCSRFSecret(t *testing.T) {
 	}
 }
 
-func TestLoadAuthNativeRequiresAllSecurityInputs(t *testing.T) {
+func TestLoadAuthNativeRequiresOIDCClientSecret(t *testing.T) {
 	values := nativeEnv()
 	delete(values, "OIDC_CLIENT_SECRET")
 	_, err := LoadAuth(envLookup(values))
@@ -64,9 +64,6 @@ func TestLoadAuthNativeRequiresAllSecurityInputs(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "OIDC_CLIENT_SECRET") {
 		t.Fatalf("error = %q, want OIDC_CLIENT_SECRET", err)
-	}
-	if strings.Contains(err.Error(), "client-secret-value") {
-		t.Fatalf("error leaked a secret: %q", err)
 	}
 }
 

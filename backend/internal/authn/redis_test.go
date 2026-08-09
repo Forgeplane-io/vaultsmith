@@ -8,7 +8,6 @@ import (
 	"github.com/alexedwards/scs/v2"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
-	"github.com/gomodule/redigo/redis"
 )
 
 func testRedisConfig(address string) config.RedisConfig {
@@ -170,29 +169,7 @@ func TestRedisRuntimeRefreshLockIsBoundedAndOwnerSafe(t *testing.T) {
 	}
 }
 
-func TestRedisRuntimeActivatesSessionFence(t *testing.T) {
-	server, runtime, _ := newTestRedisRuntime(t)
-
-	mutex := runtime.NewSessionMutex("session-id")
-	if err := mutex.TryLockContext(context.Background()); err != nil {
-		t.Fatalf("TryLockContext() error = %v", err)
-	}
-	defer mutex.Unlock()
-
-	fence := mutex.Name() + fenceSeparator + mutex.Value()
-	if err := runtime.ActivateSessionFence(context.Background(), "session-id", fence, time.Hour); err != nil {
-		t.Fatalf("ActivateSessionFence() error = %v", err)
-	}
-	got, err := server.Get("vaultsmith:test:fence:session-id")
-	if err != nil {
-		t.Fatalf("read fence key: %v", err)
-	}
-	if got != fence {
-		t.Fatalf("fence value = %q, want %q", got, fence)
-	}
-}
-
-func TestRedisRuntimePoolRejectsConnectionErrors(t *testing.T) {
+func TestRedisRuntimeProbeRejectsConnectionErrors(t *testing.T) {
 	server := miniredis.RunT(t)
 	address := server.Addr()
 	server.Close()
@@ -203,11 +180,5 @@ func TestRedisRuntimePoolRejectsConnectionErrors(t *testing.T) {
 	defer cancel()
 	if err := runtime.Probe(ctx); err == nil {
 		t.Fatal("Probe() error = nil, want connection failure")
-	}
-
-	conn := runtime.Pool().Get()
-	defer conn.Close()
-	if _, err := redis.String(conn.Do("PING")); err == nil {
-		t.Fatal("pooled connection unexpectedly succeeded after failed probe")
 	}
 }

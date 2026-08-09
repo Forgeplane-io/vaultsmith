@@ -18,11 +18,20 @@ type Dependencies struct {
 }
 
 func NewWithDependencies(profiles []Profile, executor Executor, dependencies Dependencies) http.Handler {
-	handler := newHandler(profiles, executor)
-	handler.auth = dependencies.Auth
-	handler.authorizer = dependencies.Authorizer
-	handler.authConfig = dependencies.AuthConfig
-	return handler
+	public := append([]Profile(nil), profiles...)
+	profileSet := make(map[string]struct{}, len(public))
+	for _, profile := range public {
+		profileSet[profile.ID] = struct{}{}
+	}
+	return &Handler{
+		profiles:   profileSet,
+		public:     public,
+		executor:   executor,
+		ready:      len(public) > 0 && executor != nil,
+		auth:       dependencies.Auth,
+		authorizer: dependencies.Authorizer,
+		authConfig: dependencies.AuthConfig,
+	}
 }
 
 func WrapSecurity(next http.Handler, cfg config.AuthConfig) http.Handler {

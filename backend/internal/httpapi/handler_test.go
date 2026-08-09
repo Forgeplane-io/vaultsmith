@@ -1,8 +1,8 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +21,19 @@ type operationCall struct {
 	destinationProfileID string
 	mode                 string
 	value                string
+}
+
+func newHandler(profiles []Profile, executor Executor) http.Handler {
+	return NewWithDependencies(profiles, executor, Dependencies{})
+}
+
+func decodeJSONBody[T any](t *testing.T, response *httptest.ResponseRecorder) T {
+	t.Helper()
+	var body T
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response body: %v", err)
+	}
+	return body
 }
 
 func (f *fakeExecutor) Execute(profileID, mode, value string) (string, error) {
@@ -44,9 +57,9 @@ func TestProfilesEndpoint(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
-	if got := response.Body.String(); got != `{"profiles":[{"id":"dev","label":"Development"}]}
-` {
-		t.Fatalf("body = %q", got)
+	profiles := decodeJSONBody[profilesResponse](t, response).Profiles
+	if len(profiles) != 1 || profiles[0] != (Profile{ID: "dev", Label: "Development"}) {
+		t.Fatalf("profiles = %#v", profiles)
 	}
 	if strings.Contains(response.Body.String(), "password") {
 		t.Fatalf("profiles response contains password-related data: %q", response.Body.String())
@@ -65,9 +78,8 @@ func TestOperationEndpoint(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	if got := response.Body.String(); got != `{"value":"$ANSIBLE_VAULT;1.1;AES256\nsynthetic"}
-` {
-		t.Fatalf("body = %q", got)
+	if got := decodeJSONBody[valueResponse](t, response).Value; got != executor.value {
+		t.Fatalf("value = %q, want %q", got, executor.value)
 	}
 	if len(executor.calls) != 1 || executor.calls[0] != (operationCall{profileID: "dev", mode: "encrypt", value: "fixture-value"}) {
 		t.Fatalf("calls = %#v", executor.calls)
@@ -89,9 +101,8 @@ func TestRotateOperationEndpoint(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	if got := response.Body.String(); got != `{"value":"$ANSIBLE_VAULT;1.2;AES256;destination\nsynthetic"}
-` {
-		t.Fatalf("body = %q", got)
+	if got := decodeJSONBody[valueResponse](t, response).Value; got != executor.value {
+		t.Fatalf("value = %q, want %q", got, executor.value)
 	}
 	wantCall := operationCall{sourceProfileID: "source", destinationProfileID: "destination", mode: "rotate", value: "vault-input"}
 	if len(executor.calls) != 1 || executor.calls[0] != wantCall {
@@ -273,18 +284,5 @@ func TestReadiness(t *testing.T) {
 				t.Fatalf("status = %d, want %d", response.Code, test.status)
 			}
 		})
-	}
-}
-
-func TestNotFoundIsJSON(t *testing.T) {
-	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
-	request := httptest.NewRequest(http.MethodGet, "/not-found", nil)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusNotFound)
-	}
-	if _, err := io.ReadAll(response.Body); err != nil {
-		t.Fatalf("read body: %v", err)
 	}
 }

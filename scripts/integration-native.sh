@@ -54,6 +54,9 @@ CSRF_SECRET="$(random_secret)"
 VAULT_PASSWORD_DEV="$(random_secret)"
 VAULT_PASSWORD_PROD="$(random_secret)"
 
+# The integration topology uses fixed ports throughout; do not let caller exports override its Compose env file.
+unset REDIS_PORT KEYCLOAK_PORT KEYCLOAK_ADMIN_PORT EDGE_PORT
+
 cat > "$TMP_DIR/.env" <<EOF
 KEYCLOAK_ADMIN_USERNAME=integration-admin
 KEYCLOAK_ADMIN_PASSWORD=$KEYCLOAK_ADMIN_PASSWORD

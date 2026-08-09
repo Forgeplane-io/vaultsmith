@@ -13,14 +13,14 @@ func TestPrincipalFromVerifiedClaims(t *testing.T) {
 		"email":          "user@example.test",
 		"email_verified": true,
 		"groups":         []any{"vault-admins", "vault-readers"},
-	}, "groups", time.Unix(100, 0), time.Unix(200, 0))
+	}, "groups", time.Unix(200, 0))
 	if err != nil {
 		t.Fatalf("principalFromClaims() error = %v", err)
 	}
 	if principal.Issuer != "https://issuer.example" || principal.Subject != "user-123" {
 		t.Fatalf("unexpected identity: %+v", principal)
 	}
-	if !principal.EmailVerified || principal.Email != "user@example.test" {
+	if principal.Email != "user@example.test" {
 		t.Fatalf("unexpected verified email: %+v", principal)
 	}
 	if !reflect.DeepEqual(principal.Groups, []string{"vault-admins", "vault-readers"}) {
@@ -34,17 +34,17 @@ func TestPrincipalFromClaimsDropsUnverifiedEmail(t *testing.T) {
 		"email":          "user@example.test",
 		"email_verified": false,
 		"groups":         []any{},
-	}, "groups", time.Time{}, time.Time{})
+	}, "groups", time.Time{})
 	if err != nil {
 		t.Fatalf("principalFromClaims() error = %v", err)
 	}
-	if principal.Email != "" || principal.EmailVerified {
+	if principal.Email != "" {
 		t.Fatalf("unverified email was retained: %+v", principal)
 	}
 }
 
 func TestPrincipalFromClaimsTreatsMissingGroupsAsNoPermissions(t *testing.T) {
-	principal, err := principalFromClaims("issuer", map[string]any{"sub": "user-123"}, "groups", time.Time{}, time.Time{})
+	principal, err := principalFromClaims("issuer", map[string]any{"sub": "user-123"}, "groups", time.Time{})
 	if err != nil {
 		t.Fatalf("principalFromClaims() error = %v", err)
 	}
@@ -68,7 +68,7 @@ func TestPrincipalFromClaimsRejectsMalformedGroups(t *testing.T) {
 			if tt.groups != nil {
 				claims["groups"] = tt.groups
 			}
-			_, err := principalFromClaims("issuer", claims, "groups", time.Time{}, time.Time{})
+			_, err := principalFromClaims("issuer", claims, "groups", time.Time{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("principalFromClaims() error = %v, want mention %q", err, tt.want)
 			}
@@ -82,7 +82,7 @@ func TestPrincipalFromClaimsSupportsNestedGroupPath(t *testing.T) {
 		"realm": map[string]any{
 			"groups": []any{"vault-admins"},
 		},
-	}, "realm.groups", time.Time{}, time.Time{})
+	}, "realm.groups", time.Time{})
 	if err != nil {
 		t.Fatalf("principalFromClaims() error = %v", err)
 	}

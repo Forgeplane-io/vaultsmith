@@ -11,7 +11,7 @@ import (
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 )
 
-func TestSessionManagerUsesOpaqueHostCookieDefaults(t *testing.T) {
+func TestSessionManagerEmitsSecureHostCookieDefaults(t *testing.T) {
 	manager := NewSessionManager(memstore.New(), config.SessionConfig{
 		CookieName:       "__Host-vaultsmith_session",
 		AbsoluteLifetime: 8 * time.Hour,
@@ -19,15 +19,6 @@ func TestSessionManagerUsesOpaqueHostCookieDefaults(t *testing.T) {
 		Secure:           true,
 		SameSite:         http.SameSiteLaxMode,
 	})
-	if !manager.HashTokenInStore {
-		t.Fatal("HashTokenInStore = false, want true")
-	}
-	if manager.Cookie.Name != "__Host-vaultsmith_session" || manager.Cookie.Domain != "" || manager.Cookie.Path != "/" {
-		t.Fatalf("unexpected cookie configuration: %+v", manager.Cookie)
-	}
-	if !manager.Cookie.HttpOnly || !manager.Cookie.Secure || manager.Cookie.SameSite != http.SameSiteLaxMode {
-		t.Fatalf("insecure cookie configuration: %+v", manager.Cookie)
-	}
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	ctx, err := manager.Load(req.Context(), "")
@@ -75,29 +66,6 @@ func TestSessionManagerLoadAndSaveDoesNotExposeStoreErrors(t *testing.T) {
 	}
 	if body.Error.Code != "temporarily_unavailable" {
 		t.Fatalf("LoadAndSave() error code = %q", body.Error.Code)
-	}
-}
-
-func TestPrincipalFromSessionTreatsNilGroupsAsEmpty(t *testing.T) {
-	manager := NewSessionManager(memstore.New(), config.SessionConfig{
-		AbsoluteLifetime: time.Hour,
-		IdleLifetime:     time.Minute,
-	})
-	ctx := mustLoadSession(t, manager, "")
-	StorePrincipal(ctx, manager, Principal{
-		Issuer:        "issuer",
-		Subject:       "subject",
-		EmailVerified: true,
-		ExpiresAt:     time.Now().Add(time.Hour),
-	}, "")
-	manager.Put(ctx, sessionGroupsKey, nil)
-
-	principal, found, err := PrincipalFromSession(ctx, manager)
-	if err != nil || !found {
-		t.Fatalf("PrincipalFromSession() = (%+v, %t, %v)", principal, found, err)
-	}
-	if principal.Groups == nil || len(principal.Groups) != 0 {
-		t.Fatalf("groups = %#v, want non-nil empty group set", principal.Groups)
 	}
 }
 

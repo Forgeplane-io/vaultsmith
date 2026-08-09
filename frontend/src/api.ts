@@ -30,7 +30,7 @@ export type OperationRequest = SingleProfileOperationRequest | RotateOperationRe
 export const MAX_PLAINTEXT_BYTES = 1 << 20
 export const MAX_VAULT_TEXT_BYTES = 5 << 20
 export const OPERATION_TIMEOUT_MS = 30_000
-export const PROFILE_LOAD_TIMEOUT_MS = 10_000
+const PROFILE_LOAD_TIMEOUT_MS = 10_000
 
 export class ApiError extends Error {
   readonly code: string

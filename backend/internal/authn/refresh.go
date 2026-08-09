@@ -93,11 +93,7 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 
 	exchangeCtx, cancel := a.oidcTimeoutContext(ctx)
 	defer cancel()
-	exchange := a.refreshExchange
-	if exchange == nil {
-		exchange = a.exchangeRefreshToken
-	}
-	rotated, err := exchange(exchangeCtx, freshRefreshToken)
+	rotated, err := a.refreshExchange(exchangeCtx, freshRefreshToken)
 	if err != nil {
 		if isPermanentRefreshFailure(err) {
 			if destroyErr := a.destroySession(ctx); destroyErr != nil {
@@ -171,7 +167,7 @@ func (a *Authenticator) verifyRefreshedIDToken(ctx context.Context, rawIDToken s
 	if err := idToken.Claims(&claims); err != nil {
 		return Principal{}, ErrInvalidCallback
 	}
-	principal, err := principalFromClaims(a.Config.OIDC.IssuerURL, claims, a.Config.OIDC.GroupsClaim, idToken.IssuedAt, idToken.Expiry)
+	principal, err := principalFromClaims(a.Config.OIDC.IssuerURL, claims, a.Config.OIDC.GroupsClaim, idToken.Expiry)
 	if err != nil || principal.Issuer != previous.Issuer || principal.Subject != previous.Subject {
 		return Principal{}, ErrInvalidCallback
 	}

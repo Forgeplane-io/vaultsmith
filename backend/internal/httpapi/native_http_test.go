@@ -92,7 +92,7 @@ func seedNativeSession(t *testing.T, authenticator *authn.Authenticator) string 
 	if err != nil {
 		t.Fatal(err)
 	}
-	authn.StorePrincipal(ctx, authenticator.Sessions, authn.Principal{Issuer: "https://issuer", Subject: "subject", Groups: []string{"admins"}, Email: "user@example.test", EmailVerified: true, IssuedAt: time.Now().Add(-time.Minute), ExpiresAt: time.Now().Add(time.Hour)}, "")
+	authn.StorePrincipal(ctx, authenticator.Sessions, authn.Principal{Issuer: "https://issuer", Subject: "subject", Groups: []string{"admins"}, Email: "user@example.test", ExpiresAt: time.Now().Add(time.Hour)}, "")
 	token, _, err := authenticator.Sessions.Commit(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func seedNativeSession(t *testing.T, authenticator *authn.Authenticator) string 
 	return token
 }
 
-func TestNativeHTTPAuthenticationAuthorizationAndSessionBootstrap(t *testing.T) {
+func TestNativeHTTPAuthorizedSessionCSRFAndProfileFiltering(t *testing.T) {
 	handler, authenticator, cfg, _, executor := nativeHTTPFixture(t)
 	unauthenticated := httptest.NewRecorder()
 	unauthenticatedRequest := httptest.NewRequest(http.MethodGet, "https://example.test/api/v1/profiles", nil)
@@ -143,9 +143,9 @@ func TestNativeHTTPAuthenticationAuthorizationAndSessionBootstrap(t *testing.T) 
 	if response.Code != http.StatusOK || response.Body.String() == "" {
 		t.Fatalf("profiles response = %d %s", response.Code, response.Body.String())
 	}
-	if response.Body.String() != `{"profiles":[{"id":"dev","label":"Development"}]}
-` {
-		t.Fatalf("profiles response = %q, want only authorized dev profile", response.Body.String())
+	profiles := decodeJSONBody[profilesResponse](t, response).Profiles
+	if len(profiles) != 1 || profiles[0] != (Profile{ID: "dev", Label: "Development"}) {
+		t.Fatalf("profiles = %#v, want only authorized dev profile", profiles)
 	}
 
 	authorized := httptest.NewRequest(http.MethodPost, "https://example.test/api/v1/operations", strings.NewReader(`{"profileId":"dev","mode":"encrypt","value":"secret"}`))
@@ -157,8 +157,7 @@ func TestNativeHTTPAuthenticationAuthorizationAndSessionBootstrap(t *testing.T) 
 	authorized.AddCookie(csrfCookie)
 	authorizedResponse := httptest.NewRecorder()
 	handler.ServeHTTP(authorizedResponse, authorized)
-	if authorizedResponse.Code != http.StatusOK || authorizedResponse.Body.String() != `{"value":"ok"}
-` {
+	if authorizedResponse.Code != http.StatusOK || decodeJSONBody[valueResponse](t, authorizedResponse).Value != "ok" {
 		t.Fatalf("authorized operation response = %d %s", authorizedResponse.Code, authorizedResponse.Body.String())
 	}
 	if !executor.called {

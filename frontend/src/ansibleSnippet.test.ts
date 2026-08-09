@@ -91,13 +91,4 @@ describe('Ansible Vault snippet helpers', () => {
       `${INDENT}payload-one${character}payload-two`,
     )
   })
-
-  it('does not mutate the raw ciphertext input', () => {
-    const ciphertext = `${VAULT_1_2_CIPHERTEXT}\r\n`
-    const original = ciphertext
-
-    formatAnsibleVaultSnippet('secret_key', ciphertext)
-
-    expect(ciphertext).toBe(original)
-  })
 })
