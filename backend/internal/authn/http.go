@@ -21,7 +21,7 @@ func (a *Authenticator) SessionMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Vary", "Cookie")
 		token := sessionTokenFromRequest(r, a.Config.Session.CookieName)
-		lock, err := a.acquireSessionLock(r.Context(), token)
+		lock, err := a.acquireSessionMutex(r.Context(), token)
 		if err != nil {
 			a.Sessions.ErrorFunc(w, r, err)
 			return
@@ -35,6 +35,10 @@ func (a *Authenticator) SessionMiddleware(next http.Handler) http.Handler {
 		}
 		loadedToken := a.Sessions.Token(ctx)
 		if lock.fence != "" && loadedToken == token {
+			if err := a.activateSessionFence(lock.ctx, token, lock.fence); err != nil {
+				a.Sessions.ErrorFunc(w, r, err)
+				return
+			}
 			a.Sessions.Put(ctx, sessionFenceKey, lock.fence)
 		} else {
 			// A stale cookie can refer to a session that has expired or been
@@ -57,9 +61,10 @@ func (a *Authenticator) SessionMiddleware(next http.Handler) http.Handler {
 
 type sessionResponseWriter struct {
 	http.ResponseWriter
-	request        *http.Request
-	sessionManager *scs.SessionManager
-	written        bool
+	request         *http.Request
+	sessionManager  *scs.SessionManager
+	commitAttempted bool
+	commitSucceeded bool
 }
 
 func (sw *sessionResponseWriter) commitAndWriteSessionCookie() bool {
@@ -83,11 +88,12 @@ func (sw *sessionResponseWriter) commitAndWriteSessionCookie() bool {
 }
 
 func (sw *sessionResponseWriter) ensureSessionCommitted() bool {
-	if sw.written {
-		return true
+	if sw.commitAttempted {
+		return sw.commitSucceeded
 	}
-	sw.written = true
-	return sw.commitAndWriteSessionCookie()
+	sw.commitAttempted = true
+	sw.commitSucceeded = sw.commitAndWriteSessionCookie()
+	return sw.commitSucceeded
 }
 
 func (sw *sessionResponseWriter) WriteHeader(code int) {

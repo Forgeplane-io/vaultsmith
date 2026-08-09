@@ -252,15 +252,12 @@ func TestRefreshExchangeUsesConfiguredOIDCClientContext(t *testing.T) {
 	}
 }
 
-func TestRefreshedIDTokenVerificationUsesProviderOIDCClient(t *testing.T) {
+func signedIDTokenFixture(t *testing.T, issuer, keyID, clientID string) (string, []byte) {
+	t.Helper()
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("rsa.GenerateKey() error = %v", err)
 	}
-	const issuer = "https://issuer.example.test"
-	const keyID = "refresh-test-key"
-	const clientID = "refresh-test-client"
-
 	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: privateKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", keyID))
 	if err != nil {
 		t.Fatalf("jose.NewSigner() error = %v", err)
@@ -287,6 +284,66 @@ func TestRefreshedIDTokenVerificationUsesProviderOIDCClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal(jwks) error = %v", err)
 	}
+	return compactIDToken, jwks
+}
+
+func TestRefreshedIDTokenVerificationWaitIsBounded(t *testing.T) {
+	const issuer = "https://issuer.example.test"
+	const keyID = "stalled-jwks-key"
+	const clientID = "stalled-jwks-client"
+	compactIDToken, _ := signedIDTokenFixture(t, issuer, keyID, clientID)
+
+	release := make(chan struct{})
+	defer close(release)
+	started := make(chan struct{})
+	var startOnce sync.Once
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		startOnce.Do(func() { close(started) })
+		select {
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		case <-release:
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    req,
+			}, nil
+		}
+	})}
+	provider := (&oidc.ProviderConfig{IssuerURL: issuer, JWKSURL: issuer + "/keys"}).NewProvider(oidc.ClientContext(context.Background(), client))
+	timeout := 20 * time.Millisecond
+	service := &Authenticator{
+		Config:     config.AuthConfig{OIDC: config.OIDCConfig{IssuerURL: issuer, ClientID: clientID}, Redis: config.RedisConfig{ProviderTimeout: timeout}},
+		oidcClient: client,
+		Verifier:   provider.Verifier(&oidc.Config{ClientID: clientID}),
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.verifyRefreshedIDToken(context.Background(), compactIDToken, Principal{Issuer: issuer, Subject: "user-123"})
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("JWKS request did not start")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrInvalidCallback) {
+			t.Fatalf("verifyRefreshedIDToken() error = %v, want ErrInvalidCallback", err)
+		}
+	case <-time.After(10 * timeout):
+		t.Fatalf("verifyRefreshedIDToken() did not honor provider timeout %s", timeout)
+	}
+}
+
+func TestRefreshedIDTokenVerificationUsesProviderOIDCClient(t *testing.T) {
+	const issuer = "https://issuer.example.test"
+	const keyID = "refresh-test-key"
+	const clientID = "refresh-test-client"
+	compactIDToken, jwks := signedIDTokenFixture(t, issuer, keyID, clientID)
 
 	var calls atomic.Int32
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -303,7 +360,7 @@ func TestRefreshedIDTokenVerificationUsesProviderOIDCClient(t *testing.T) {
 	})}
 	provider := (&oidc.ProviderConfig{IssuerURL: issuer, JWKSURL: "https://issuer.example.test/keys"}).NewProvider(oidc.ClientContext(context.Background(), client))
 	service := &Authenticator{
-		Config:     config.AuthConfig{OIDC: config.OIDCConfig{IssuerURL: issuer, ClientID: clientID}},
+		Config:     config.AuthConfig{OIDC: config.OIDCConfig{IssuerURL: issuer, ClientID: clientID}, Redis: config.RedisConfig{ProviderTimeout: time.Second}},
 		oidcClient: client,
 		Verifier:   provider.Verifier(&oidc.Config{ClientID: clientID}),
 	}

@@ -91,7 +91,7 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 		return Principal{}, false, ErrRefreshRequired
 	}
 
-	exchangeCtx, cancel := context.WithTimeout(a.oidcContext(ctx), a.Config.Redis.ProviderTimeout)
+	exchangeCtx, cancel := a.oidcTimeoutContext(ctx)
 	defer cancel()
 	exchange := a.refreshExchange
 	if exchange == nil {
@@ -114,7 +114,7 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 	refreshedPrincipal := freshPrincipal
 	rawIDToken, hasIDToken := rotated.Extra("id_token").(string)
 	if hasIDToken && rawIDToken != "" {
-		refreshedPrincipal, err = a.verifyRefreshedIDToken(exchangeCtx, rawIDToken, freshPrincipal)
+		refreshedPrincipal, err = a.verifyRefreshedIDToken(ctx, rawIDToken, freshPrincipal)
 		if err != nil {
 			if destroyErr := a.destroySession(ctx); destroyErr != nil {
 				return Principal{}, false, destroyErr
@@ -172,7 +172,9 @@ func (a *Authenticator) verifyRefreshedIDToken(ctx context.Context, rawIDToken s
 	if a.Verifier == nil {
 		return Principal{}, ErrInvalidCallback
 	}
-	idToken, err := a.Verifier.Verify(a.oidcContext(ctx), rawIDToken)
+	verifyCtx, cancel := a.oidcTimeoutContext(ctx)
+	defer cancel()
+	idToken, err := a.Verifier.Verify(verifyCtx, rawIDToken)
 	if err != nil {
 		return Principal{}, ErrInvalidCallback
 	}

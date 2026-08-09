@@ -4,9 +4,21 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 )
+
+func TestOIDCHTTPClientUsesProviderTimeout(t *testing.T) {
+	timeout := 25 * time.Millisecond
+	client, err := newOIDCHTTPClient("", timeout)
+	if err != nil {
+		t.Fatalf("newOIDCHTTPClient() error = %v", err)
+	}
+	if client == nil || client.Timeout != timeout {
+		t.Fatalf("OIDC HTTP client timeout = %v, want %v", client.Timeout, timeout)
+	}
+}
 
 func TestSafeReturnToAllowsOnlyInternalPaths(t *testing.T) {
 	allowed := []string{"/", "/profiles", "/profiles?selected=dev", "/api/v1/profiles#top"}

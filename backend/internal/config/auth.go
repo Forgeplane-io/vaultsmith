@@ -469,11 +469,11 @@ func parseOrigins(raw string) ([]string, error) {
 	for _, part := range strings.Split(raw, ",") {
 		origin := strings.TrimSpace(part)
 		if origin == "" || origin == "*" {
-			return nil, errors.New("CORS_ALLOWED_ORIGINS must contain exact HTTP(S) origins")
+			return nil, errors.New("CORS_ALLOWED_ORIGINS must contain exact HTTPS origins or loopback HTTP origins")
 		}
-		u, err := url.Parse(origin)
-		if err != nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return nil, errors.New("CORS_ALLOWED_ORIGINS must contain exact HTTP(S) origins")
+		u, err := validateWebURL("CORS_ALLOWED_ORIGINS", origin, true)
+		if err != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			return nil, errors.New("CORS_ALLOWED_ORIGINS must contain exact HTTPS origins or loopback HTTP origins")
 		}
 		canonical := strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
 		if _, exists := seen[canonical]; exists {

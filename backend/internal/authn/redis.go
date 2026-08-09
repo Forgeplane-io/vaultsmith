@@ -184,10 +184,14 @@ func (store *fencedSessionStore) fenceKey(token string) string {
 
 func (store *fencedSessionStore) fenceKeyForSessionToken(token string) string {
 	if store.hashTokens {
-		hash := sha256.Sum256([]byte(token))
-		token = base64.RawURLEncoding.EncodeToString(hash[:])
+		token = hashSessionToken(token)
 	}
 	return store.fenceKey(token)
+}
+
+func hashSessionToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return base64.RawURLEncoding.EncodeToString(hash[:])
 }
 
 func parseSessionFence(fence string) (string, string, bool) {
@@ -331,7 +335,7 @@ func (r *RedisRuntime) ActivateSessionFence(ctx context.Context, token, fence st
 func (r *RedisRuntime) NewSessionMutex(sessionID string) *redsync.Mutex {
 	tries := int(r.config.RefreshLockWait/r.config.RefreshLockRetry) + 1
 	return r.synchronizer.NewMutex(
-		r.config.KeyPrefix+lockKeySuffix+sessionID,
+		r.config.KeyPrefix+lockKeySuffix+hashSessionToken(sessionID),
 		redsync.WithExpiry(r.config.RefreshLockTTL),
 		redsync.WithTries(tries),
 		redsync.WithRetryDelay(r.config.RefreshLockRetry),

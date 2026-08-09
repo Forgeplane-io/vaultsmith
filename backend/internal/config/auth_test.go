@@ -120,6 +120,11 @@ func TestLoadAuthRejectsUnsafeNativeCookieAndCORSCombinations(t *testing.T) {
 			want:  "CORS_ALLOWED_ORIGINS",
 		},
 		{
+			name:  "non-loopback HTTP origin",
+			patch: map[string]string{"COOKIE_SAME_SITE": "none", "CORS_ALLOWED_ORIGINS": "http://portal.example.test"},
+			want:  "CORS_ALLOWED_ORIGINS",
+		},
+		{
 			name:  "same-site none without cross-origin",
 			patch: map[string]string{"COOKIE_SAME_SITE": "none", "CORS_ALLOWED_ORIGINS": ""},
 			want:  "COOKIE_SAME_SITE",
@@ -141,6 +146,19 @@ func TestLoadAuthRejectsUnsafeNativeCookieAndCORSCombinations(t *testing.T) {
 				t.Fatalf("LoadAuth() error = %v, want mention %s", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoadAuthAllowsLoopbackHTTPCORSForDevelopment(t *testing.T) {
+	values := nativeEnv()
+	values["COOKIE_SAME_SITE"] = "none"
+	values["CORS_ALLOWED_ORIGINS"] = "http://localhost:3000"
+	cfg, err := LoadAuth(envLookup(values))
+	if err != nil {
+		t.Fatalf("LoadAuth() error = %v", err)
+	}
+	if len(cfg.CORS.AllowedOrigins) != 1 || cfg.CORS.AllowedOrigins[0] != "http://localhost:3000" {
+		t.Fatalf("allowed origins = %#v, want loopback development origin", cfg.CORS.AllowedOrigins)
 	}
 }
 

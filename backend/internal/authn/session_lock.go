@@ -148,6 +148,20 @@ func rebindSessionLock(ctx context.Context, token string) {
 }
 
 func (a *Authenticator) acquireSessionLock(ctx context.Context, token string) (sessionLockHandle, error) {
+	handle, err := a.acquireSessionMutex(ctx, token)
+	if err != nil {
+		return sessionLockHandle{}, err
+	}
+	if handle.unlock != nil {
+		if err := a.activateSessionFence(handle.ctx, token, handle.fence); err != nil {
+			handle.release()
+			return sessionLockHandle{}, err
+		}
+	}
+	return handle, nil
+}
+
+func (a *Authenticator) acquireSessionMutex(ctx context.Context, token string) (sessionLockHandle, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -167,11 +181,6 @@ func (a *Authenticator) acquireSessionLock(ctx context.Context, token string) (s
 		return sessionLockHandle{}, ErrTemporaryUnavailable
 	}
 	fence := mutex.Name() + fenceSeparator + mutex.Value()
-	if err := a.Redis.ActivateSessionFence(lockCtx, token, fence, a.Config.Session.AbsoluteLifetime); err != nil {
-		_, _ = mutex.UnlockContext(context.Background())
-		cancel()
-		return sessionLockHandle{}, ErrTemporaryUnavailable
-	}
 	lease := &sessionLockLease{
 		mutex:  mutex,
 		ctx:    lockCtx,
@@ -181,6 +190,16 @@ func (a *Authenticator) acquireSessionLock(ctx context.Context, token string) (s
 	}
 	go lease.keepAlive(a.Config.Redis.RefreshLockTTL, a.Config.Redis.WriteTimeout)
 	return sessionLockHandle{ctx: lockCtx, unlock: lease.release, fence: fence, healthy: lease.healthy}, nil
+}
+
+func (a *Authenticator) activateSessionFence(ctx context.Context, token, fence string) error {
+	if a == nil || a.Redis == nil || token == "" || fence == "" {
+		return nil
+	}
+	if err := a.Redis.ActivateSessionFence(ctx, token, fence, a.Config.Session.AbsoluteLifetime); err != nil {
+		return ErrTemporaryUnavailable
+	}
+	return nil
 }
 
 func (handle sessionLockHandle) release() {

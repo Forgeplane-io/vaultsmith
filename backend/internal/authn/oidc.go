@@ -34,9 +34,10 @@ type Authenticator struct {
 	refreshExchange func(context.Context, string) (*oauth2.Token, error)
 }
 
-func newOIDCHTTPClient(caFile string) (*http.Client, error) {
+func newOIDCHTTPClient(caFile string, timeout time.Duration) (*http.Client, error) {
+	client := &http.Client{Timeout: timeout}
 	if strings.TrimSpace(caFile) == "" {
-		return nil, nil
+		return client, nil
 	}
 	pemBytes, err := os.ReadFile(caFile)
 	if err != nil {
@@ -59,7 +60,8 @@ func newOIDCHTTPClient(caFile string) (*http.Client, error) {
 		transport.TLSClientConfig = &tls.Config{}
 	}
 	transport.TLSClientConfig.RootCAs = pool
-	return &http.Client{Transport: transport}, nil
+	client.Transport = transport
+	return client, nil
 }
 
 func (a *Authenticator) oidcContext(ctx context.Context) context.Context {
@@ -67,6 +69,10 @@ func (a *Authenticator) oidcContext(ctx context.Context) context.Context {
 		return ctx
 	}
 	return oidc.ClientContext(ctx, a.oidcClient)
+}
+
+func (a *Authenticator) oidcTimeoutContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(a.oidcContext(ctx), a.Config.Redis.ProviderTimeout)
 }
 
 func NewAuthenticator(ctx context.Context, cfg config.AuthConfig, runtime *RedisRuntime) (*Authenticator, error) {
@@ -87,7 +93,7 @@ func NewAuthenticator(ctx context.Context, cfg config.AuthConfig, runtime *Redis
 	if runtime == nil {
 		return nil, fmt.Errorf("native authentication requires Redis")
 	}
-	oidcClient, err := newOIDCHTTPClient(cfg.OIDC.CAFile)
+	oidcClient, err := newOIDCHTTPClient(cfg.OIDC.CAFile, cfg.Redis.ProviderTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("OIDC trust configuration failed")
 	}
@@ -169,7 +175,7 @@ func (a *Authenticator) CompleteLogin(ctx context.Context, state, code string) (
 		return "", Principal{}, ErrInvalidCallback
 	}
 
-	exchangeCtx, cancel := context.WithTimeout(a.oidcContext(ctx), a.Config.Redis.ProviderTimeout)
+	exchangeCtx, cancel := a.oidcTimeoutContext(ctx)
 	defer cancel()
 	token, err := a.OAuth2.Exchange(exchangeCtx, code, oauth2.VerifierOption(transaction.PKCEVerifier))
 	if err != nil {
@@ -204,7 +210,9 @@ func (a *Authenticator) verifyIDToken(ctx context.Context, rawIDToken, expectedN
 	if a.Verifier == nil || expectedNonce == "" {
 		return Principal{}, ErrInvalidCallback
 	}
-	idToken, err := a.Verifier.Verify(a.oidcContext(ctx), rawIDToken)
+	verifyCtx, cancel := a.oidcTimeoutContext(ctx)
+	defer cancel()
+	idToken, err := a.Verifier.Verify(verifyCtx, rawIDToken)
 	if err != nil || idToken.Nonce != expectedNonce {
 		return Principal{}, ErrInvalidCallback
 	}
