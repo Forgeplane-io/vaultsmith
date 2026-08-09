@@ -197,23 +197,34 @@ func authorizeWithPolicy(policy *Policy, principal authn.Principal, action, reso
 	return nil
 }
 
-func (a *Authorizer) CapabilitiesForProfiles(principal authn.Principal, profileIDs []string) map[string]ProfileCapabilities {
+func (a *Authorizer) CapabilitiesForProfiles(principal authn.Principal, profileIDs []string) (map[string]ProfileCapabilities, error) {
 	policy, err := a.currentPolicy()
-	if err != nil || authorizeWithPolicy(policy, principal, ActionListProfiles, ResourceProfiles) != nil {
-		return nil
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeWithPolicy(policy, principal, ActionListProfiles, ResourceProfiles); err != nil {
+		if errors.Is(err, ErrForbidden) {
+			return map[string]ProfileCapabilities{}, nil
+		}
+		return nil, err
 	}
 	capabilities := make(map[string]ProfileCapabilities, len(profileIDs))
 	for _, profileID := range profileIDs {
 		resource := ProfileResource(profileID)
-		profileCapabilities := ProfileCapabilities{
-			Encrypt: authorizeWithPolicy(policy, principal, ActionEncrypt, resource) == nil,
-			Decrypt: authorizeWithPolicy(policy, principal, ActionDecrypt, resource) == nil,
+		encryptErr := authorizeWithPolicy(policy, principal, ActionEncrypt, resource)
+		if encryptErr != nil && !errors.Is(encryptErr, ErrForbidden) {
+			return nil, encryptErr
 		}
+		decryptErr := authorizeWithPolicy(policy, principal, ActionDecrypt, resource)
+		if decryptErr != nil && !errors.Is(decryptErr, ErrForbidden) {
+			return nil, decryptErr
+		}
+		profileCapabilities := ProfileCapabilities{Encrypt: encryptErr == nil, Decrypt: decryptErr == nil}
 		if profileCapabilities.Encrypt || profileCapabilities.Decrypt {
 			capabilities[profileID] = profileCapabilities
 		}
 	}
-	return capabilities
+	return capabilities, nil
 }
 
 func (a *Authorizer) AuthorizeRotate(principal authn.Principal, sourceProfileID, destinationProfileID string) error {

@@ -34,7 +34,7 @@ export type OperationRequest = SingleProfileOperationRequest | RotateOperationRe
 export const MAX_PLAINTEXT_BYTES = 1 << 20
 export const MAX_VAULT_TEXT_BYTES = 5 << 20
 export const OPERATION_TIMEOUT_MS = 30_000
-const PROFILE_LOAD_TIMEOUT_MS = 10_000
+const BOOTSTRAP_LOAD_TIMEOUT_MS = 10_000
 
 export class ApiError extends Error {
   readonly code: string
@@ -86,12 +86,56 @@ async function requestJSON(path: string, init?: RequestInit): Promise<unknown> {
   return payload
 }
 
+async function withBootstrapTimeout<T>(
+  signal: AbortSignal | undefined,
+  timeoutCode: 'session_timeout' | 'profiles_timeout',
+  timeoutMessage: string,
+  request: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  if (signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError')
+
+  const controller = new AbortController()
+  let timedOut = false
+  let abortedByCaller = false
+  const timeoutId = globalThis.setTimeout(() => {
+    if (abortedByCaller) return
+    timedOut = true
+    controller.abort()
+  }, BOOTSTRAP_LOAD_TIMEOUT_MS)
+  const abortRequest = () => {
+    abortedByCaller = true
+    controller.abort()
+  }
+  const throwIfAborted = () => {
+    if (timedOut) throw new ApiError(timeoutMessage, timeoutCode)
+    if (abortedByCaller) throw new DOMException('The operation was aborted', 'AbortError')
+  }
+  signal?.addEventListener('abort', abortRequest, { once: true })
+
+  try {
+    const result = await request(controller.signal)
+    throwIfAborted()
+    return result
+  } catch (reason) {
+    throwIfAborted()
+    throw reason
+  } finally {
+    globalThis.clearTimeout(timeoutId)
+    signal?.removeEventListener('abort', abortRequest)
+  }
+}
+
 export async function fetchSession(signal?: AbortSignal): Promise<Session> {
-  const payload = await requestJSON('/api/v1/session', {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
+  const payload = await withBootstrapTimeout(
     signal,
-  })
+    'session_timeout',
+    'Session loading timed out',
+    (requestSignal) => requestJSON('/api/v1/session', {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: requestSignal,
+    }),
+  )
   if (!isSessionEnvelope(payload)) {
     throw new ApiError('The service returned an invalid session response', 'invalid_response')
   }
@@ -99,35 +143,20 @@ export async function fetchSession(signal?: AbortSignal): Promise<Session> {
   return payload
 }
 export async function fetchProfiles(signal?: AbortSignal): Promise<Profile[]> {
-  if (signal?.aborted) {
-    throw new DOMException('The operation was aborted', 'AbortError')
-  }
-  const timeoutController = new AbortController()
-  let timedOut = false
-  const timeoutId = globalThis.setTimeout(() => {
-    timedOut = true
-    timeoutController.abort()
-  }, PROFILE_LOAD_TIMEOUT_MS)
-  const abortRequest = () => timeoutController.abort()
-  signal?.addEventListener('abort', abortRequest, { once: true })
-
-  try {
-    const payload = await requestJSON('/api/v1/profiles', {
+  const payload = await withBootstrapTimeout(
+    signal,
+    'profiles_timeout',
+    'Profile loading timed out',
+    (requestSignal) => requestJSON('/api/v1/profiles', {
       method: 'GET',
       headers: { Accept: 'application/json' },
-      signal: timeoutController.signal,
-    })
-    if (!isProfileEnvelope(payload)) {
-      throw new ApiError('The service returned an invalid profile response', 'invalid_response')
-    }
-    return payload.profiles
-  } catch (reason) {
-    if (timedOut) throw new ApiError('Profile loading timed out', 'profiles_timeout')
-    throw reason
-  } finally {
-    globalThis.clearTimeout(timeoutId)
-    signal?.removeEventListener('abort', abortRequest)
+      signal: requestSignal,
+    }),
+  )
+  if (!isProfileEnvelope(payload)) {
+    throw new ApiError('The service returned an invalid profile response', 'invalid_response')
   }
+  return payload.profiles
 }
 
 export async function logout(): Promise<void> {

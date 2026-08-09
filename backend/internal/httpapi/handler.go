@@ -117,7 +117,11 @@ func (h *Handler) serveProfiles(w http.ResponseWriter, r *http.Request) {
 			writeAuthError(w, status, code)
 			return
 		}
-		allowed := h.authorizer.CapabilitiesForProfiles(principal, profileIDs(h.public))
+		allowed, err := h.authorizer.CapabilitiesForProfiles(principal, profileIDs(h.public))
+		if err != nil {
+			writeAuthError(w, http.StatusServiceUnavailable, "not_ready")
+			return
+		}
 		filtered := make([]Profile, 0, len(allowed))
 		for _, profile := range h.public {
 			capabilities, exists := allowed[profile.ID]

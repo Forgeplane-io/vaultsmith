@@ -9,6 +9,17 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
     ...init,
   })
 
+const stalledJSONResponse = (signal: AbortSignal | null | undefined, onBodyStart: () => void) => ({
+  ok: true,
+  status: 200,
+  json: () => {
+    onBodyStart()
+    return new Promise<unknown>((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+    })
+  },
+}) as Response
+
 describe('API client', () => {
   beforeEach(async () => {
     vi.restoreAllMocks()
@@ -39,6 +50,40 @@ describe('API client', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ authenticated: true, authRequired: true }))
 
     await expect(api.fetchSession()).rejects.toMatchObject({ name: 'ApiError', code: 'invalid_response' })
+  })
+
+  it('times out a stalled session request', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+    }))
+
+    try {
+      const session = api.fetchSession()
+      const timedOut = expect(session).rejects.toMatchObject({ name: 'ApiError', code: 'session_timeout' })
+      await vi.runOnlyPendingTimersAsync()
+      await timedOut
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports a session timeout when response headers arrive but the body stalls', async () => {
+    vi.useFakeTimers()
+    let markBodyStarted!: () => void
+    const bodyStarted = new Promise<void>((resolve) => { markBodyStarted = resolve })
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) =>
+      Promise.resolve(stalledJSONResponse(init?.signal, markBodyStarted)))
+
+    try {
+      const session = api.fetchSession()
+      const timedOut = expect(session).rejects.toMatchObject({ name: 'ApiError', code: 'session_timeout' })
+      await bodyStarted
+      await vi.advanceTimersByTimeAsync(10_000)
+      await timedOut
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('sends the exact operation contract', async () => {
@@ -123,6 +168,67 @@ describe('API client', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('reports a profile timeout when response headers arrive but the body stalls', async () => {
+    vi.useFakeTimers()
+    let markBodyStarted!: () => void
+    const bodyStarted = new Promise<void>((resolve) => { markBodyStarted = resolve })
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) =>
+      Promise.resolve(stalledJSONResponse(init?.signal, markBodyStarted)))
+
+    try {
+      const profiles = api.fetchProfiles()
+      const timedOut = expect(profiles).rejects.toMatchObject({ name: 'ApiError', code: 'profiles_timeout' })
+      await bodyStarted
+      await vi.advanceTimersByTimeAsync(10_000)
+      await timedOut
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not start a session request when the caller signal is already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+
+    await expect(api.fetchSession(controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('preserves caller cancellation when the session request rejects after the timeout boundary', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        globalThis.setTimeout(() => reject(new DOMException('aborted', 'AbortError')), 10_000)
+      }, { once: true })
+    }))
+
+    try {
+      const session = api.fetchSession(controller.signal)
+      const cancelled = expect(session).rejects.toMatchObject({ name: 'AbortError' })
+      controller.abort()
+      await vi.runOnlyPendingTimersAsync()
+      await cancelled
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves caller cancellation while reading the session response body', async () => {
+    const controller = new AbortController()
+    let markBodyStarted!: () => void
+    const bodyStarted = new Promise<void>((resolve) => { markBodyStarted = resolve })
+    vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) =>
+      Promise.resolve(stalledJSONResponse(init?.signal, markBodyStarted)))
+
+    const session = api.fetchSession(controller.signal)
+    const cancelled = expect(session).rejects.toMatchObject({ name: 'AbortError' })
+    await bodyStarted
+    controller.abort()
+    await cancelled
   })
 
   it('does not start a profile request when the caller signal is already aborted', async () => {

@@ -73,7 +73,7 @@ describe('Vaultsmith operator experience', () => {
 
     render(<App />)
 
-    expect(screen.getByRole('status')).toHaveTextContent('Loading environments')
+    expect(screen.getByRole('status')).toHaveTextContent('Checking session')
     expect(await screen.findByRole('option', { name: 'Development' })).toBeInTheDocument()
     expect(screen.queryByText(/VAULT_PASSWORD/i)).not.toBeInTheDocument()
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/session', expect.anything())
@@ -704,6 +704,28 @@ describe('Vaultsmith operator experience', () => {
     await user.click(screen.getByRole('button', { name: 'Retry loading environments' }))
 
     expect(await screen.findByRole('option', { name: 'Development' })).toBeInTheDocument()
+  })
+
+  it('offers one manual retry after session bootstrap times out', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(
+        { error: { code: 'session_timeout', message: 'private-session-detail' } },
+        { status: 504 },
+      ))
+      .mockResolvedValueOnce(sessionResponse())
+      .mockResolvedValueOnce(profilesResponse())
+    const user = userEvent.setup()
+
+    render(<App />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Session loading timed out. Check the service and try again.')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const retry = screen.getByRole('button', { name: 'Retry loading session' })
+    await user.click(retry)
+
+    expect(await screen.findByRole('option', { name: 'Development' })).toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/session')).toHaveLength(2)
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/profiles')).toHaveLength(1)
   })
 
   it('refreshes stale capabilities after forbidden without retrying the operation', async () => {

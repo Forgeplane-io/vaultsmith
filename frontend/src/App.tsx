@@ -32,11 +32,12 @@ export default function App() {
   const [loadingProfiles, setLoadingProfiles] = useState(true)
   const [profileLoadFailed, setProfileLoadFailed] = useState(false)
   const [profileLoadError, setProfileLoadError] = useState('')
+  const [loadFailureStage, setLoadFailureStage] = useState<'session' | 'profiles' | null>(null)
   const [profileSnapshotValid, setProfileSnapshotValid] = useState(false)
   const [recoveringStaleCapabilities, setRecoveringStaleCapabilities] = useState(false)
   const [profileLoadAttempt, setProfileLoadAttempt] = useState(0)
   const [busy, setBusy] = useState(false)
-  const [status, setStatus] = useState('Loading environments')
+  const [status, setStatus] = useState('Checking session…')
   const [error, setError] = useState('')
   const [modeNotice, setModeNotice] = useState('')
   const snippetCopyRequestRef = useRef(0)
@@ -68,12 +69,14 @@ export default function App() {
 
   useEffect(() => {
     let active = true
+    let loadStage: 'session' | 'profiles' = 'session'
     const recoveringStaleSnapshot = recoveringStaleCapabilities
     setProfileSnapshotValid(false)
     setLoadingProfiles(true)
     setProfileLoadFailed(false)
     setProfileLoadError('')
-    setStatus(recoveringStaleSnapshot ? 'Refreshing environments…' : 'Loading environments…')
+    setLoadFailureStage(null)
+    setStatus(recoveringStaleSnapshot ? 'Refreshing environments…' : 'Checking session…')
     const controller = new AbortController()
     fetchSession(controller.signal)
       .then((session) => {
@@ -84,6 +87,7 @@ export default function App() {
           setStatus('Sign-in required…')
           return undefined
         }
+        loadStage = 'profiles'
         setStatus(recoveringStaleSnapshot ? 'Refreshing environments…' : 'Loading environments…')
         return fetchProfiles(controller.signal)
       })
@@ -94,6 +98,7 @@ export default function App() {
         setRecoveringStaleCapabilities(false)
         setError('')
         setProfileLoadError('')
+        setLoadFailureStage(null)
         setStatus(recoveringStaleSnapshot
           ? 'Your permissions changed. Environments were refreshed; review the selection and try again.'
           : '')
@@ -106,9 +111,12 @@ export default function App() {
           return
         }
         setProfileLoadFailed(true)
-        setProfileLoadError(recoveringStaleSnapshot
-          ? 'Your permissions changed, but environments could not be refreshed. Check the service and retry loading environments.'
-          : safeErrorMessage(reason, 'Profiles could not be loaded.', 'profiles'))
+        setLoadFailureStage(loadStage)
+        setProfileLoadError(loadStage === 'session'
+          ? safeErrorMessage(reason, 'Session could not be loaded.', 'session')
+          : recoveringStaleSnapshot
+            ? 'Your permissions changed, but environments could not be refreshed. Check the service and retry loading environments.'
+            : safeErrorMessage(reason, 'Profiles could not be loaded.', 'profiles'))
         setStatus('')
       })
       .finally(() => {
@@ -269,6 +277,7 @@ export default function App() {
     setLoadingProfiles(true)
     setProfileLoadFailed(false)
     setProfileLoadError('')
+    setLoadFailureStage(null)
     setError('')
     setStatus('Refreshing environments…')
 
@@ -288,6 +297,7 @@ export default function App() {
         return
       }
       setProfileLoadFailed(true)
+      setLoadFailureStage('profiles')
       setProfileLoadError('Your permissions changed, but environments could not be refreshed. Check the service and retry loading environments.')
       setStatus('')
     } finally {
@@ -300,12 +310,16 @@ export default function App() {
 
   function retryProfiles() {
     if (busy) return
+    const retryingSession = loadFailureStage === 'session'
     setProfileSnapshotValid(false)
     setLoadingProfiles(true)
     setProfileLoadFailed(false)
     setProfileLoadError('')
+    setLoadFailureStage(null)
     setError('')
-    setStatus(recoveringStaleCapabilities ? 'Refreshing environments…' : 'Loading environments…')
+    setStatus(recoveringStaleCapabilities
+      ? 'Refreshing environments…'
+      : retryingSession ? 'Checking session…' : 'Loading environments…')
     setProfileLoadAttempt((attempt) => attempt + 1)
   }
 
@@ -471,6 +485,7 @@ export default function App() {
       setRecoveringStaleCapabilities(false)
       setProfileLoadFailed(false)
       setProfileLoadError('')
+      setLoadFailureStage(null)
       setValue('')
       setOutput('')
       setAnsibleVariableName('')
@@ -558,7 +573,7 @@ export default function App() {
           {visibleError && (
             <div className="error-banner" role="alert">
               <span>{visibleError}</span>
-              {profileLoadFailed && !loadingProfiles && <button className="secondary-button" type="button" onClick={retryProfiles}>Retry loading environments</button>}
+              {profileLoadFailed && !loadingProfiles && <button className="secondary-button" type="button" onClick={retryProfiles}>{loadFailureStage === 'session' ? 'Retry loading session' : 'Retry loading environments'}</button>}
             </div>
           )}
 
@@ -815,13 +830,15 @@ function redirectToLogin(): void {
   window.location.assign(`/auth/login?return_to=${encodeURIComponent(returnTo || '/')}`)
 }
 
-function safeErrorMessage(reason: unknown, fallback: string, context: 'profiles' | 'operation' = 'operation'): string {
+function safeErrorMessage(reason: unknown, fallback: string, context: 'session' | 'profiles' | 'operation' = 'operation'): string {
   if (!(reason instanceof ApiError)) return fallback
   if (reason.code === 'network_error') return 'Unable to reach the Vaultsmith service'
+  if (reason.code === 'session_timeout') return 'Session loading timed out. Check the service and try again.'
   if (reason.code === 'profiles_timeout') return 'Environment loading timed out. Check the service and try again.'
   if (reason.code === 'invalid_response') return 'The service returned an invalid response'
   if (reason.code === 'not_ready') return 'Vaultsmith service is not ready. Try again shortly.'
   if (reason.code === 'not_found') {
+    if (context === 'session') return 'The session endpoint was not found. Check the service route and try again.'
     return context === 'profiles'
       ? 'The environments endpoint was not found. Check the service route and try again.'
       : 'The selected environment was not found. Reload environments and try again.'

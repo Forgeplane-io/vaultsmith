@@ -41,6 +41,15 @@ func loadAuthorizer(t *testing.T, path string, profileIDs []string) *Authorizer 
 	return authorizer
 }
 
+func capabilitiesForProfiles(t *testing.T, authorizer *Authorizer, principal authn.Principal, profileIDs []string) map[string]ProfileCapabilities {
+	t.Helper()
+	capabilities, err := authorizer.CapabilitiesForProfiles(principal, profileIDs)
+	if err != nil {
+		t.Fatalf("CapabilitiesForProfiles() error = %v", err)
+	}
+	return capabilities
+}
+
 func replacePolicyMatcher(t *testing.T, authorizer *Authorizer, path string, matcher func(...interface{}) (interface{}, error)) {
 	t.Helper()
 	m, err := model.NewModelFromString(embeddedModel)
@@ -88,7 +97,7 @@ func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
 	if err := authorizer.AuthorizeRotate(admin, "dev", "prod"); err != nil {
 		t.Fatalf("admin rotate: %v", err)
 	}
-	if got, want := authorizer.CapabilitiesForProfiles(admin, []string{"dev", "prod", "stageblue"}), map[string]ProfileCapabilities{
+	if got, want := capabilitiesForProfiles(t, authorizer, admin, []string{"dev", "prod", "stageblue"}), map[string]ProfileCapabilities{
 		"dev":  {Encrypt: true, Decrypt: true},
 		"prod": {Encrypt: true},
 	}; !reflect.DeepEqual(got, want) {
@@ -104,14 +113,14 @@ func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
 	if err := authorizer.Authorize(reader, ActionDecrypt, ProfileResource("stageblue")); err != nil {
 		t.Fatalf("reader decrypt stageblue: %v", err)
 	}
-	got := authorizer.CapabilitiesForProfiles(reader, []string{"dev", "prod", "stageblue"})
+	got := capabilitiesForProfiles(t, authorizer, reader, []string{"dev", "prod", "stageblue"})
 	if want := map[string]ProfileCapabilities{"stageblue": {Decrypt: true}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("CapabilitiesForProfiles(reader) = %#v, want %#v", got, want)
 	}
-	if got := authorizer.CapabilitiesForProfiles(principalWithGroups("unknown"), []string{"dev"}); len(got) != 0 {
+	if got := capabilitiesForProfiles(t, authorizer, principalWithGroups("unknown"), []string{"dev"}); len(got) != 0 {
 		t.Fatalf("CapabilitiesForProfiles(unknown) = %#v, want no visible profiles", got)
 	}
-	if got := authorizer.CapabilitiesForProfiles(principalWithGroups("nolisters"), []string{"dev"}); len(got) != 0 {
+	if got := capabilitiesForProfiles(t, authorizer, principalWithGroups("nolisters"), []string{"dev"}); len(got) != 0 {
 		t.Fatalf("CapabilitiesForProfiles(nolister) = %#v, want no visible profiles without profiles:list", got)
 	}
 }
@@ -140,7 +149,7 @@ func TestProfileCapabilitiesUseOnePolicySnapshot(t *testing.T) {
 		return matchesPolicyObject(resource, selector), nil
 	})
 
-	got := authorizer.CapabilitiesForProfiles(principalWithGroups("admins"), []string{"dev"})
+	got := capabilitiesForProfiles(t, authorizer, principalWithGroups("admins"), []string{"dev"})
 	want := map[string]ProfileCapabilities{"dev": {Encrypt: true, Decrypt: true}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("CapabilitiesForProfiles() = %#v, want one consistent pre-reload snapshot %#v", got, want)
@@ -190,6 +199,35 @@ func TestAuthorizeReturnsPolicyErrorWhenMatcherFails(t *testing.T) {
 	})
 	if err := authorizer.Authorize(principalWithGroups("admins"), ActionEncrypt, ProfileResource("dev")); !errors.Is(err, ErrPolicy) {
 		t.Fatalf("Authorize() error = %v, want %v", err, ErrPolicy)
+	}
+}
+
+func TestProfileCapabilitiesDistinguishDenialFromPolicyFailure(t *testing.T) {
+	path := policyFile(t, "g, group:admins, role:admin\np, role:admin, profiles, profiles:list, allow\np, role:admin, profile:dev, encrypt, allow\n")
+	authorizer := loadAuthorizer(t, path, []string{"dev"})
+
+	capabilities, err := authorizer.CapabilitiesForProfiles(principalWithGroups("unknown"), []string{"dev"})
+	if err != nil || len(capabilities) != 0 {
+		t.Fatalf("denied capabilities = %#v, %v; want empty success", capabilities, err)
+	}
+
+	replacePolicyMatcher(t, authorizer, path, func(...interface{}) (interface{}, error) {
+		return false, errors.New("matcher failed")
+	})
+	if _, err := authorizer.CapabilitiesForProfiles(principalWithGroups("admins"), []string{"dev"}); !errors.Is(err, ErrPolicy) {
+		t.Fatalf("CapabilitiesForProfiles() list error = %v, want %v", err, ErrPolicy)
+	}
+
+	replacePolicyMatcher(t, authorizer, path, func(args ...interface{}) (interface{}, error) {
+		resource, _ := args[0].(string)
+		selector, _ := args[1].(string)
+		if resource == ResourceProfiles {
+			return matchesPolicyObject(resource, selector), nil
+		}
+		return false, errors.New("matcher failed")
+	})
+	if _, err := authorizer.CapabilitiesForProfiles(principalWithGroups("admins"), []string{"dev"}); !errors.Is(err, ErrPolicy) {
+		t.Fatalf("CapabilitiesForProfiles() profile error = %v, want %v", err, ErrPolicy)
 	}
 }
 
