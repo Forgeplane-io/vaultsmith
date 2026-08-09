@@ -79,10 +79,11 @@ select:focus-visible, input:focus-visible, textarea:focus-visible, button:focus-
 
 .format-inspector { margin: 0; padding: 0.85rem 1rem; border-top: 1px solid var(--border-soft); color: var(--muted); }
 .format-inspector[data-state="warning"] { background: #231f17; }
-.format-inspector-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.format-inspector-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem 1rem; }
 .format-inspector-title { display: flex; align-items: baseline; min-width: 0; gap: 0.5rem; }
 .format-inspector-title > span { color: var(--dim); font-size: 0.7rem; }
 .format-inspector-title strong { color: var(--strong); font-size: 0.8rem; font-weight: 700; }
+.format-inspector-action { min-height: 2rem; white-space: normal; }
 .format-inspector-note { margin: 0.45rem 0 0; color: var(--dim); font-size: 0.7rem; line-height: 1.4; }
 .format-inspector-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.8rem; margin: 0.75rem 0 0; }
 .format-inspector-grid div { min-width: 0; }

@@ -965,6 +965,118 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('button', { name: 'Rotate' })).toBeEnabled()
   })
 
+  it('offers an exact decrypt-capable Vault ID as an explicit environment choice', async () => {
+    const fetchMock = mockProfileLoad(sourceAndDestinationProfiles)
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
+    const environment = screen.getByRole('combobox', { name: 'Environment' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    fireEvent.change(input, { target: { value: '$ANSIBLE_VAULT;1.2;AES256;prod\nfixture' } })
+
+    const suggestion = screen.getByRole('button', { name: 'Use Production' })
+    expect(suggestion).toHaveAttribute('type', 'button')
+    expect(environment).toHaveValue('dev')
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(0)
+
+    await user.click(suggestion)
+
+    expect(environment).toHaveValue('prod')
+    expect(input).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;prod\nfixture')
+    expect(screen.queryByRole('button', { name: 'Use Production' })).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(0)
+  })
+
+  it('changes only the rotate source when a Vault ID suggestion is accepted', async () => {
+    const profiles = [
+      ...sourceAndDestinationProfiles,
+      { id: 'stage', label: 'Staging', capabilities: { encrypt: true, decrypt: true } },
+    ]
+    const fetchMock = mockProfileLoad(profiles)
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
+    const source = screen.getByRole('combobox', { name: 'From environment' })
+    const destination = screen.getByRole('combobox', { name: 'To environment' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to move' })
+    fireEvent.change(input, { target: { value: '$ANSIBLE_VAULT;1.2;AES256;stage\nfixture' } })
+
+    expect(source).toHaveValue('dev')
+    expect(destination).toHaveValue('prod')
+    await user.click(screen.getByRole('button', { name: 'Use Staging' }))
+
+    expect(source).toHaveValue('stage')
+    expect(destination).toHaveValue('prod')
+    expect(input).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;stage\nfixture')
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(0)
+  })
+
+  it('does not offer a Vault ID action for ineligible or unsafe inspection states', async () => {
+    const profiles = [
+      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true } },
+      { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: false } },
+      { id: 'stage', label: 'Staging', capabilities: { encrypt: true, decrypt: true } },
+    ]
+    mockProfileLoad(profiles)
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const assertNoSuggestion = (value: string) => {
+      fireEvent.change(input, { target: { value } })
+      expect(screen.queryByRole('button', { name: /^Use (Development|Production|Staging)$/ })).not.toBeInTheDocument()
+    }
+
+    assertNoSuggestion('$ANSIBLE_VAULT;1.2;AES256;dev\nfixture')
+    assertNoSuggestion('$ANSIBLE_VAULT;1.1;AES256\nfixture')
+    assertNoSuggestion('$ANSIBLE_VAULT;1.2;AES256\nfixture')
+    assertNoSuggestion('$ANSIBLE_VAULT;1.2;AES256;prod\nfixture')
+    assertNoSuggestion('$ANSIBLE_VAULT;1.2;AES256;missing\nfixture')
+    assertNoSuggestion('$ANSIBLE_VAULT;1.2;AES256;Stage\nfixture')
+    assertNoSuggestion('$ANSIBLE_VAULT;1.2;AES256;stage')
+    assertNoSuggestion(`$ANSIBLE_VAULT;1.2;AES256;stage${String.fromCharCode(0x202e)}hidden\nfixture`)
+    assertNoSuggestion('$ANSIBLE_VAULT;1.2;AES128;stage\nfixture')
+  })
+
+  it('offers a retained Vault ID after a permission refresh clears the selection', async () => {
+    const refreshedProfiles = [
+      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false } },
+      { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: true } },
+    ]
+    const fetchMock = mockProfileLoad(sourceAndDestinationProfiles)
+      .mockResolvedValueOnce(jsonResponse(
+        { error: { code: 'forbidden', message: 'private-policy-detail' } },
+        { status: 403 },
+      ))
+      .mockResolvedValueOnce(profilesResponse(refreshedProfiles))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    fireEvent.change(input, { target: { value: '$ANSIBLE_VAULT;1.2;AES256;prod\nfixture' } })
+    await user.click(screen.getByRole('button', { name: 'Decrypt' }))
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Environments were refreshed'))
+    const environment = screen.getByRole('combobox', { name: 'Environment' })
+    expect(environment).toHaveValue('')
+    expect(input).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;prod\nfixture')
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+
+    await user.click(screen.getByRole('button', { name: 'Use Production' }))
+
+    expect(environment).toHaveValue('prod')
+    expect(input).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;prod\nfixture')
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+  })
+
   it('prioritizes unsupported format guidance over label mismatch', async () => {
     mockProfileLoad()
     const user = userEvent.setup()
