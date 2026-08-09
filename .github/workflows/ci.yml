@@ -52,10 +52,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Run Go tests
-        run: go test ./...
       - name: Run go vet
         run: go vet ./...
+      - name: Run race tests
+        run: go test -race ./...
       - name: Build server
         run: go build ./...
 
@@ -90,7 +90,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
         with:
-          version: v3.17.3
+          version: v4.2.3
       - name: Lint chart
         run: make helm-lint
       - name: Run chart tests
@@ -106,7 +106,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
         with:
-          version: v3.17.3
+          version: v4.2.3
       - name: Create kind cluster
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
@@ -126,19 +126,9 @@ jobs:
           kubectl create secret generic vaultsmith-passwords \
             --namespace "$NAMESPACE" \
             --from-literal='dev=fixture-password'
-          helm_values=(
-            --set image.repository=vaultsmith
-            --set image.tag=ci
-            --set image.pullPolicy=IfNotPresent
-            --set 'profiles[0].id=dev'
-            --set 'profiles[0].label=Development'
-            --set 'profiles[0].passwordEnv=VAULT_PASSWORD_DEV'
-            --set 'profiles[0].passwordSecretKey=dev'
-            --set secret.existingSecret=vaultsmith-passwords
-          )
           helm upgrade --install "$RELEASE_NAME" deploy/helm/vaultsmith \
             --namespace "$NAMESPACE" \
-            "${helm_values[@]}" \
+            --values deploy/helm/vaultsmith/tests/values-kind.yaml \
             --wait \
             --timeout 180s
           kubectl wait \
@@ -171,14 +161,7 @@ jobs:
           helm upgrade "$RELEASE_NAME" deploy/helm/vaultsmith \
             --namespace "$NAMESPACE" \
             --reset-values \
-            --set image.repository=vaultsmith \
-            --set image.tag=ci \
-            --set image.pullPolicy=IfNotPresent \
-            --set 'profiles[0].id=dev' \
-            --set 'profiles[0].label=Development' \
-            --set 'profiles[0].passwordEnv=VAULT_PASSWORD_DEV' \
-            --set 'profiles[0].passwordSecretKey=dev' \
-            --set secret.existingSecret=vaultsmith-passwords \
+            --values deploy/helm/vaultsmith/tests/values-kind.yaml \
             --wait \
             --timeout 180s
           restored_policies="$(kubectl get networkpolicy --namespace "$NAMESPACE" -o json | jq '.items | length')"
@@ -210,6 +193,21 @@ jobs:
           cache: true
       - name: Run smoke test
         run: make smoke
+
+  native-integration:
+    name: Native authentication integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run native OIDC integration
+        run: ./scripts/integration-native.sh
 
   container:
     name: Container build
@@ -257,10 +255,7 @@ jobs:
 
   dependency-review:
     name: Dependency review
-    # This repository does not currently have the GitHub Advanced Security capability
-    # required by dependency-review-action. Set DEPENDENCY_REVIEW_ENABLED to true
-    # once that capability is enabled; do not hide a supported action failure.
-    if: github.event_name == 'pull_request' && vars.DEPENDENCY_REVIEW_ENABLED == 'true'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

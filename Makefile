@@ -19,7 +19,7 @@ smoke:
 	./scripts/smoke.sh
 
 helm-lint:
-	helm lint deploy/helm/vaultsmith
+	helm lint deploy/helm/vaultsmith -f deploy/helm/vaultsmith/tests/values-off.yaml
 
 chart-test:
 	bash deploy/helm/vaultsmith/tests/chart_test.sh

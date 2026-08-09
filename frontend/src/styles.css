@@ -29,10 +29,12 @@ button:disabled, select:disabled, textarea:disabled { cursor: not-allowed; opaci
 .console-app { min-height: 100vh; }
 .console-topbar { border-bottom: 1px solid var(--border-soft); }
 .topbar-inner, .console-content { width: min(1120px, calc(100% - 3rem)); margin: 0 auto; }
-.topbar-inner { display: flex; align-items: center; min-height: 4rem; }
+.topbar-inner { display: flex; align-items: center; justify-content: space-between; min-height: 4rem; }
 .brand-lockup { align-items: center; display: flex; gap: 0.65rem; }
 .brand-mark { background: #fff; border: 1px solid rgba(255, 255, 255, 0.7); border-radius: 0.55rem; display: block; height: 2rem; object-fit: cover; width: 2rem; }
 .brand-name { color: var(--strong); font-size: 1rem; font-weight: 750; letter-spacing: -0.02em; }
+.session-controls { align-items: center; display: flex; gap: 0.65rem; min-width: 0; }
+.session-email { overflow: hidden; color: var(--muted); font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
 
 .console-content { padding: 3.5rem 0 4rem; }
 .content-heading { margin-bottom: 2.25rem; }

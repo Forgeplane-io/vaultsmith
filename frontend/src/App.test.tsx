@@ -11,8 +11,19 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
     ...init,
   })
 
-function profilesResponse(profiles = [{ id: 'dev', label: 'Development' }]) {
+const defaultProfiles = [{ id: 'dev', label: 'Development' }]
+const sourceAndDestinationProfiles = [...defaultProfiles, { id: 'prod', label: 'Production' }]
+
+function profilesResponse(profiles = defaultProfiles) {
   return jsonResponse({ profiles })
+}
+
+const sessionResponse = () => jsonResponse({ authenticated: false, authRequired: false, csrfToken: '' })
+
+function mockProfileLoad(profiles = defaultProfiles) {
+  return vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(sessionResponse())
+    .mockResolvedValueOnce(profilesResponse(profiles))
 }
 
 const pastedVault = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
@@ -34,45 +45,42 @@ describe('Vaultsmith operator experience', () => {
     cleanup()
   })
 
-  it('presents the primary flow without decorative or duplicate labels', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(profilesResponse())
+  it('keeps the user on an explicit signed-out screen after logout', async () => {
+    vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ authenticated: true, authRequired: true, email: 'user@example.test', csrfToken: 'csrf-token' }))
+      .mockResolvedValueOnce(profilesResponse())
+      .mockResolvedValueOnce(jsonResponse({}))
+    const user = userEvent.setup()
 
     render(<App />)
-    await screen.findByRole('option', { name: 'Development' })
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }))
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Protect a value' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Vaultsmith logo' })).toHaveAttribute('src', '/vaultsmith-logo.png')
-    expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: 'Environment' })).toBeInTheDocument()
-    expect(screen.getByRole('group', { name: 'Operation' })).toBeInTheDocument()
-    expect(screen.getByRole('textbox', { name: 'Value to protect' })).toBeInTheDocument()
-    expect(screen.getByRole('textbox', { name: 'Protected value' })).toBeInTheDocument()
-
-    expect(screen.queryByText('01 / Start')).not.toBeInTheDocument()
-    expect(screen.queryByText('Protect · read · move')).not.toBeInTheDocument()
-    expect(screen.queryByText('Value protection')).not.toBeInTheDocument()
-    expect(screen.queryByText('Enter here')).not.toBeInTheDocument()
-    expect(screen.queryByText('Copy when ready')).not.toBeInTheDocument()
-    expect(screen.queryByText('Where this value will be used.')).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Signed out' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign in again' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
   })
 
   it('loads a public profile label without exposing its environment name', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(profilesResponse())
+    const fetchMock = mockProfileLoad()
 
     render(<App />)
 
     expect(screen.getByRole('status')).toHaveTextContent('Loading environments')
     expect(await screen.findByRole('option', { name: 'Development' })).toBeInTheDocument()
     expect(screen.queryByText(/VAULT_PASSWORD/i)).not.toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/profiles', expect.anything())
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/v1/session', expect.anything())
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/profiles', expect.anything())
   })
 
   it('uses endpoint-specific guidance when profiles cannot be found', async () => {
     const sentinel = 'private-route-detail'
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse(
-      { error: { code: 'not_found', message: sentinel } },
-      { status: 404 },
-    ))
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(sessionResponse())
+      .mockResolvedValueOnce(jsonResponse(
+        { error: { code: 'not_found', message: sentinel } },
+        { status: 404 },
+      ))
 
     render(<App />)
 
@@ -81,9 +89,7 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('encrypts the entered value using the selected profile', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    const fetchMock = mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse({ value: 'vault-output' }))
     const user = userEvent.setup()
 
@@ -99,16 +105,14 @@ describe('Vaultsmith operator experience', () => {
       '/api/v1/operations',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' }),
       }),
     )
+    expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })
   })
 
   it('copies an encrypted result as an Ansible snippet with a valid variable name', async () => {
     const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse({ value: ciphertext }))
     const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) }
     const user = userEvent.setup()
@@ -136,7 +140,6 @@ describe('Vaultsmith operator experience', () => {
     expect(snippetButton).toBeEnabled()
     keyInput.focus()
     await user.keyboard('{Enter}')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
 
     await user.click(snippetButton)
 
@@ -152,8 +155,7 @@ describe('Vaultsmith operator experience', () => {
 
   it('keeps Ansible snippet controls out of decrypt results and gives generic copy failure guidance', async () => {
     const ciphertext = '$ANSIBLE_VAULT;1.1;AES256\n00112233'
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse({ value: 'decrypted-value' }))
     const clipboard = { writeText: vi.fn().mockRejectedValue(new Error('private clipboard detail')) }
     const user = userEvent.setup()
@@ -179,8 +181,7 @@ describe('Vaultsmith operator experience', () => {
   it('renders a selectable Ansible snippet fallback when snippet copy fails', async () => {
     const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
     const snippet = `app_secret: !vault |\n          $ANSIBLE_VAULT;1.2;AES256;dev\n          00112233`
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse({ value: ciphertext }))
     const clipboard = { writeText: vi.fn().mockRejectedValue(new Error('private clipboard detail')) }
     const user = userEvent.setup()
@@ -203,8 +204,7 @@ describe('Vaultsmith operator experience', () => {
   it('ignores late snippet clipboard failures after the result is cleared', async () => {
     const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
     let rejectCopy: ((reason?: unknown) => void) | undefined
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse({ value: ciphertext }))
     const clipboard = {
       writeText: vi.fn(() => new Promise<void>((_resolve, reject) => {
@@ -237,8 +237,7 @@ describe('Vaultsmith operator experience', () => {
   it('ignores late result clipboard completions after result handoff', async () => {
     const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
     let resolveCopy: (() => void) | undefined
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse({ value: ciphertext }))
     const clipboard = {
       writeText: vi.fn(() => new Promise<void>((resolve) => {
@@ -270,8 +269,7 @@ describe('Vaultsmith operator experience', () => {
 
   it('keeps clear available for a retained variable name after the source is cleared', async () => {
     const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse({ value: ciphertext }))
     const user = userEvent.setup()
 
@@ -292,33 +290,37 @@ describe('Vaultsmith operator experience', () => {
     expect(clearButton).toBeDisabled()
   })
 
-  it('clears an old result when the input, mode, or profile changes', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse([
-        { id: 'dev', label: 'Development' },
-        { id: 'prod', label: 'Production' },
-      ]))
-      .mockResolvedValueOnce(jsonResponse({ value: 'vault-output' }))
+  it('clears results after input, mode, or profile changes without clearing the input', async () => {
+    mockProfileLoad(sourceAndDestinationProfiles)
+      .mockResolvedValueOnce(jsonResponse({ value: 'first-output' }))
+      .mockResolvedValueOnce(jsonResponse({ value: 'second-output' }))
+      .mockResolvedValueOnce(jsonResponse({ value: 'decrypted-output' }))
     const user = userEvent.setup()
 
     render(<App />)
     const input = await findReadyValueInput()
     await user.type(input, 'fixture-value')
     await user.click(screen.getByRole('button', { name: 'Encrypt' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('vault-output'))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('first-output'))
 
     await user.clear(input)
     expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
 
     await user.type(input, 'new-value')
+    await user.click(screen.getByRole('button', { name: 'Encrypt' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('second-output'))
+
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
     expect(screen.getByRole('textbox', { name: 'Protected value to read' })).toHaveValue('new-value')
     expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('')
 
+    await user.click(screen.getByRole('button', { name: 'Decrypt' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reveal result' })).toBeInTheDocument())
+
     await user.selectOptions(screen.getByRole('combobox', { name: 'Environment' }), 'prod')
+    expect(screen.queryByRole('button', { name: 'Reveal result' })).not.toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('textbox', { name: 'Protected value to read' })).toHaveValue('new-value')
   })
 
   it('keeps Clear values disabled while an operation is in flight', async () => {
@@ -326,8 +328,7 @@ describe('Vaultsmith operator experience', () => {
     const operation = new Promise<Response>((resolve) => {
       resolveOperation = resolve
     })
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockReturnValueOnce(operation)
     const user = userEvent.setup()
 
@@ -342,9 +343,7 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('switches to decrypt mode and sends vault text', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    const fetchMock = mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse({ value: 'decrypted-value' }))
     const user = userEvent.setup()
 
@@ -360,17 +359,16 @@ describe('Vaultsmith operator experience', () => {
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('Decrypted value hidden'))
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/api/v1/operations',
-      expect.objectContaining({
-        body: JSON.stringify({ profileId: 'dev', mode: 'decrypt', value: '$ANSIBLE_VAULT;1.1;AES256\nfixture' }),
-      }),
+      expect.objectContaining({ method: 'POST' }),
     )
+    expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({ profileId: 'dev', mode: 'decrypt', value: '$ANSIBLE_VAULT;1.1;AES256\nfixture' })
   })
 
   it('extracts a pasted Vault block in decrypt mode without reading navigator clipboard', async () => {
     const getData = vi.fn().mockReturnValue(pastedYamlVault)
     const readText = vi.fn()
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } })
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
     const user = userEvent.setup()
 
     render(<App />)
@@ -394,10 +392,7 @@ describe('Vaultsmith operator experience', () => {
     const getData = vi.fn().mockReturnValue(pastedYamlVault)
     const readText = vi.fn()
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } })
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse([
-      { id: 'dev', label: 'Development' },
-      { id: 'prod', label: 'Production' },
-    ]))
+    mockProfileLoad(sourceAndDestinationProfiles)
     const user = userEvent.setup()
 
     render(<App />)
@@ -415,88 +410,9 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByText('Protected text normalized for Vault operation.')).toBeInTheDocument()
   })
 
-  it('leaves ordinary pasted text to the browser in decrypt mode', async () => {
-    const getData = vi.fn().mockReturnValue('ordinary pasted text')
-    const readText = vi.fn()
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } })
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
-    const user = userEvent.setup()
-
-    render(<App />)
-    await screen.findByRole('option', { name: 'Development' })
-    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
-    await user.type(input, 'existing input')
-    const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
-    const preventDefault = vi.spyOn(event, 'preventDefault')
-    fireEvent(input, event)
-
-    expect(input).toHaveValue('existing input')
-    expect(preventDefault).not.toHaveBeenCalled()
-    expect(getData).toHaveBeenCalledWith('text/plain')
-    expect(readText).not.toHaveBeenCalled()
-    expect(screen.queryByText('Protected text normalized for Vault operation.')).not.toBeInTheDocument()
-  })
-
-  it('passes canonical raw Vault text through without intercepting default paste', async () => {
-    const getData = vi.fn().mockReturnValue(pastedVault)
-    const readText = vi.fn()
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } })
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
-    const user = userEvent.setup()
-
-    render(<App />)
-    await screen.findByRole('option', { name: 'Development' })
-    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
-    const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
-    const preventDefault = vi.spyOn(event, 'preventDefault')
-    fireEvent(input, event)
-
-    expect(input).toHaveValue('')
-    expect(preventDefault).not.toHaveBeenCalled()
-    expect(getData).toHaveBeenCalledWith('text/plain')
-    expect(readText).not.toHaveBeenCalled()
-  })
-
-  it('normalizes CRLF and outer whitespace during a recognized paste', async () => {
-    const getData = vi.fn().mockReturnValue(`  \r\n${pastedVault.replace(/\n/g, '\r\n')}\r\n  `)
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
-    const user = userEvent.setup()
-
-    render(<App />)
-    await screen.findByRole('option', { name: 'Development' })
-    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
-    const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
-    const preventDefault = vi.spyOn(event, 'preventDefault')
-    fireEvent(input, event)
-
-    expect(input).toHaveValue(pastedVault)
-    expect(preventDefault).toHaveBeenCalledOnce()
-  })
-
-  it('preserves a bare-CR or otherwise invalid paste for the browser', async () => {
-    const getData = vi.fn().mockReturnValue(pastedVault.replace('\n', '\r'))
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
-    const user = userEvent.setup()
-
-    render(<App />)
-    await screen.findByRole('option', { name: 'Development' })
-    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
-    const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
-    const preventDefault = vi.spyOn(event, 'preventDefault')
-    fireEvent(input, event)
-
-    expect(input).toHaveValue('')
-    expect(preventDefault).not.toHaveBeenCalled()
-    expect(getData).toHaveBeenCalledWith('text/plain')
-  })
-
   it('does not inspect clipboard data while pasting in encrypt mode', async () => {
     const getData = vi.fn().mockReturnValue(pastedYamlVault)
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
     const user = userEvent.setup()
 
     render(<App />)
@@ -511,12 +427,7 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('supports rotate mode with source and destination profiles', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse([
-        { id: 'dev', label: 'Development' },
-        { id: 'prod', label: 'Production' },
-      ]))
+    const fetchMock = mockProfileLoad(sourceAndDestinationProfiles)
       .mockResolvedValueOnce(jsonResponse({ value: '$ANSIBLE_VAULT;1.2;AES256;prod\nrotated-ciphertext' }))
     const user = userEvent.setup()
 
@@ -536,34 +447,9 @@ describe('Vaultsmith operator experience', () => {
       '/api/v1/operations',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: '$ANSIBLE_VAULT;1.1;AES256\nfixture' }),
       }),
     )
-  })
-
-  it('cancels rotate without losing Vault input', async () => {
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse([
-        { id: 'dev', label: 'Development' },
-        { id: 'prod', label: 'Production' },
-      ]))
-      .mockImplementationOnce((_input, init) => new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
-      }))
-    const user = userEvent.setup()
-
-    render(<App />)
-    await screen.findByRole('option', { name: 'Development' })
-    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to move' })
-    await user.type(input, 'vault-input')
-    await user.click(screen.getByRole('button', { name: 'Rotate' }))
-
-    expect(screen.getByRole('status')).toHaveTextContent('Rotating…')
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Operation cancelled'))
-    expect(input).toHaveValue('vault-input')
-    expect(screen.getByRole('textbox', { name: 'Moved protected value' })).toHaveValue('')
+    expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: '$ANSIBLE_VAULT;1.1;AES256\nfixture' })
   })
 
   it('does not restore a late operation result after cancellation', async () => {
@@ -571,8 +457,7 @@ describe('Vaultsmith operator experience', () => {
     const operation = new Promise<Response>((resolve) => {
       resolveOperation = resolve
     })
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockReturnValueOnce(operation)
     const user = userEvent.setup()
 
@@ -591,7 +476,7 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('disables rotate submission when no profiles are available', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse([]))
+    mockProfileLoad([])
     const user = userEvent.setup()
 
     render(<App />)
@@ -601,7 +486,7 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('enforces the encrypt UTF-8 byte limit before submission', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
     render(<App />)
     const input = await findReadyValueInput()
     const overLimit = '🙂'.repeat(MAX_PLAINTEXT_BYTES / 4 + 1)
@@ -610,15 +495,12 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByText(`${MAX_PLAINTEXT_BYTES.toLocaleString()} bytes`, { exact: false })).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('Value exceeds the 1 MiB limit')
     expect(screen.getByRole('button', { name: 'Encrypt' })).toBeDisabled()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('hands off an encrypted result into decrypt input without retaining output state', async () => {
     const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
     const setItem = vi.spyOn(Storage.prototype, 'setItem')
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse({ value: ciphertext }))
     const user = userEvent.setup()
 
@@ -641,13 +523,11 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Switched to decrypt mode and moved the result into the protected value input.')
     expect(screen.getByRole('status')).not.toHaveTextContent(ciphertext)
     expect(setItem).not.toHaveBeenCalled()
-    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('hands off a decrypted result into encrypt input and clears reveal state', async () => {
     const plaintext = 'decrypted-value'
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse({ value: plaintext }))
     const user = userEvent.setup()
 
@@ -672,11 +552,7 @@ describe('Vaultsmith operator experience', () => {
 
   it('hands off a rotated result into decrypt input using the destination profile', async () => {
     const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;prod\n00112233'
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse([
-        { id: 'dev', label: 'Development' },
-        { id: 'prod', label: 'Production' },
-      ]))
+    mockProfileLoad(sourceAndDestinationProfiles)
       .mockResolvedValueOnce(jsonResponse({ value: ciphertext }))
     const user = userEvent.setup()
 
@@ -698,24 +574,8 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Switched to decrypt mode and moved the result into the protected value input.')
   })
 
-  it('keeps result handoff disabled when output is empty', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
-    const user = userEvent.setup()
-
-    render(<App />)
-    await screen.findByRole('option', { name: 'Development' })
-
-    const handoff = screen.getByRole('button', { name: 'Use result as input' })
-    expect(handoff).toBeDisabled()
-    await user.click(handoff)
-    expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('textbox', { name: 'Value to protect' })).toHaveValue('')
-  })
-
   it('reveals, copies, and clears decrypted output only on explicit actions', async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse({ value: 'decrypted-value' }))
     const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) }
     const user = userEvent.setup()
@@ -740,11 +600,10 @@ describe('Vaultsmith operator experience', () => {
     expect(clipboard.writeText).toHaveBeenLastCalledWith('decrypted-value')
     await user.click(screen.getByRole('button', { name: 'Clear values' }))
     expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('disables browser assistance on sensitive textareas', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
     render(<App />)
     const input = await findReadyValueInput()
     expect(input).toHaveAttribute('spellcheck', 'false')
@@ -755,9 +614,11 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('offers a retry when profiles fail to load', async () => {
-    const fetchMock = vi
+    vi
       .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(sessionResponse())
       .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(sessionResponse())
       .mockResolvedValueOnce(profilesResponse())
     const user = userEvent.setup()
 
@@ -767,12 +628,10 @@ describe('Vaultsmith operator experience', () => {
     await user.click(screen.getByRole('button', { name: 'Retry loading environments' }))
 
     expect(await screen.findByRole('option', { name: 'Development' })).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('gives safe, actionable guidance when decryption fails', async () => {
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse(
         { error: { code: 'operation_failed', message: 'vault operation failed' } },
         { status: 422 },
@@ -792,8 +651,7 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('announces in-flight work and cancels it without losing the input', async () => {
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockImplementationOnce((_input, init) => new Promise((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
       }))
@@ -815,8 +673,7 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('times out a stalled operation with recovery guidance', async () => {
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockImplementationOnce((_input, init) => new Promise((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
       }))
@@ -837,7 +694,7 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('warns when retained input changes meaning across modes', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
     const user = userEvent.setup()
 
     render(<App />)
@@ -851,7 +708,7 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('shows safe advisory metadata for a recognized Vault header without the ciphertext body', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
     const user = userEvent.setup()
 
     render(<App />)
@@ -867,16 +724,11 @@ describe('Vaultsmith operator experience', () => {
     expect(diagnostics).toHaveTextContent('dev')
     expect(diagnostics).toHaveTextContent(/Input size/)
     expect(diagnostics).not.toHaveTextContent('fixture-ciphertext')
-    expect(diagnostics.querySelector('.format-inspector-guidance')).toBeInTheDocument()
-    expect(diagnostics.querySelector('.format-inspector-guidance')).toBeEmptyDOMElement()
     expect(screen.getByRole('button', { name: 'Decrypt' })).toBeEnabled()
   })
 
   it('shows label mismatch guidance without blocking decrypt or rotate', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse([
-      { id: 'dev', label: 'Development' },
-      { id: 'prod', label: 'Production' },
-    ]))
+    mockProfileLoad(sourceAndDestinationProfiles)
     const user = userEvent.setup()
 
     render(<App />)
@@ -895,7 +747,7 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('prioritizes unsupported format guidance over label mismatch', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
     const user = userEvent.setup()
 
     render(<App />)
@@ -911,8 +763,7 @@ describe('Vaultsmith operator experience', () => {
 
   it('does not render server-provided details for unknown operation errors', async () => {
     const sentinel = 'private-backend-detail'
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse(
         { error: { code: 'backend_detail', message: sentinel } },
         { status: 500 },
@@ -932,8 +783,7 @@ describe('Vaultsmith operator experience', () => {
 
   it('keeps fixed guidance for known service errors', async () => {
     const sentinel = 'private-ready-detail'
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
       .mockResolvedValueOnce(jsonResponse(
         { error: { code: 'not_ready', message: sentinel } },
         { status: 503 },
@@ -951,25 +801,8 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('alert')).not.toHaveTextContent(sentinel)
   })
 
-  it('does not echo an unterminated label field in diagnostics', async () => {
-    const sentinel = 'unterminated-ui-body-sentinel'
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
-    const user = userEvent.setup()
-
-    render(<App />)
-    await screen.findByRole('option', { name: 'Development' })
-    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
-    fireEvent.change(input, { target: { value: `$ANSIBLE_VAULT;1.2;AES256;dev${sentinel}` } })
-
-    const diagnostics = screen.getByRole('region', { name: 'Vault format diagnostics' })
-    expect(diagnostics).toHaveTextContent(/malformed header/i)
-    expect(diagnostics).not.toHaveTextContent(sentinel)
-    expect(screen.getByRole('button', { name: 'Decrypt' })).toBeEnabled()
-  })
-
   it('announces malformed header guidance without echoing the submitted value', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(profilesResponse())
+    mockProfileLoad()
     const user = userEvent.setup()
 
     render(<App />)

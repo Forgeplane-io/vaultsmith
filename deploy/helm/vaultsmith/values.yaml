@@ -8,6 +8,59 @@ image:
 
 containerPort: 8080
 
+# Authentication is deliberately explicit. `off` is for local/development use only;
+# production deployments should set this to `native` and provide every required ref.
+auth:
+  # Required: set explicitly to `native` or `off`.
+  mode: ""
+  csrf:
+    existingSecret: ""
+    key: csrf-secret
+  oidc:
+    issuerURL: ""
+    clientID: ""
+    clientSecret:
+      existingSecret: ""
+      key: oidc-client-secret
+    redirectURL: ""
+    publicBaseURL: ""
+    ca:
+      existingConfigMap: ""
+      key: ca.crt
+    groupsClaim: groups
+    scopes:
+      - openid
+      - profile
+      - offline_access
+  session:
+    absoluteLifetime: 8h
+    idleLifetime: 30m
+    secure: true
+    sameSite: lax
+  redis:
+    address: ""
+    username: ""
+    password:
+      existingSecret: ""
+      key: redis-password
+    database: 0
+    tls: false
+    connectTimeout: 5s
+    readTimeout: 5s
+    writeTimeout: 5s
+    poolSize: 10
+    refreshLockTTL: 15s
+    refreshLockWait: 250ms
+    refreshLockRetry: 25ms
+    providerTimeout: 10s
+    keyPrefix: "vaultsmith:"
+  policy:
+    existingConfigMap: ""
+    key: policy.csv
+    data: ""
+  cors:
+    allowedOrigins: []
+
 profiles: []
 
 secret:
@@ -37,6 +90,9 @@ networkPolicy:
   enabled: false
   denyAllIngress: false
   allowedIngress: []
+  # Each item may contain Kubernetes `to` and `ports` fields. Native mode must
+  # explicitly allow egress to the OIDC issuer and Redis, unless policy is disabled.
+  allowedEgress: []
 
 resources: {}
 

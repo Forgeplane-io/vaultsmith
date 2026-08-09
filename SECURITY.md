@@ -2,7 +2,7 @@
 
 ## Scope and threat boundary
 
-Vaultsmith is an operator UI for Ansible Vault values. It is **not** an authentication or authorization system. The service must remain behind an authenticated/private network boundary and TLS-terminating edge. NetworkPolicy, Kubernetes RBAC, and private source visibility do not replace application authentication.
+Vaultsmith is an operator UI for Ansible Vault values. Native mode provides provider-neutral OIDC authentication, Redis-backed opaque sessions, CSRF protection, and profile-scoped Casbin authorization. Explicit `AUTH_MODE=off` is development-only, skips authentication, and logs a startup warning; it must not be exposed. TLS, private routing, rate limits, and Kubernetes access controls remain deployment responsibilities. NetworkPolicy and Kubernetes RBAC do not replace application authentication.
 
 Vault passwords and submitted values are sensitive. Do not place passwords, plaintext values, ciphertext, kubeconfig data, registry credentials, or tokens in GitHub issues, pull requests, logs, screenshots, test fixtures, or support requests.
 

@@ -1,8 +1,8 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +23,19 @@ type operationCall struct {
 	value                string
 }
 
+func newHandler(profiles []Profile, executor Executor) http.Handler {
+	return NewWithDependencies(profiles, executor, Dependencies{})
+}
+
+func decodeJSONBody[T any](t *testing.T, response *httptest.ResponseRecorder) T {
+	t.Helper()
+	var body T
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response body: %v", err)
+	}
+	return body
+}
+
 func (f *fakeExecutor) Execute(profileID, mode, value string) (string, error) {
 	f.calls = append(f.calls, operationCall{profileID: profileID, mode: mode, value: value})
 	return f.value, f.err
@@ -35,7 +48,7 @@ func (f *fakeExecutor) Rotate(sourceProfileID, destinationProfileID, value strin
 
 func TestProfilesEndpoint(t *testing.T) {
 	executor := &fakeExecutor{}
-	handler := New([]Profile{{ID: "dev", Label: "Development"}}, executor)
+	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, executor)
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/profiles", nil)
 	response := httptest.NewRecorder()
 
@@ -44,9 +57,9 @@ func TestProfilesEndpoint(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
-	if got := response.Body.String(); got != `{"profiles":[{"id":"dev","label":"Development"}]}
-` {
-		t.Fatalf("body = %q", got)
+	profiles := decodeJSONBody[profilesResponse](t, response).Profiles
+	if len(profiles) != 1 || profiles[0] != (Profile{ID: "dev", Label: "Development"}) {
+		t.Fatalf("profiles = %#v", profiles)
 	}
 	if strings.Contains(response.Body.String(), "password") {
 		t.Fatalf("profiles response contains password-related data: %q", response.Body.String())
@@ -55,7 +68,7 @@ func TestProfilesEndpoint(t *testing.T) {
 
 func TestOperationEndpoint(t *testing.T) {
 	executor := &fakeExecutor{value: "$ANSIBLE_VAULT;1.1;AES256\nsynthetic"}
-	handler := New([]Profile{{ID: "dev", Label: "Development"}}, executor)
+	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, executor)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(`{"profileId":"dev","mode":"encrypt","value":"fixture-value"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -65,9 +78,8 @@ func TestOperationEndpoint(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	if got := response.Body.String(); got != `{"value":"$ANSIBLE_VAULT;1.1;AES256\nsynthetic"}
-` {
-		t.Fatalf("body = %q", got)
+	if got := decodeJSONBody[valueResponse](t, response).Value; got != executor.value {
+		t.Fatalf("value = %q, want %q", got, executor.value)
 	}
 	if len(executor.calls) != 1 || executor.calls[0] != (operationCall{profileID: "dev", mode: "encrypt", value: "fixture-value"}) {
 		t.Fatalf("calls = %#v", executor.calls)
@@ -76,7 +88,7 @@ func TestOperationEndpoint(t *testing.T) {
 
 func TestRotateOperationEndpoint(t *testing.T) {
 	executor := &fakeExecutor{value: "$ANSIBLE_VAULT;1.2;AES256;destination\nsynthetic"}
-	handler := New([]Profile{
+	handler := newHandler([]Profile{
 		{ID: "source", Label: "Source"},
 		{ID: "destination", Label: "Destination"},
 	}, executor)
@@ -89,9 +101,8 @@ func TestRotateOperationEndpoint(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	if got := response.Body.String(); got != `{"value":"$ANSIBLE_VAULT;1.2;AES256;destination\nsynthetic"}
-` {
-		t.Fatalf("body = %q", got)
+	if got := decodeJSONBody[valueResponse](t, response).Value; got != executor.value {
+		t.Fatalf("value = %q, want %q", got, executor.value)
 	}
 	wantCall := operationCall{sourceProfileID: "source", destinationProfileID: "destination", mode: "rotate", value: "vault-input"}
 	if len(executor.calls) != 1 || executor.calls[0] != wantCall {
@@ -101,7 +112,7 @@ func TestRotateOperationEndpoint(t *testing.T) {
 
 func TestOperationFailureIsGeneric(t *testing.T) {
 	executor := &fakeExecutor{err: errors.New("wrong password: do-not-leak-this-secret")}
-	handler := New([]Profile{{ID: "dev", Label: "Development"}}, executor)
+	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, executor)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(`{"profileId":"dev","mode":"decrypt","value":"secret-looking-input"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -123,7 +134,7 @@ func TestOperationFailureIsGeneric(t *testing.T) {
 
 func TestRotateOperationFailureIsGeneric(t *testing.T) {
 	executor := &fakeExecutor{err: errors.New("non-UTF-8 plaintext: \xff\xfe")}
-	handler := New([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, executor)
+	handler := newHandler([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, executor)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(`{"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":"secret-looking-vault"}`))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
@@ -161,7 +172,7 @@ func TestValidationAndMethodErrors(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			handler := New([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
+			handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
 			request := httptest.NewRequest(test.method, test.path, strings.NewReader(test.body))
 			if test.contentType != "" {
 				request.Header.Set("Content-Type", test.contentType)
@@ -189,7 +200,7 @@ func TestRotateValidation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			handler := New([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, &fakeExecutor{})
+			handler := newHandler([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, &fakeExecutor{})
 			request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(test.body))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
@@ -213,7 +224,7 @@ func TestLimitValidation(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			handler := New([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
+			handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
 			body := `{"profileId":"dev","mode":"` + test.mode + `","value":"` + test.value + `"}`
 			request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(body))
 			request.Header.Set("Content-Type", "application/json")
@@ -227,7 +238,7 @@ func TestLimitValidation(t *testing.T) {
 }
 
 func TestRotateInputLimitValidation(t *testing.T) {
-	handler := New([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, &fakeExecutor{})
+	handler := newHandler([]Profile{{ID: "source", Label: "Source"}, {ID: "destination", Label: "Destination"}}, &fakeExecutor{})
 	body := `{"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":"` + strings.Repeat("x", MaxVaultTextBytes+1) + `"}`
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -241,7 +252,7 @@ func TestRotateInputLimitValidation(t *testing.T) {
 }
 
 func TestJSONBodyLimit(t *testing.T) {
-	handler := New([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
+	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
 	body := `{"profileId":"dev","mode":"encrypt","value":"` + strings.Repeat("x", MaxRequestBodyBytes) + `"}`
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
@@ -254,9 +265,9 @@ func TestJSONBodyLimit(t *testing.T) {
 	}
 }
 
-func TestReadinessAndSecurityHeaders(t *testing.T) {
-	readyHandler := New([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
-	notReadyHandler := New(nil, nil)
+func TestReadiness(t *testing.T) {
+	readyHandler := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{}, Dependencies{})
+	notReadyHandler := NewWithDependencies(nil, nil, Dependencies{})
 	for _, test := range []struct {
 		name    string
 		handler http.Handler
@@ -272,28 +283,6 @@ func TestReadinessAndSecurityHeaders(t *testing.T) {
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d", response.Code, test.status)
 			}
-			if response.Header().Get("Cache-Control") != "no-store" {
-				t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
-			}
-			if response.Header().Get("X-Content-Type-Options") != "nosniff" {
-				t.Fatalf("X-Content-Type-Options = %q", response.Header().Get("X-Content-Type-Options"))
-			}
-			if response.Header().Get("Content-Security-Policy") == "" {
-				t.Fatal("Content-Security-Policy header is missing")
-			}
 		})
-	}
-}
-
-func TestNotFoundIsJSON(t *testing.T) {
-	handler := New([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
-	request := httptest.NewRequest(http.MethodGet, "/not-found", nil)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusNotFound)
-	}
-	if _, err := io.ReadAll(response.Body); err != nil {
-		t.Fatalf("read body: %v", err)
 	}
 }

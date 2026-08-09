@@ -1,0 +1,290 @@
+package authn
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/alexedwards/scs/v2"
+	"github.com/alexedwards/scs/v2/memstore"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
+)
+
+type commitErrorStore struct {
+	scs.Store
+}
+
+func (commitErrorStore) Commit(string, []byte, time.Time) error {
+	return errSessionStore
+}
+
+func TestSessionMiddlewareDoesNotWriteBodyAfterCommitFailure(t *testing.T) {
+	store := memstore.New()
+	sessionCfg := config.SessionConfig{CookieName: "__Host-vaultsmith_session", AbsoluteLifetime: time.Hour}
+	sessions := NewSessionManager(store, sessionCfg)
+	token := seedSession(t, sessions, "before")
+	sessions.Store = commitErrorStore{Store: store}
+	authenticator := &Authenticator{Config: config.AuthConfig{Mode: config.AuthModeNative, Session: sessionCfg}, Sessions: sessions}
+
+	const plaintext = "decrypted-plaintext-sentinel"
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sessions.Put(r.Context(), "marker", "after")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"value":"` + plaintext + `"}`))
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/decrypt", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCfg.CookieName, Value: token})
+	response := httptest.NewRecorder()
+
+	authenticator.SessionMiddleware(handler).ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("response status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+	if strings.Contains(response.Body.String(), plaintext) {
+		t.Fatal("response disclosed plaintext after failed session commit")
+	}
+}
+
+func TestRedisSessionFenceDoesNotPersistRawSessionToken(t *testing.T) {
+	redisServer, runtime, cfg := newTestRedisRuntime(t)
+	sessionCfg := config.SessionConfig{CookieName: "__Host-vaultsmith_session", AbsoluteLifetime: time.Hour}
+	sessions := NewSessionManager(runtime.SessionStore(), sessionCfg)
+	token := seedSession(t, sessions, "before")
+	authenticator := &Authenticator{
+		Config:   config.AuthConfig{Mode: config.AuthModeNative, Session: sessionCfg, Redis: cfg},
+		Redis:    runtime,
+		Sessions: sessions,
+	}
+
+	lease, err := authenticator.acquireSessionLock(context.Background(), token)
+	if err != nil {
+		t.Fatalf("lease acquisition error = %v", err)
+	}
+	defer lease.release()
+	ctx := mustLoadSession(t, sessions, token)
+	sessions.Put(ctx, sessionFenceKey, lease.fence)
+	if _, _, err := sessions.Commit(ctx); err != nil {
+		t.Fatalf("fenced Commit() error = %v", err)
+	}
+
+	for _, key := range redisServer.Keys() {
+		if strings.Contains(key, token) {
+			t.Fatal("Redis key contains raw session token")
+		}
+		value, err := redisServer.Get(key)
+		if err != nil {
+			t.Fatalf("read Redis value: %v", err)
+		}
+		if strings.Contains(value, token) {
+			t.Fatal("Redis value contains raw session token")
+		}
+	}
+}
+
+func TestRedisSessionFenceAllowsTokenRenewal(t *testing.T) {
+	_, runtime, cfg := newTestRedisRuntime(t)
+
+	sessionCfg := config.SessionConfig{CookieName: "__Host-vaultsmith_session", AbsoluteLifetime: time.Hour}
+	sessions := NewSessionManager(runtime.SessionStore(), sessionCfg)
+	token := seedSession(t, sessions, "initial")
+	authenticator := &Authenticator{
+		Config:   config.AuthConfig{Mode: config.AuthModeNative, Session: sessionCfg, Redis: cfg},
+		Redis:    runtime,
+		Sessions: sessions,
+	}
+	lease, err := authenticator.acquireSessionLock(context.Background(), token)
+	if err != nil {
+		t.Fatalf("lease acquisition error = %v", err)
+	}
+	defer lease.release()
+	ctx := mustLoadSession(t, sessions, token)
+	sessions.Put(ctx, sessionFenceKey, lease.fence)
+	if _, _, err := sessions.Commit(ctx); err != nil {
+		t.Fatalf("fenced Commit() error = %v", err)
+	}
+	ctx = withSessionLock(ctx, token, lease.fence, lease.healthy)
+	if err := sessions.RenewToken(ctx); err != nil {
+		t.Fatalf("fenced RenewToken() error = %v", err)
+	}
+	if got := sessions.Token(ctx); got == "" || got == token {
+		t.Fatalf("renewed session token = %q, want a new token", got)
+	}
+}
+
+func TestRedisSessionFenceRejectsStaleWholeSessionCommit(t *testing.T) {
+	_, runtime, cfg := newTestRedisRuntime(t)
+
+	sessionCfg := config.SessionConfig{CookieName: "__Host-vaultsmith_session", AbsoluteLifetime: time.Hour}
+	sessions := NewSessionManager(runtime.SessionStore(), sessionCfg)
+	token := seedSession(t, sessions, "initial")
+
+	authenticator := &Authenticator{
+		Config:   config.AuthConfig{Mode: config.AuthModeNative, Session: sessionCfg, Redis: cfg},
+		Redis:    runtime,
+		Sessions: sessions,
+	}
+	leaseA, err := authenticator.acquireSessionLock(context.Background(), token)
+	if err != nil {
+		t.Fatalf("lease A acquisition error = %v", err)
+	}
+	ctxA := mustLoadSession(t, sessions, token)
+	sessions.Put(ctxA, sessionFenceKey, leaseA.fence)
+	sessions.Put(ctxA, "marker", "lease-a")
+	if _, _, err := sessions.Commit(ctxA); err != nil {
+		t.Fatalf("lease A Commit() error = %v", err)
+	}
+	ctxA = withSessionLock(ctxA, token, leaseA.fence, leaseA.healthy)
+	leaseA.release()
+
+	leaseB, err := authenticator.acquireSessionLock(context.Background(), token)
+	if err != nil {
+		t.Fatalf("lease B acquisition error = %v", err)
+	}
+	defer leaseB.release()
+	ctxB := mustLoadSession(t, sessions, token)
+	sessions.Put(ctxB, sessionFenceKey, leaseB.fence)
+	sessions.Put(ctxB, "marker", "lease-b")
+	if _, _, err := sessions.Commit(ctxB); err != nil {
+		t.Fatalf("lease B Commit() error = %v", err)
+	}
+
+	sessions.Put(ctxA, "marker", "stale-a")
+	if _, _, err := sessions.Commit(ctxA); err == nil {
+		t.Fatal("stale lease A Commit() succeeded after lease B acquired the session")
+	}
+	if err := authenticator.Logout(ctxA); err == nil {
+		t.Fatal("stale lease A Logout() succeeded after lease B acquired the session")
+	}
+	if err := sessions.RenewToken(ctxA); err == nil {
+		t.Fatal("stale lease A RenewToken() succeeded after lease B acquired the session")
+	}
+
+	check := mustLoadSession(t, sessions, token)
+	if got := sessions.GetString(check, "marker"); got != "lease-b" {
+		t.Fatalf("stored marker = %q, want lease-b", got)
+	}
+}
+
+func TestSessionMiddlewareDoesNotPersistFenceForMissingSession(t *testing.T) {
+	redisServer, runtime, cfg := newTestRedisRuntime(t)
+	sessionCfg := config.SessionConfig{CookieName: "__Host-vaultsmith_session", AbsoluteLifetime: 8 * time.Hour}
+	sessions := NewSessionManager(runtime.SessionStore(), sessionCfg)
+	authenticator := &Authenticator{
+		Config:   config.AuthConfig{Mode: config.AuthModeNative, Session: sessionCfg, Redis: cfg},
+		Redis:    runtime,
+		Sessions: sessions,
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCfg.CookieName, Value: "attacker-supplied-missing-session"})
+	response := httptest.NewRecorder()
+	authenticator.SessionMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("response status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+	for _, key := range redisServer.Keys() {
+		if strings.HasPrefix(key, cfg.KeyPrefix+fenceKeySuffix) {
+			t.Fatalf("missing session left durable fence key %q", key)
+		}
+	}
+}
+
+func TestSessionMiddlewareRecoversFromEvictedSessionCookie(t *testing.T) {
+	redisServer, runtime, cfg := newTestRedisRuntime(t)
+
+	sessionCfg := config.SessionConfig{
+		CookieName:       "__Host-vaultsmith_session",
+		AbsoluteLifetime: time.Hour,
+		IdleLifetime:     time.Minute,
+		Secure:           true,
+	}
+	sessions := NewSessionManager(runtime.SessionStore(), sessionCfg)
+	token := seedSession(t, sessions, "before")
+
+	authenticator := &Authenticator{
+		Config:   config.AuthConfig{Mode: config.AuthModeNative, Session: sessionCfg, Redis: cfg},
+		Redis:    runtime,
+		Sessions: sessions,
+	}
+	redisServer.FlushAll()
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCfg.CookieName, Value: token})
+	response := httptest.NewRecorder()
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authenticator.Sessions.Put(r.Context(), "marker", "recovered")
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	authenticator.SessionMiddleware(handler).ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("response status = %d, want %d after stale cookie recovery", response.Code, http.StatusNoContent)
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("replacement session cookie count = %d, want 1", len(cookies))
+	}
+	if cookies[0].Value == "" || cookies[0].Value == token {
+		t.Fatalf("replacement session cookie = %q, want a new non-empty token", cookies[0].Value)
+	}
+
+	check := mustLoadSession(t, sessions, cookies[0].Value)
+	if got := sessions.GetString(check, "marker"); got != "recovered" {
+		t.Fatalf("recovered session marker = %q, want recovered", got)
+	}
+}
+
+func TestSessionMiddlewareFencesCommitAfterLeaseLoss(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	cfg := testRedisConfig(redisServer.Addr())
+	cfg.RefreshLockTTL = 120 * time.Millisecond
+	cfg.RefreshLockWait = 100 * time.Millisecond
+	cfg.RefreshLockRetry = 5 * time.Millisecond
+	cfg.WriteTimeout = 20 * time.Millisecond
+	runtime := newRedisRuntimeForTest(t, cfg)
+
+	sessions := NewSessionManager(memstore.New(), config.SessionConfig{
+		CookieName:       "__Host-vaultsmith_session",
+		AbsoluteLifetime: time.Hour,
+		IdleLifetime:     time.Minute,
+		Secure:           true,
+	})
+	token := seedSession(t, sessions, "before")
+
+	authenticator := &Authenticator{
+		Config:   config.AuthConfig{Mode: config.AuthModeNative, Session: config.SessionConfig{CookieName: "__Host-vaultsmith_session"}, Redis: cfg},
+		Redis:    runtime,
+		Sessions: sessions,
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.AddCookie(&http.Cookie{Name: "__Host-vaultsmith_session", Value: token})
+	response := httptest.NewRecorder()
+	lockKey := cfg.KeyPrefix + lockKeySuffix + hashSessionToken(token)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redisServer.Del(lockKey)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(time.Second):
+			t.Error("request context was not fenced after lease loss")
+		}
+		authenticator.Sessions.Put(r.Context(), "marker", "after")
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	authenticator.SessionMiddleware(handler).ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("response status = %d, want %d after lease loss", response.Code, http.StatusServiceUnavailable)
+	}
+
+	check := mustLoadSession(t, sessions, token)
+	if got := sessions.GetString(check, "marker"); got != "before" {
+		t.Fatalf("session marker = %q, want stale write fenced", got)
+	}
+}

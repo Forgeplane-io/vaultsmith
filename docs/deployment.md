@@ -1,10 +1,23 @@
-# Vaultsmith deployment boundary
+# Vaultsmith deployment and trust boundary
 
-> **Important:** Vaultsmith does not authenticate requests; run it only behind an authenticated private boundary.
+> **Important:** Native mode provides OIDC authentication, Redis-backed sessions, CSRF protection, and Casbin authorization. Explicit `off` mode is development-only, skips authentication and CSRF protection, and logs a startup warning. Do not use it for an exposed deployment.
 
-Vaultsmith encrypts, decrypts, and re-keys Ansible Vault values. It does **not** identify callers, authenticate requests, authorize users, terminate TLS, manage sessions, provide RBAC, or rate-limit traffic. The Go server also does not trust client-provided identity or authentication headers. The deployment boundary must provide those controls before traffic reaches the application.
+Vaultsmith encrypts, decrypts, and re-keys Ansible Vault values. Native mode identifies callers from verified OIDC tokens using `(iss, sub)`, authorizes profile-scoped operations with Casbin, and never trusts client-provided identity or authentication headers. It does not terminate TLS, rate-limit traffic, or replace a private edge. The deployment boundary must provide those controls where required.
 
-This guide documents a narrow private deployment pattern. It uses synthetic hostnames, addresses, certificate references, profile metadata, and Secret names. Replace them in an untracked deployment file or a private secret-management workflow. Do not put passwords, tokens, private keys, or connection strings in this document or in a committed values file.
+This guide documents a narrow private deployment pattern. It uses synthetic hostnames, addresses, certificate references, profile metadata, policy and Secret names. Replace them in an untracked deployment file or a private secret-management workflow. Do not put passwords, tokens, private keys, CSRF secrets, or credential-bearing connection strings in this document or in a committed values file.
+
+## Native authentication contract
+
+Set `AUTH_MODE=native` explicitly. An unset or blank `AUTH_MODE` is a startup error; there is no implicit off-mode fallback. Startup requires successful OIDC discovery/JWKS setup, Redis connectivity, a valid Casbin policy file, a random CSRF secret, and secure host-only session-cookie settings. Redis is authoritative for login transactions, opaque sessions, refresh state, and refresh locks; Redis failure is a retryable service failure, never an unauthenticated fallback.
+
+Register exactly the configured `OIDC_REDIRECT_URL` at the single configured issuer. The browser starts at `/auth/login?return_to=/`; the callback is `/auth/callback`. The callback consumes the Redis login transaction exactly once, verifies state, nonce, PKCE, issuer, audience, signature, expiry, and required claims, then rotates the session token. Logout is a CSRF-protected `POST /auth/logout`.
+
+If the issuer is signed by a private CA, create the referenced ConfigMap with the PEM bundle under the configured key and set `auth.oidc.ca.existingConfigMap`; the chart mounts it read-only and sets `OIDC_CA_FILE`. Do not use an insecure TLS-verification bypass.
+
+The frontend calls `GET /api/v1/session` before loading profiles. Native unauthenticated users are sent to `/auth/login`; the response contains the CSRF token used for mutation headers. `/api/v1/profiles` returns only profiles permitted by `profiles:list` plus per-profile action policy. Rotate requires decrypt on the source and encrypt on the destination. Native requests with unknown profile IDs are normalized to the same forbidden response as known-but-unauthorized profiles.
+
+Requests carrying a session cookie are serialized through a Redis lease, including ordinary SCS commits, refresh, and logout. The lease is renewed while the request runs, preventing a stale request from overwriting refreshed state or resurrecting a logged-out session. OIDC refresh responses may omit `id_token`; in that case the session expiry is advanced only to the earlier of the refreshed token expiry and the configured absolute session deadline.
+
 
 ## Required trust boundary
 
@@ -27,11 +40,11 @@ The edge is responsible for:
 - TLS termination and certificate policy.
 - Authentication and the policy that decides which callers may use the UI and API.
 - Request-size, upstream-timeout, and rate-limit tripwires.
-- Stripping client-supplied identity and authentication headers before forwarding to the app.
+- Stripping client-supplied identity and authentication headers before forwarding to the app; preserve Vaultsmith's session and CSRF cookies and strip only edge-specific credential cookies.
 - Disabling request-body logging at every layer. Do not add a request body to an access-log format.
 - Keeping `/healthz` and `/readyz` on an internal probe path, not an authenticated public route.
 
-Vaultsmith provides the application-level limits described in the README, but those are not an authentication boundary or a substitute for edge controls. The application returns public profile labels and operation results; it does not return passwords or authenticate the caller.
+Vaultsmith provides application-level request/value limits, security headers, CSRF protection, and (in native mode) authentication/authorization. These are not a substitute for TLS, private routing, rate limits, body-log suppression, or cluster access controls.
 
 ## Edge policy contract
 
@@ -39,17 +52,18 @@ The following contract applies regardless of the selected gateway implementation
 
 ### Authentication and TLS
 
-Terminate TLS at the private edge and require the edge's maintained authentication policy before forwarding to Vaultsmith. The authentication component may receive the original credentials. Vaultsmith must not receive caller `Authorization`, `Cookie`, or identity headers unless the application contract is deliberately changed and reviewed.
+Terminate TLS at the private edge and require the edge's maintained authentication policy before forwarding to Vaultsmith. The authentication component may receive the original credentials, but native Vaultsmith authentication still requires Vaultsmith's own session and CSRF cookies. Do not forward client-supplied `Authorization` or identity headers to the app. If the edge has its own credential cookie, strip that cookie selectively; do not remove the complete `Cookie` header.
 
 Gateway API does not define one portable authentication policy. Use the selected maintained implementation's current authentication extension or policy, and verify an unauthenticated request, an authenticated request, and a denied request against the live deployment. Do not treat a `Gateway`, `HTTPRoute`, NetworkPolicy, or chart annotation as proof that authentication is active.
 
 ### Header boundary
 
-Use an explicit upstream allowlist. Remove client-supplied authentication, identity, and forwarding headers before the request reaches Vaultsmith. Preserve only headers required by the application and generate forwarding headers at the trusted edge:
+Use an explicit upstream allowlist. Remove client-supplied authentication, identity, and forwarding headers before the request reaches Vaultsmith. Preserve Vaultsmith session material and generate forwarding headers at the trusted edge:
 
 | Header material | Edge authentication component | Vaultsmith upstream request |
 | --- | --- | --- |
-| `Authorization`, `Cookie` | Forward only to the authentication component | Not forwarded |
+| `Authorization` | Forward only to the authentication component | Not forwarded |
+| `Cookie` | Preserve Vaultsmith session/CSRF cookies; strip only edge-specific credential cookies | Forwarded as required by native session authentication |
 | `X-Auth-Request-*`, `X-Forwarded-User`, `X-Forwarded-Email`, `X-Remote-User` | Not accepted from the client | Not forwarded |
 | `X-Original-URI`, `X-Original-Method` | Set by the edge for authentication | Not forwarded |
 | `Host`, `Accept`, `Content-Type`, `Content-Length` | Not required | Explicit allowlist |
@@ -68,12 +82,35 @@ Use these starting values at the edge and measure the result:
 
 ## Kubernetes and Helm
 
-The chart keeps `ClusterIP`, disables its legacy Ingress object by default, and leaves NetworkPolicy disabled by default. Set `networkPolicy.enabled: true` with an allowlist to grant selected workloads network reachability, or set `networkPolicy.denyAllIngress: true` with an empty allowlist for an explicit deny-all policy. NetworkPolicy does **not** authenticate callers and does not prove that a Gateway implementation has configured authentication.
+The chart keeps `ClusterIP`, disables its legacy Ingress object by default, and leaves NetworkPolicy disabled by default. Set `networkPolicy.enabled: true` with an allowlist to grant selected workloads network reachability, or set `networkPolicy.denyAllIngress: true` with an empty allowlist for an explicit deny-all policy. NetworkPolicy does **not** authenticate callers and does not prove that a Gateway implementation has configured authentication. `auth.redis.refreshLockTTL`, `refreshLockWait`, `refreshLockRetry`, and `providerTimeout` are emitted as runtime environment variables and are validated by the server.
 
 Prefer the Kubernetes Gateway API with a maintained implementation where it is supported. The chart exposes the existing `ingress.annotations` map for installations that must use an Ingress adapter, but those annotations are only a controller-specific adapter surface. Keep the chart Ingress disabled when using Gateway API, and do not copy old controller keys into a new deployment without checking the selected implementation's current documentation and rendered configuration.
 
 ```yaml
 # /tmp/vaultsmith-values.yaml -- synthetic, untracked values
+auth:
+  mode: native
+  csrf:
+    existingSecret: vaultsmith-auth
+    key: csrf-secret
+  oidc:
+    issuerURL: https://id.example.test/realms/vaultsmith
+    clientID: vaultsmith
+    clientSecret:
+      existingSecret: vaultsmith-auth
+      key: oidc-client-secret
+    redirectURL: https://vault.example.test/auth/callback
+    publicBaseURL: https://vault.example.test
+    # Optional; mount a private issuer CA from this existing ConfigMap.
+    ca:
+      existingConfigMap: vaultsmith-oidc-ca
+      key: ca.crt
+  redis:
+    address: redis.example.test:6379
+    keyPrefix: "vaultsmith:"
+  policy:
+    existingConfigMap: vaultsmith-policy
+    key: policy.csv
 profiles:
   - id: dev
     label: Development
@@ -92,6 +129,28 @@ networkPolicy:
       podSelector:
         matchLabels:
           app.kubernetes.io/component: gateway
+  allowedEgress:
+    # Allow cluster DNS before hostname-based OIDC and Redis connections.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6379
 
 # Gateway API is managed as a separate object. Keep this chart surface off
 # unless a maintained Ingress adapter and its complete boundary policy are
@@ -103,6 +162,70 @@ ingress:
 ```
 
 A NetworkPolicy source selector must match only the intended edge or probe workload. It limits which workloads can open a network connection; it does not authenticate an HTTP caller, validate a session, or strip headers.
+
+### Casbin policy configuration
+
+Native mode uses a file-backed Casbin policy. The chart sets `AUTHZ_POLICY_FILE` to `/etc/vaultsmith/policy/policy.csv` and mounts the policy read-only. Provide exactly one policy source: inline Helm values or an external ConfigMap; Helm rejects configurations that provide both.
+
+#### Inline policy data
+
+Replace the `auth.policy` block in the values above with the following. The chart creates the policy data in its release-managed ConfigMap. The configured `key` is used for the inline ConfigMap key and may be customized; the application mount path remains `/etc/vaultsmith/policy/policy.csv`:
+
+```yaml
+auth:
+  policy:
+    key: policy.csv
+    data: |-
+      g, group:vaultsmith-operators, role:operator
+      p, role:operator, profiles, profiles:list, allow
+      p, role:operator, profile:dev, encrypt, allow
+      p, role:operator, profile:dev, decrypt, allow
+      p, role:operator, profile:prod*, encrypt, allow
+      p, role:operator, profile:prod*, decrypt, allow
+```
+
+#### External policy ConfigMap
+
+Create and manage the policy ConfigMap separately when policy changes should not be part of Helm values:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vaultsmith-policy
+  namespace: vaultsmith
+data:
+  policy.csv: |-
+    g, group:vaultsmith-operators, role:operator
+    p, role:operator, profiles, profiles:list, allow
+    p, role:operator, profile:dev, encrypt, allow
+    p, role:operator, profile:dev, decrypt, allow
+```
+
+Apply it before the Helm release:
+
+```sh
+kubectl apply -f vaultsmith-policy.yaml
+```
+
+Reference it with:
+
+```yaml
+auth:
+  policy:
+    existingConfigMap: vaultsmith-policy
+    key: policy.csv
+```
+
+The `g` row maps an exact value from the verified OIDC groups claim to a role. The default claim is `groups`; set `auth.oidc.groupsClaim` when the provider uses another valid claim path. Permission rows must use role subjects and follow `p, role:<name>, <resource>, <action>, <effect>`.
+
+- `profiles:list` grants access to the global `profiles` resource.
+- `encrypt` and `decrypt` grant operations on `profile:<id>` resources.
+- A trailing `*` matches a profile prefix, such as `profile:prod*`; it must match a configured profile.
+- `deny` overrides `allow`; no matching allow is denied by default.
+- Rotate is authorized by checking decrypt on the source and encrypt on the destination.
+
+Policy resources must match the IDs under `.Values.profiles`. Malformed role subjects, invalid actions, duplicate rows, unknown profiles, and unmatched wildcard selectors cause authorization policy loading to fail closed. Supported actions are `profiles:list`, `encrypt`, and `decrypt`; audit-rotation policy rows are rejected rather than accepted without enforcement. The authorizer checks the mounted file before authorization and reloads a valid external ConfigMap update without a pod restart; missing or malformed updates fail closed. Keep credentials and tokens in Kubernetes Secrets, not in the policy ConfigMap.
 
 ### Public Gateway API route contract
 
@@ -173,14 +296,14 @@ spec:
         - path:
             type: PathPrefix
             value: /
-      # This standard filter removes client-controlled trust headers. The
-      # selected implementation must also generate canonical X-Forwarded-*.
+      # This standard filter removes client-controlled trust headers. Preserve
+      # Vaultsmith session/CSRF cookies; strip only edge-specific cookies by name.
+      # The selected implementation must also generate canonical X-Forwarded-*.
       filters:
         - type: RequestHeaderModifier
           requestHeaderModifier:
             remove:
               - Authorization
-              - Cookie
               - X-Auth-Request-User
               - X-Auth-Request-Email
               - X-Forwarded-User
@@ -240,6 +363,17 @@ Configure the edge health checker or internal monitor to use `https://vaultsmith
 
 The Gateway API objects and chart values are routing contracts, not proof that authentication is active. Check rendered objects, Gateway conditions, implementation events and configuration, and real authenticated/unauthenticated requests before exposing the Service.
 
+## Migration and rollback
+
+Migrate from an edge-authenticated legacy deployment in a staged change:
+
+1. Provision Redis, the OIDC client/redirect URI, CSRF Secret, policy ConfigMap, and NetworkPolicy egress without exposing the Service.
+2. Render and lint the native Helm values; verify the pod reaches `/readyz` only after Redis, OIDC discovery, and policy loading succeed.
+3. Test `/api/v1/session`, login/callback, logout, profile filtering, denied operations, rotate source/destination checks, CSRF failures, and Redis outage behavior with synthetic values.
+4. Switch the edge/backend route to the native deployment, then invalidate any legacy edge sessions separately. Do not forward client identity headers as an authentication substitute.
+
+To roll back, keep the previous image and values available, route traffic back to the previous release, and retain the native Redis key prefix for forensic/session cleanup. Do not roll back a public production deployment by setting `AUTH_MODE=off`; that removes authentication. If native sessions must be invalidated, rotate the Redis key prefix or destroy the old session namespace through an approved operational procedure. Switching back to native requires the same OIDC issuer, client, redirect URI, CSRF Secret, Redis, and policy inputs.
+
 ## Verification before exposure
 
 Use only synthetic files and values while checking the examples:
@@ -276,4 +410,4 @@ Before exposure, verify all of the following at the actual boundary:
 - Timeout and rate-limit responses are observable without logging sensitive values.
 - `networkPolicy.allowedIngress` matches only the intended edge or probe workload.
 
-These checks validate the deployment boundary. They do not turn Vaultsmith into an authentication system.
+These checks validate the deployment boundary and the selected Vaultsmith authentication mode. They do not replace live OIDC, Redis, policy, and request-matrix verification.

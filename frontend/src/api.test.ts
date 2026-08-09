@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, fetchProfiles, PROFILE_LOAD_TIMEOUT_MS, runOperation } from './api'
+
+let api: typeof import('./api')
 
 const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), {
@@ -9,8 +10,10 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
   })
 
 describe('API client', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.restoreAllMocks()
+    vi.resetModules()
+    api = await import('./api')
   })
 
   it('loads public profiles from the same-origin endpoint', async () => {
@@ -18,36 +21,60 @@ describe('API client', () => {
       jsonResponse({ profiles: [{ id: 'dev', label: 'Development' }] }),
     )
 
-    await expect(fetchProfiles()).resolves.toEqual([{ id: 'dev', label: 'Development' }])
+    await expect(api.fetchProfiles()).resolves.toEqual([{ id: 'dev', label: 'Development' }])
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/profiles', expect.objectContaining({ headers: { Accept: 'application/json' } }))
+  })
+
+  it('rejects a malformed session response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ authenticated: true, authRequired: true }))
+
+    await expect(api.fetchSession()).rejects.toMatchObject({ name: 'ApiError', code: 'invalid_response' })
   })
 
   it('sends the exact operation contract', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ value: 'vault-output' }))
 
-    await expect(runOperation({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })).resolves.toBe('vault-output')
+    await expect(api.runOperation({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })).resolves.toBe('vault-output')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/operations',
       expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' }),
       }),
     )
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })
   })
 
   it('sends the exact rotate operation contract', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ value: 'rotated-vault-output' }))
 
-    await expect(runOperation({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: 'vault-input' })).resolves.toBe('rotated-vault-output')
+    await expect(api.runOperation({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: 'vault-input' })).resolves.toBe('rotated-vault-output')
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/operations',
       expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: 'vault-input' }),
       }),
     )
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: 'vault-input' })
+  })
+
+  it('sends a CSRF-protected same-origin logout request', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async () => jsonResponse({
+      authenticated: true,
+      authRequired: true,
+      email: 'operator@example.test',
+      csrfToken: 'csrf-fixture',
+    })).mockImplementationOnce(async () => jsonResponse({ ok: true }))
+
+    await api.fetchSession()
+    await api.logout()
+
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/auth/logout', expect.objectContaining({
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'X-CSRF-Token': 'csrf-fixture' },
+    }))
   })
 
   it('turns API errors into safe typed errors', async () => {
@@ -58,7 +85,7 @@ describe('API client', () => {
       ),
     )
 
-    await expect(runOperation({ profileId: 'dev', mode: 'decrypt', value: 'ciphertext' })).rejects.toMatchObject({
+    await expect(api.runOperation({ profileId: 'dev', mode: 'decrypt', value: 'ciphertext' })).rejects.toMatchObject({
       name: 'ApiError',
       code: 'operation_failed',
       status: 422,
@@ -69,8 +96,7 @@ describe('API client', () => {
   it('uses a generic message when the server response is not JSON', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('sensitive upstream detail', { status: 500 }))
 
-    await expect(fetchProfiles()).rejects.toEqual(expect.any(ApiError))
-    await expect(fetchProfiles()).rejects.toMatchObject({ message: 'Request failed' })
+    await expect(api.fetchProfiles()).rejects.toMatchObject({ name: 'ApiError', message: 'Request failed' })
   })
 
   it('times out a stalled profile request', async () => {
@@ -80,9 +106,9 @@ describe('API client', () => {
     }))
 
     try {
-      const profiles = fetchProfiles()
+      const profiles = api.fetchProfiles()
       const timedOut = expect(profiles).rejects.toMatchObject({ name: 'ApiError', code: 'profiles_timeout' })
-      await vi.advanceTimersByTimeAsync(PROFILE_LOAD_TIMEOUT_MS)
+      await vi.runOnlyPendingTimersAsync()
       await timedOut
     } finally {
       vi.useRealTimers()
@@ -94,7 +120,7 @@ describe('API client', () => {
     controller.abort()
     const fetchMock = vi.spyOn(globalThis, 'fetch')
 
-    await expect(fetchProfiles(controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(api.fetchProfiles(controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })

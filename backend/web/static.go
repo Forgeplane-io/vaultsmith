@@ -24,6 +24,7 @@ func Files() fs.FS {
 func New(staticFiles fs.FS, api http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/", api)
+	mux.Handle("/auth/", api)
 	mux.Handle("/healthz", api)
 	mux.Handle("/readyz", api)
 	mux.Handle("/", staticHandler{files: staticFiles})

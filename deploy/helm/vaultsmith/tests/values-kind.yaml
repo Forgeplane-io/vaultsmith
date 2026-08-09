@@ -1,0 +1,16 @@
+auth:
+  mode: "off"
+
+image:
+  repository: vaultsmith
+  tag: ci
+  pullPolicy: IfNotPresent
+
+profiles:
+  - id: dev
+    label: Development
+    passwordEnv: VAULT_PASSWORD_DEV
+    passwordSecretKey: dev
+
+secret:
+  existingSecret: vaultsmith-passwords

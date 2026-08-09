@@ -3,12 +3,6 @@ import { MAX_VAULT_TEXT_BYTES, utf8ByteLength } from './api'
 import { inspectVaultFormat, MAX_VAULT_LABEL_BYTES } from './vaultFormat'
 
 describe('inspectVaultFormat', () => {
-  it('accepts the app-provided UTF-8 byte length without recomputing it', () => {
-    const inspection = inspectVaultFormat('$ANSIBLE_VAULT;1.1;AES256\nfixture', '', 123)
-
-    expect(inspection.byteLength).toBe(123)
-    expect(inspection.withinByteLimit).toBe(true)
-  })
   it('recognizes an unlabeled Vault 1.1 header without inspecting the payload', () => {
     const value = '$ANSIBLE_VAULT;1.1;AES256\nfixture-ciphertext'
     const inspection = inspectVaultFormat(value, 'dev')

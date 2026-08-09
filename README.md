@@ -1,93 +1,68 @@
-<a name="readme-top"></a>
-
 # Vaultsmith
 
-<img src="frontend/public/vaultsmith-logo.png" alt="Vaultsmith logo" width="96">
+Vaultsmith is a web UI and HTTP API for encrypting, decrypting, and re-keying Ansible Vault values. It supports Ansible Vault 1.1 and 1.2/AES256. The Go server embeds the React frontend in the built binary.
 
-A small web UI for encrypting, decrypting, and re-keying Ansible Vault values.
+## What it does
 
-Vaultsmith supports Ansible Vault 1.1 and 1.2/AES256. It runs as one Go binary with the React UI embedded in it.
-
-## Table of contents
-
-- [About the project](#about-the-project)
-- [Built with](#built-with)
-- [Getting started](#getting-started)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [Deploy with Helm](#deploy-with-helm)
-- [Security](#security)
-- [Development](#development)
-- [Contributing](#contributing)
-- [License](#license)
-
-## About the project
-
-Vaultsmith is for short, deliberate operations on one value at a time:
-
-- Encrypt plaintext with a selected vault profile.
-- Decrypt an existing Vault 1.1 or 1.2 value.
+- Encrypt a value with a selected vault profile.
+- Decrypt an existing Ansible Vault value.
 - Re-key a value from one profile to another.
 - Copy an Ansible `!vault` variable snippet from the result.
 
-The server loads vault passwords from environment variables. The browser receives profile IDs and labels, then sends the value being operated on to the server. Vaultsmith does not persist values, upload files, store browser state, or log request bodies.
+The server reads vault passwords from environment variables. Vaultsmith does not persist submitted values, accept file uploads, use persistent browser storage, or log request bodies.
 
-![Vaultsmith workbench with logo](docs/screenshots/workbench.png)
+Limits:
 
-![Vaultsmith encrypt result with synthetic data](docs/screenshots/encrypted-value.png)
+- Encrypt input: 1 MiB of UTF-8 plaintext.
+- Decrypt and re-key input: 5 MiB of UTF-8 Vault text.
+- JSON request body: 8 MiB.
 
-Limits are deliberate:
+![Vaultsmith workbench](docs/screenshots/workbench.png)
 
-- Encrypt: up to 1 MiB of UTF-8 plaintext.
-- Decrypt and re-key: up to 5 MiB of UTF-8 Vault text.
-- JSON request body: up to 8 MiB.
+## Run locally
 
-## Built with
-
-- [Go](https://go.dev/) for the server and Ansible Vault operations.
-- [React](https://react.dev/) and [TypeScript](https://www.typescriptlang.org/) for the UI.
-- [Helm](https://helm.sh/) for Kubernetes deployment.
-- Docker for the packaged image.
-
-## Getting started
-
-### Prerequisites
+Requirements:
 
 - Go 1.25 or newer
-- Node.js 22 LTS and npm
-- A POSIX shell
+- Node.js 22 and npm
+- Bash
 
 `ansible-vault` is not required at runtime. The optional compatibility test uses it when available.
 
-### Run locally
-
-Build the frontend into the directory embedded by the Go server:
+Build the frontend, then start a local development server in `off` mode:
 
 ```sh
-nvm use
 npm ci --prefix frontend
 npm run build --prefix frontend
-```
 
-Start the server with a local profile. The password below is only a placeholder; replace it in your shell session and do not commit it.
-
-```sh
 export VAULT_PROFILES_JSON='[{"id":"dev","label":"Development","passwordEnv":"VAULT_PASSWORD_DEV"}]'
 export VAULT_PASSWORD_DEV='replace-with-a-local-password'
+export AUTH_MODE=off
+export COOKIE_SECURE=false  # local HTTP only
+
 go run ./backend/cmd/server
 ```
 
-The server listens on `http://localhost:8080`. Set `HTTP_ADDR` to use another address, for example `HTTP_ADDR=127.0.0.1:18080`.
+Open <http://localhost:8080>. Check the server with:
 
-For frontend work, keep the Go server running and start Vite in a second terminal:
+```sh
+curl -fsS http://localhost:8080/healthz
+curl -fsS http://localhost:8080/readyz
+```
+
+`AUTH_MODE=off` disables authentication and CSRF protection. Use it only on a private local machine. Never expose an off-mode server.
+
+For frontend development, leave the Go server running and start Vite in a second terminal:
 
 ```sh
 npm run dev --prefix frontend
 ```
 
+Vite listens on <http://localhost:5173> and proxies `/api`, `/healthz`, and `/readyz` to the Go server.
+
 ## Configuration
 
-`VAULT_PROFILES_JSON` contains profile metadata. Each profile points to a separate environment variable containing its password:
+`VAULT_PROFILES_JSON` defines the profiles shown to the browser. Each profile refers to a separate environment variable containing its password:
 
 ```json
 [
@@ -104,47 +79,70 @@ npm run dev --prefix frontend
 ]
 ```
 
-The server rejects reserved environment names, duplicate profile IDs, missing passwords, and invalid profile metadata. Password values are not returned by the profiles API.
+The server rejects duplicate profile IDs, reserved environment names, missing passwords, and invalid profile metadata. Password values never appear in the profiles API.
 
-## Usage
+### Authentication modes
 
-The UI has three operation modes: `encrypt`, `decrypt`, and `rotate`. A rotate request names both the source and destination profile.
+`AUTH_MODE` must be set explicitly:
 
-List the profiles exposed to the browser:
+| Mode | Use | Behavior |
+| --- | --- | --- |
+| `off` | Local development only | Skips authentication and CSRF protection. |
+| `native` | Protected deployments | Uses OIDC Authorization Code + PKCE, Redis-backed opaque sessions, CSRF protection, and profile-scoped Casbin authorization. |
 
-```sh
-curl -fsS http://localhost:8080/api/v1/profiles
-```
+An unset or blank mode is a startup error. Native mode does not fall back to `off` when OIDC, Redis, or policy loading fails.
 
-Encrypt a synthetic value:
+Native mode needs an OIDC issuer, client credentials, redirect URL, public base URL, Redis, a CSRF secret, and a Casbin policy file. Identity is the verified `(iss, sub)` pair. If the issuer uses a private CA, set `OIDC_CA_FILE` to a mounted PEM bundle. Do not disable TLS verification.
 
-```sh
-curl -fsS \
-  -H 'Content-Type: application/json' \
-  --data '{"profileId":"dev","mode":"encrypt","value":"example-value"}' \
-  http://localhost:8080/api/v1/operations
-```
+See [`docs/deployment.md`](docs/deployment.md) for the complete native configuration and trust boundary.
 
-Decrypt an existing value with `profileId` and `mode: "decrypt"`. Re-key one with this request shape:
+## HTTP API
 
-```json
-{
-  "mode": "rotate",
-  "sourceProfileId": "dev",
-  "destinationProfileId": "prod",
-  "value": "$ANSIBLE_VAULT;1.1;AES256\n..."
-}
-```
+Vaultsmith exposes a same-origin browser API. Native mode uses an opaque session cookie and does not accept bearer tokens or client-provided identity headers.
 
-Keep real plaintext, ciphertext, and passwords out of shell history, logs, tickets, screenshots, and pull requests.
+The main endpoints are:
+
+- `GET /healthz`: liveness check.
+- `GET /readyz`: readiness check.
+- `GET /api/v1/session`: session and CSRF bootstrap.
+- `GET /api/v1/profiles`: profiles allowed for the current user.
+- `POST /api/v1/operations`: encrypt, decrypt, or re-key a value.
+- `GET /auth/login` and `GET /auth/callback`: native OIDC login.
+- `POST /auth/logout`: CSRF-protected logout.
+
+The operation modes are `encrypt`, `decrypt`, and `rotate`. A rotate request names both `sourceProfileId` and `destinationProfileId`.
+
+In native mode, complete OIDC login first. The browser sends the host-only session cookie on API requests and sends the CSRF token returned by `/api/v1/session` on mutations.
+
+Keep plaintext, ciphertext, passwords, cookies, and tokens out of shell history, logs, screenshots, tickets, and pull requests.
 
 ## Deploy with Helm
 
-The chart lives in `deploy/helm/vaultsmith`. It uses a `ClusterIP` service, leaves Ingress disabled, disables service-account token automount, and leaves NetworkPolicy disabled by default. The chart does not create the password Secret.
+The chart is in `deploy/helm/vaultsmith`. It creates a `ClusterIP` service. Ingress and NetworkPolicy are disabled by default. The chart does not create application Secrets. Manage external policy ConfigMaps separately; inline policy data is the chart-managed alternative.
 
-Create the Secret outside Helm, then reference it from a values file:
+Use native mode for a deployment:
 
 ```yaml
+# vaultsmith-values.yaml; use synthetic values here and keep real references outside Git.
+auth:
+  mode: native
+  csrf:
+    existingSecret: vaultsmith-auth
+    key: csrf-secret
+  oidc:
+    issuerURL: https://id.example.test/realms/vaultsmith
+    clientID: vaultsmith
+    clientSecret:
+      existingSecret: vaultsmith-auth
+      key: oidc-client-secret
+    redirectURL: https://vault.example.test/auth/callback
+    publicBaseURL: https://vault.example.test
+  redis:
+    address: redis.example.test:6379
+  policy:
+    existingConfigMap: vaultsmith-policy
+    key: policy.csv
+
 profiles:
   - id: dev
     label: Development
@@ -153,14 +151,9 @@ profiles:
 
 secret:
   existingSecret: vaultsmith-passwords
-
-networkPolicy:
-  enabled: true
-  denyAllIngress: true
-  allowedIngress: []
 ```
 
-Install the local chart:
+Create the referenced Secrets and policy ConfigMap before installing the chart. Put a maintained private TLS/authentication edge in front of the service. NetworkPolicy controls pod reachability; it does not authenticate HTTP callers.
 
 ```sh
 helm upgrade --install vaultsmith deploy/helm/vaultsmith \
@@ -169,37 +162,45 @@ helm upgrade --install vaultsmith deploy/helm/vaultsmith \
   -f /path/to/vaultsmith-values.yaml
 ```
 
-Set `denyAllIngress: true` with an empty `allowedIngress` list for an explicit deny-all policy. For an allowlist, leave `denyAllIngress` false and add `namespaceSelector` or `podSelector` entries. NetworkPolicy is not authentication. Put an authenticated or private edge in front of the service before enabling Ingress.
+For the complete edge, NetworkPolicy, private-CA, Casbin, and migration contract, read [`docs/deployment.md`](docs/deployment.md).
 
-## Security
+## Native integration test
 
-Vaultsmith is not an authentication or authorization system. Keep it behind an authenticated/private network boundary and terminate TLS at that edge. Treat the browser, clipboard history and sync, browser extensions, shared machines, server memory, and Kubernetes access as part of the trust boundary.
-
-See [`SECURITY.md`](SECURITY.md) for the reporting policy. See [`docs/deployment.md`](docs/deployment.md) for the tested private-edge contract, Gateway API route shape, internal health-route handling, proxy header rules, and threshold rationale.
-
-## Development
-
-Run the main checks with:
+The disposable harness starts Redis, Keycloak, local TLS edges, and Vaultsmith with generated credentials:
 
 ```sh
-make test
+./scripts/integration-native.sh
+```
+
+For browser testing, keep the stack running:
+
+```sh
+./scripts/integration-native.sh --interactive
+```
+
+The harness always removes its containers and volumes on exit. Unless `KEEP_INTEGRATION_TMP=1` is set, it also removes the temporary directory containing its binary, policy, cookies, and temporary credentials. See [`integration/README.md`](integration/README.md) for the test flow and cleanup rules.
+
+## Development checks
+
+```sh
+npm ci --prefix frontend
+npm test --prefix frontend -- --run
 make typecheck
 make build
+make test
 make smoke
 make helm-lint
 make chart-test
 ```
 
-Use `SMOKE_PORT=18080 ./scripts/smoke.sh` if port 8080 is already in use. For release configuration and local artifacts, use `make release-check` and `make release-snapshot`.
+Use `SMOKE_PORT=18080 ./scripts/smoke.sh` when port 8080 is busy. The optional `make compatibility` target runs the Ansible CLI compatibility tests when `ansible-vault` is installed.
 
-## Contributing
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for pull-request, release, and sensitive-data rules.
 
-Keep changes small and reviewable. Use synthetic fixtures, redact sensitive output, and explain security or compatibility effects in the pull request.
+## Security
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full checklist.
+Report vulnerabilities as described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-Vaultsmith is released under the [Apache License 2.0](LICENSE).
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+Apache License 2.0. See [`LICENSE`](LICENSE).

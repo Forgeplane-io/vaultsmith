@@ -1,0 +1,67 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-16379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3.3
+    command: ["start-dev", "--http-port=8080", "--health-enabled=true"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+      KC_HOSTNAME: https://localhost:18081
+      KC_PROXY_HEADERS: xforwarded
+    ports:
+      - "127.0.0.1:${KEYCLOAK_ADMIN_PORT:-18082}:8080"
+
+  idp-edge:
+    image: caddy:2.10-alpine
+    ports:
+      - "127.0.0.1:${KEYCLOAK_PORT:-18081}:443"
+    volumes:
+      - ./Caddyfile-idp:/etc/caddy/Caddyfile:ro
+      - idp-caddy-data:/data
+      - idp-caddy-config:/config
+    depends_on:
+      keycloak:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate --spider -q https://localhost/realms/master"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  edge:
+    image: caddy:2.10-alpine
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:${EDGE_PORT:-18443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate --spider -q https://localhost/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  caddy-data:
+  caddy-config:
+  idp-caddy-data:
+  idp-caddy-config:

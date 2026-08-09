@@ -5,6 +5,13 @@ export type Profile = {
   label: string
 }
 
+export type Session = {
+  authenticated: boolean
+  authRequired: boolean
+  email?: string
+  csrfToken: string
+}
+
 export type SingleProfileOperationRequest = {
   profileId: string
   mode: 'encrypt' | 'decrypt'
@@ -23,7 +30,7 @@ export type OperationRequest = SingleProfileOperationRequest | RotateOperationRe
 export const MAX_PLAINTEXT_BYTES = 1 << 20
 export const MAX_VAULT_TEXT_BYTES = 5 << 20
 export const OPERATION_TIMEOUT_MS = 30_000
-export const PROFILE_LOAD_TIMEOUT_MS = 10_000
+const PROFILE_LOAD_TIMEOUT_MS = 10_000
 
 export class ApiError extends Error {
   readonly code: string
@@ -44,10 +51,17 @@ type ErrorEnvelope = {
   }
 }
 
+let csrfToken = ''
+
 async function requestJSON(path: string, init?: RequestInit): Promise<unknown> {
+  const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) }
+  const method = (init?.method || 'GET').toUpperCase()
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && csrfToken && !Object.prototype.hasOwnProperty.call(headers, 'X-CSRF-Token')) {
+    headers['X-CSRF-Token'] = csrfToken
+  }
   let response: Response
   try {
-    response = await fetch(path, init)
+    response = await fetch(path, { ...init, headers, credentials: 'same-origin' })
   } catch (reason) {
     if (reason instanceof Error && reason.name === 'AbortError') throw reason
     throw new ApiError('Unable to reach the Vaultsmith service', 'network_error')
@@ -68,6 +82,18 @@ async function requestJSON(path: string, init?: RequestInit): Promise<unknown> {
   return payload
 }
 
+export async function fetchSession(signal?: AbortSignal): Promise<Session> {
+  const payload = await requestJSON('/api/v1/session', {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal,
+  })
+  if (!isSessionEnvelope(payload)) {
+    throw new ApiError('The service returned an invalid session response', 'invalid_response')
+  }
+  csrfToken = payload.csrfToken
+  return payload
+}
 export async function fetchProfiles(signal?: AbortSignal): Promise<Profile[]> {
   if (signal?.aborted) {
     throw new DOMException('The operation was aborted', 'AbortError')
@@ -100,6 +126,13 @@ export async function fetchProfiles(signal?: AbortSignal): Promise<Profile[]> {
   }
 }
 
+export async function logout(): Promise<void> {
+  await requestJSON('/auth/logout', {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+  })
+}
+
 export async function runOperation(request: OperationRequest, signal?: AbortSignal): Promise<string> {
   const payload = await requestJSON('/api/v1/operations', {
     method: 'POST',
@@ -121,14 +154,19 @@ export function maxInputBytes(mode: OperationMode): number {
   return mode === 'encrypt' ? MAX_PLAINTEXT_BYTES : MAX_VAULT_TEXT_BYTES
 }
 
-export function isWithinInputLimit(mode: OperationMode, value: string): boolean {
-  return utf8ByteLength(value) <= maxInputBytes(mode)
-}
-
 function isErrorEnvelope(value: unknown): value is ErrorEnvelope & { error: NonNullable<ErrorEnvelope['error']> } {
   if (!value || typeof value !== 'object' || !('error' in value)) return false
   const error = (value as ErrorEnvelope).error
   return Boolean(error && typeof error === 'object')
+}
+
+function isSessionEnvelope(value: unknown): value is Session {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<Session>
+  return typeof candidate.authenticated === 'boolean'
+    && typeof candidate.authRequired === 'boolean'
+    && typeof candidate.csrfToken === 'string'
+    && (candidate.email === undefined || typeof candidate.email === 'string')
 }
 
 function isProfileEnvelope(value: unknown): value is { profiles: Profile[] } {
