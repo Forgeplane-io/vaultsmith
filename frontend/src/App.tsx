@@ -176,6 +176,12 @@ export default function App() {
     () => mode === 'encrypt' ? null : inspectVaultFormat(value, profileId, byteLength),
     [byteLength, mode, profileId, value],
   )
+  const suggestedDecryptProfile = useMemo(
+    () => profileSnapshotReady && mode !== 'encrypt' && formatInspection
+      ? vaultIdSuggestedProfile(formatInspection, profileId, decryptProfiles)
+      : null,
+    [decryptProfiles, formatInspection, mode, profileId, profileSnapshotReady],
+  )
   const selectedProfileLabel = profiles.find((profile) => profile.id === profileId)?.label || profileId
   const inputDescriptionIds = value && formatInspection
     ? 'input-byte-count vault-format-diagnostics'
@@ -233,6 +239,16 @@ export default function App() {
   function changeProfile(nextProfileId: string) {
     setProfileId(nextProfileId)
     invalidateOutput()
+  }
+
+  function useSuggestedDecryptProfile(expectedProfileId: string) {
+    if (busy || mode === 'encrypt' || !profileSnapshotReady) return
+
+    const currentInspection = inspectVaultFormat(value, profileId)
+    const currentSuggestion = vaultIdSuggestedProfile(currentInspection, profileId, decryptProfiles)
+    if (currentSuggestion?.id !== expectedProfileId) return
+
+    changeProfile(currentSuggestion.id)
   }
 
   function changeDestinationProfile(nextProfileId: string) {
@@ -677,7 +693,16 @@ export default function App() {
                   rows={12}
                 />
                 <div className="editor-card-footer" id="input-byte-count"><strong>{byteLength.toLocaleString()} / {byteLimit.toLocaleString()} bytes</strong></div>
-                {formatInspection && value && <VaultFormatDiagnostics inspection={formatInspection} selectedProfileId={profileId} selectedProfileLabel={selectedProfileLabel} />}
+                {formatInspection && value && (
+                  <VaultFormatDiagnostics
+                    inspection={formatInspection}
+                    selectedProfileId={profileId}
+                    selectedProfileLabel={selectedProfileLabel}
+                    suggestedProfile={suggestedDecryptProfile}
+                    suggestionDisabled={busy}
+                    onUseSuggestedProfile={useSuggestedDecryptProfile}
+                  />
+                )}
                 <div className="panel-actions">
                   <button className="primary-button" type="submit" disabled={!canSubmit}>
                     {busy ? (mode === 'encrypt' ? 'Encrypting…' : mode === 'decrypt' ? 'Decrypting…' : 'Rotating…') : (mode === 'encrypt' ? 'Encrypt' : mode === 'decrypt' ? 'Decrypt' : 'Rotate')}
@@ -771,7 +796,35 @@ function profileIsEligible(profiles: Profile[], profileId: string): boolean {
   return profileId.length > 0 && profiles.some((profile) => profile.id === profileId)
 }
 
-function VaultFormatDiagnostics({ inspection, selectedProfileId, selectedProfileLabel }: { inspection: VaultFormatInspection; selectedProfileId: string; selectedProfileLabel: string }) {
+function vaultIdSuggestedProfile(inspection: VaultFormatInspection, selectedProfileId: string, decryptProfiles: Profile[]): Profile | null {
+  if (
+    inspection.status !== 'recognized'
+    || inspection.version !== '1.2'
+    || inspection.cipher !== 'AES256'
+    || !inspection.withinByteLimit
+    || !inspection.label
+    || inspection.label === selectedProfileId
+    || inspection.issues.some((issue) => issue !== 'label-mismatch')
+  ) return null
+
+  return decryptProfiles.find((profile) => profile.id === inspection.label) ?? null
+}
+
+function VaultFormatDiagnostics({
+  inspection,
+  selectedProfileId,
+  selectedProfileLabel,
+  suggestedProfile,
+  suggestionDisabled,
+  onUseSuggestedProfile,
+}: {
+  inspection: VaultFormatInspection
+  selectedProfileId: string
+  selectedProfileLabel: string
+  suggestedProfile: Profile | null
+  suggestionDisabled: boolean
+  onUseSuggestedProfile: (profileId: string) => void
+}) {
   const state = inspection.status === 'recognized' && inspection.issues.length === 0 ? 'recognized' : 'warning'
   const guidance = formatGuidance(inspection, selectedProfileId, selectedProfileLabel)
 
@@ -782,6 +835,16 @@ function VaultFormatDiagnostics({ inspection, selectedProfileId, selectedProfile
           <span>Vault format</span>
           <strong>{formatName(inspection)}</strong>
         </div>
+        {suggestedProfile && (
+          <button
+            className="secondary-button format-inspector-action"
+            type="button"
+            disabled={suggestionDisabled}
+            onClick={() => onUseSuggestedProfile(suggestedProfile.id)}
+          >
+            Use {suggestedProfile.label}
+          </button>
+        )}
       </div>
       <p className="format-inspector-note">Checks the header only; this does not verify encryption.</p>
       <dl className="format-inspector-grid">
