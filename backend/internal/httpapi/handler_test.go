@@ -254,9 +254,9 @@ func TestJSONBodyLimit(t *testing.T) {
 	}
 }
 
-func TestReadinessAndSecurityHeaders(t *testing.T) {
-	readyHandler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
-	notReadyHandler := newHandler(nil, nil)
+func TestReadiness(t *testing.T) {
+	readyHandler := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{}, Dependencies{})
+	notReadyHandler := NewWithDependencies(nil, nil, Dependencies{})
 	for _, test := range []struct {
 		name    string
 		handler http.Handler
@@ -271,15 +271,6 @@ func TestReadinessAndSecurityHeaders(t *testing.T) {
 			test.handler.ServeHTTP(response, request)
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d", response.Code, test.status)
-			}
-			if response.Header().Get("Cache-Control") != "no-store" {
-				t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
-			}
-			if response.Header().Get("X-Content-Type-Options") != "nosniff" {
-				t.Fatalf("X-Content-Type-Options = %q", response.Header().Get("X-Content-Type-Options"))
-			}
-			if response.Header().Get("Content-Security-Policy") == "" {
-				t.Fatal("Content-Security-Policy header is missing")
 			}
 		})
 	}

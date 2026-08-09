@@ -15,7 +15,6 @@ type Dependencies struct {
 	Auth       *authn.Authenticator
 	Authorizer *authz.Authorizer
 	AuthConfig config.AuthConfig
-	Ready      bool
 }
 
 func NewWithDependencies(profiles []Profile, executor Executor, dependencies Dependencies) http.Handler {
@@ -23,7 +22,6 @@ func NewWithDependencies(profiles []Profile, executor Executor, dependencies Dep
 	handler.auth = dependencies.Auth
 	handler.authorizer = dependencies.Authorizer
 	handler.authConfig = dependencies.AuthConfig
-	handler.ready = dependencies.Ready
 	return handler
 }
 

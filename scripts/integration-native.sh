@@ -40,7 +40,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for command in docker curl openssl python3 go; do
+for command in docker openssl python3 go; do
   command -v "$command" >/dev/null 2>&1 || { printf 'integration: missing dependency: %s\n' "$command" >&2; exit 1; }
 done
 docker compose version >/dev/null
@@ -90,7 +90,7 @@ kc config credentials \
   --user integration-admin \
   --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null
 kc create realms -s realm=vaultsmith -s enabled=true >/dev/null
-kc create clients -r vaultsmith \
+CLIENT_ID="$(kc create clients -r vaultsmith \
   -s clientId=vaultsmith-integration \
   -s enabled=true \
   -s protocol=openid-connect \
@@ -98,18 +98,16 @@ kc create clients -r vaultsmith \
   -s secret="$OIDC_CLIENT_SECRET" \
   -s standardFlowEnabled=true \
   -s 'redirectUris=["https://localhost:18443/auth/callback"]' \
-  -s 'webOrigins=["https://localhost:18443"]' >/dev/null
-CLIENT_ID="$(kc get clients -r vaultsmith -q clientId=vaultsmith-integration --fields id --format csv --noquotes | tr -d '\r' | python3 -c 'import sys; print(sys.stdin.read().strip().splitlines()[0])')"
-kc create groups -r vaultsmith -s name=vaultsmith-operators >/dev/null
-GROUP_ID="$(kc get groups -r vaultsmith -q search=vaultsmith-operators | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
-kc create users -r vaultsmith \
+  -s 'webOrigins=["https://localhost:18443"]' -i)"
+GROUP_ID="$(kc create groups -r vaultsmith -s name=vaultsmith-operators -i)"
+USER_ID="$(kc create users -r vaultsmith \
   -s username=integration-user \
   -s enabled=true \
   -s email=integration-user@example.test \
   -s emailVerified=true \
   -s firstName=Integration \
   -s lastName=User \
-  -s 'requiredActions=[]' >/dev/null
+  -s 'requiredActions=[]' -i)"
 kc set-password -r vaultsmith --username integration-user --new-password "$TEST_USER_PASSWORD" >/dev/null
 kc create users -r vaultsmith \
   -s username=integration-denied \
@@ -120,19 +118,9 @@ kc create users -r vaultsmith \
   -s lastName=Permissions \
   -s 'requiredActions=[]' >/dev/null
 kc set-password -r vaultsmith --username integration-denied --new-password "$DENIED_USER_PASSWORD" >/dev/null
-USER_ID="$(kc get users -r vaultsmith -q username=integration-user | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
 kc update "users/$USER_ID/groups/$GROUP_ID" -r vaultsmith >/dev/null
-ADMIN_TOKEN="$(curl -fsS \
-  --data-urlencode "client_id=admin-cli" \
-  --data-urlencode "username=integration-admin" \
-  --data-urlencode "password=$KEYCLOAK_ADMIN_PASSWORD" \
-  --data-urlencode "grant_type=password" \
-  -k https://localhost:18081/realms/master/protocol/openid-connect/token | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')"
-curl -fsS -X POST \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H 'Content-Type: application/json' \
-  http://localhost:18082/admin/realms/vaultsmith/clients/$CLIENT_ID/protocol-mappers/models \
-  -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"full.path":"false","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","claim.name":"groups"}}' >/dev/null
+kc create "clients/$CLIENT_ID/protocol-mappers/models" -r vaultsmith \
+  -b '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"full.path":"false","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","claim.name":"groups"}}' >/dev/null
 
 if (( INTERACTIVE )); then
   cat > "$TMP_DIR/policy.csv" <<'POLICY'

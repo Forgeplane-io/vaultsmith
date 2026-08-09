@@ -212,15 +212,6 @@ if render -f "$TMP_DIR/native.yaml" --set auth.session.sameSite=strict > "$TMP_D
   fail 'native SameSite=Strict render unexpectedly succeeded'
 fi
 
-cat > "$TMP_DIR/custom-policy-path.yaml" <<'VALUES'
-auth:
-  mode: "off"
-  policy:
-    file: /tmp/policy.csv
-VALUES
-assert_render_fails "$TMP_DIR/custom-policy-path.yaml"
-assert_render_fails_with 'auth.policy.file must be /etc/vaultsmith/policy/policy.csv because the chart mounts that fixed path' -f "$TMP_DIR/custom-policy-path.yaml" --skip-schema-validation
-
 cat > "$TMP_DIR/conflicting-policy.yaml" <<'VALUES'
 auth:
   mode: off

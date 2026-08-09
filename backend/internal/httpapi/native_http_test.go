@@ -82,7 +82,7 @@ func nativeHTTPFixture(t *testing.T) (http.Handler, *authn.Authenticator, config
 		t.Fatal(err)
 	}
 	executor := &recordingExecutor{}
-	api := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}, {ID: "prod", Label: "Production"}}, executor, Dependencies{Auth: authenticator, Authorizer: authorizer, AuthConfig: cfg, Ready: true})
+	api := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}, {ID: "prod", Label: "Production"}}, executor, Dependencies{Auth: authenticator, Authorizer: authorizer, AuthConfig: cfg})
 	return WrapSecurity(authenticator.SessionMiddleware(api), cfg), authenticator, cfg, server.Addr(), executor
 }
 

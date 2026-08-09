@@ -93,7 +93,6 @@ func newHandler(profiles []Profile, executor Executor) *Handler {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	setSecurityHeaders(w)
 	switch r.URL.Path {
 	case "/api/v1/profiles":
 		h.serveProfiles(w, r)

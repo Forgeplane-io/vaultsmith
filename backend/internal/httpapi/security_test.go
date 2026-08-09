@@ -34,6 +34,15 @@ func TestCSRFMiddlewareIssuesAndValidatesSharedSecretToken(t *testing.T) {
 	if getResponse.Code != http.StatusNoContent {
 		t.Fatalf("GET status = %d, want %d", getResponse.Code, http.StatusNoContent)
 	}
+	if getResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Cache-Control = %q", getResponse.Header().Get("Cache-Control"))
+	}
+	if getResponse.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q", getResponse.Header().Get("X-Content-Type-Options"))
+	}
+	if getResponse.Header().Get("Content-Security-Policy") == "" {
+		t.Fatal("Content-Security-Policy header is missing")
+	}
 	cookies := getResponse.Result().Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("CSRF cookie count = %d, want 1", len(cookies))

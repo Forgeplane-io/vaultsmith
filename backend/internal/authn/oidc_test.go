@@ -52,7 +52,7 @@ func TestNewAuthenticatorOffSkipsRedisAndOIDC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthenticator() error = %v", err)
 	}
-	if service.Redis != nil || service.Verifier != nil || service.oidcClient != nil {
+	if service.Redis != nil || service.Sessions != nil || service.Verifier != nil || service.oidcClient != nil {
 		t.Fatalf("off-mode service initialized external dependencies: %+v", service)
 	}
 }

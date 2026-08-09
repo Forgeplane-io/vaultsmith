@@ -71,6 +71,7 @@ func LoadPolicy(path string, profileIDs []string) (*Policy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: policy adapter unavailable", ErrPolicy)
 	}
+	enforcer.AddFunction("vaultsmithHasRole", matchPolicyRole)
 	enforcer.AddFunction("vaultsmithMatch", func(args ...interface{}) (interface{}, error) {
 		if len(args) != 2 {
 			return false, fmt.Errorf("invalid resource matcher arguments")
@@ -181,11 +182,11 @@ func authorizeWithPolicy(policy *Policy, principal authn.Principal, action, reso
 	if len(roles) == 0 {
 		return ErrForbidden
 	}
-	allow, deny, err := policy.evaluate(roles, resource, action)
+	allowed, err := policy.enforcer.Enforce(roles, resource, action)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: policy enforcement failed", ErrPolicy)
 	}
-	if deny || !allow {
+	if !allowed {
 		return ErrForbidden
 	}
 	return nil
@@ -234,22 +235,6 @@ func (p *Policy) rolesForGroups(groups []string) map[string]struct{} {
 		}
 	}
 	return roles
-}
-
-func (p *Policy) evaluate(roles map[string]struct{}, object, action string) (allow, deny bool, err error) {
-	for role := range roles {
-		ok, matched, enforceErr := p.enforcer.EnforceEx(role, object, action)
-		if enforceErr != nil {
-			return false, false, fmt.Errorf("%w: policy enforcement failed", ErrPolicy)
-		}
-		if ok {
-			allow = true
-		}
-		if len(matched) == 4 && matched[3] == "deny" {
-			deny = true
-		}
-	}
-	return allow, deny, nil
 }
 
 func validatePolicy(policy *Policy, profileIDs []string) error {
@@ -315,6 +300,19 @@ func matchesPolicyObject(resource, selector string) bool {
 		return strings.HasPrefix(resource, strings.TrimSuffix(selector, "*"))
 	}
 	return resource == selector
+}
+
+func matchPolicyRole(args ...interface{}) (interface{}, error) {
+	if len(args) != 2 {
+		return false, fmt.Errorf("role matcher requires two arguments")
+	}
+	roles, rolesOK := args[0].(map[string]struct{})
+	role, roleOK := args[1].(string)
+	if !rolesOK || !roleOK {
+		return false, fmt.Errorf("role matcher received invalid arguments")
+	}
+	_, matched := roles[role]
+	return matched, nil
 }
 
 func validateObject(object, action string, profiles map[string]struct{}) error {

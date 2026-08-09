@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/alexedwards/scs/v2"
-	"github.com/alexedwards/scs/v2/memstore"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 	"golang.org/x/oauth2"
@@ -83,7 +82,6 @@ func NewAuthenticator(ctx context.Context, cfg config.AuthConfig, runtime *Redis
 		Redis:  runtime,
 	}
 	if cfg.Mode == config.AuthModeOff {
-		service.Sessions = NewSessionManager(memstore.New(), cfg.Session)
 		return service, nil
 	}
 	if cfg.Mode != config.AuthModeNative {

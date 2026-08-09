@@ -97,7 +97,6 @@ func run() error {
 		Auth:       authenticator,
 		Authorizer: authorizer,
 		AuthConfig: authConfig,
-		Ready:      true,
 	})
 	serverHandler := httpapi.WrapSecurity(authenticator.SessionMiddleware(api), authConfig)
 	server := &http.Server{
