@@ -58,7 +58,8 @@ func TestProfilesEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
 	profiles := decodeJSONBody[profilesResponse](t, response).Profiles
-	if len(profiles) != 1 || profiles[0] != (Profile{ID: "dev", Label: "Development"}) {
+	want := Profile{ID: "dev", Label: "Development", Capabilities: ProfileCapabilities{Encrypt: true, Decrypt: true}}
+	if len(profiles) != 1 || profiles[0] != want {
 		t.Fatalf("profiles = %#v", profiles)
 	}
 	if strings.Contains(response.Body.String(), "password") {

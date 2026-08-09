@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +39,8 @@ func writeNativePolicy(t *testing.T) string {
 	content := "g, group:admins, role:admin\n" +
 		"p, role:admin, profiles, profiles:list, allow\n" +
 		"p, role:admin, profile:dev, encrypt, allow\n" +
-		"p, role:admin, profile:dev, decrypt, allow\n"
+		"p, role:admin, profile:dev, decrypt, allow\n" +
+		"p, role:admin, profile:read, decrypt, allow\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,7 @@ func nativeHTTPFixture(t *testing.T) (http.Handler, *authn.Authenticator, config
 		Redis:   redisConfig,
 	}
 	authenticator := &authn.Authenticator{Config: cfg, Redis: runtime, Sessions: authn.NewSessionManager(runtime.SessionStore(), cfg.Session)}
-	policy, err := authz.LoadPolicy(writeNativePolicy(t), []string{"dev", "prod"})
+	policy, err := authz.LoadPolicy(writeNativePolicy(t), []string{"dev", "prod", "read"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +84,7 @@ func nativeHTTPFixture(t *testing.T) (http.Handler, *authn.Authenticator, config
 		t.Fatal(err)
 	}
 	executor := &recordingExecutor{}
-	api := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}, {ID: "prod", Label: "Production"}}, executor, Dependencies{Auth: authenticator, Authorizer: authorizer, AuthConfig: cfg})
+	api := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}, {ID: "prod", Label: "Production"}, {ID: "read", Label: "Read only"}}, executor, Dependencies{Auth: authenticator, Authorizer: authorizer, AuthConfig: cfg})
 	return WrapSecurity(authenticator.SessionMiddleware(api), cfg), authenticator, cfg, server.Addr(), executor
 }
 
@@ -144,8 +146,12 @@ func TestNativeHTTPAuthorizedSessionCSRFAndProfileFiltering(t *testing.T) {
 		t.Fatalf("profiles response = %d %s", response.Code, response.Body.String())
 	}
 	profiles := decodeJSONBody[profilesResponse](t, response).Profiles
-	if len(profiles) != 1 || profiles[0] != (Profile{ID: "dev", Label: "Development"}) {
-		t.Fatalf("profiles = %#v, want only authorized dev profile", profiles)
+	wantProfiles := []Profile{
+		{ID: "dev", Label: "Development", Capabilities: ProfileCapabilities{Encrypt: true, Decrypt: true}},
+		{ID: "read", Label: "Read only", Capabilities: ProfileCapabilities{Decrypt: true}},
+	}
+	if !reflect.DeepEqual(profiles, wantProfiles) {
+		t.Fatalf("profiles = %#v, want authorized profiles with action capabilities %#v", profiles, wantProfiles)
 	}
 
 	authorized := httptest.NewRequest(http.MethodPost, "https://example.test/api/v1/operations", strings.NewReader(`{"profileId":"dev","mode":"encrypt","value":"secret"}`))

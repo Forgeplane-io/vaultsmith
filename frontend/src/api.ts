@@ -3,6 +3,10 @@ export type OperationMode = 'encrypt' | 'decrypt' | 'rotate'
 export type Profile = {
   id: string
   label: string
+  capabilities: {
+    encrypt: boolean
+    decrypt: boolean
+  }
 }
 
 export type Session = {
@@ -178,7 +182,12 @@ function isProfileEnvelope(value: unknown): value is { profiles: Profile[] } {
 function isProfile(value: unknown): value is Profile {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<Profile>
-  return typeof candidate.id === 'string' && typeof candidate.label === 'string'
+  const capabilities = candidate.capabilities
+  return typeof candidate.id === 'string'
+    && typeof candidate.label === 'string'
+    && Boolean(capabilities && typeof capabilities === 'object')
+    && typeof capabilities?.encrypt === 'boolean'
+    && typeof capabilities?.decrypt === 'boolean'
 }
 
 function isValueEnvelope(value: unknown): value is { value: string } {

@@ -105,7 +105,7 @@ The main endpoints are:
 - `GET /healthz`: liveness check.
 - `GET /readyz`: readiness check.
 - `GET /api/v1/session`: session and CSRF bootstrap.
-- `GET /api/v1/profiles`: profiles allowed for the current user.
+- `GET /api/v1/profiles`: profiles allowed for the current user, with `encrypt` and `decrypt` capability flags.
 - `POST /api/v1/operations`: encrypt, decrypt, or re-key a value.
 - `GET /auth/login` and `GET /auth/callback`: native OIDC login.
 - `POST /auth/logout`: CSRF-protected logout.

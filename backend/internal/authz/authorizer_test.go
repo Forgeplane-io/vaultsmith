@@ -67,11 +67,14 @@ func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
 	path := policyFile(t, strings.TrimSpace(`
  g, group:admins, role:admin
  g, group:readers, role:reader
+ g, group:nolisters, role:nolister
  g, role:reader, role:base
  p, role:admin, profiles, profiles:list, allow
  p, role:admin, profile:dev, encrypt, allow
  p, role:admin, profile:dev, decrypt, allow
  p, role:admin, profile:prod, encrypt, allow
+ p, role:admin, profile:prod, decrypt, deny
+ p, role:nolister, profile:dev, encrypt, allow
  p, role:base, profiles, profiles:list, allow
  p, role:base, profile:dev, decrypt, allow
  p, role:reader, profile:dev, decrypt, deny
@@ -85,6 +88,12 @@ func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
 	if err := authorizer.AuthorizeRotate(admin, "dev", "prod"); err != nil {
 		t.Fatalf("admin rotate: %v", err)
 	}
+	if got, want := authorizer.CapabilitiesForProfiles(admin, []string{"dev", "prod", "stageblue"}), map[string]ProfileCapabilities{
+		"dev":  {Encrypt: true, Decrypt: true},
+		"prod": {Encrypt: true},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("CapabilitiesForProfiles(admin) = %#v, want %#v", got, want)
+	}
 	reader := principalWithGroups("readers")
 	if err := authorizer.Authorize(reader, ActionDecrypt, ProfileResource("dev")); err == nil {
 		t.Fatal("reader decrypt dev allowed despite explicit deny")
@@ -95,9 +104,49 @@ func TestAuthorizerEnforcesGroupsRolesDenyAndProfileFiltering(t *testing.T) {
 	if err := authorizer.Authorize(reader, ActionDecrypt, ProfileResource("stageblue")); err != nil {
 		t.Fatalf("reader decrypt stageblue: %v", err)
 	}
-	got := authorizer.FilterProfiles(reader, []string{"dev", "prod", "stageblue"})
-	if want := []string{"stageblue"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("FilterProfiles() = %#v, want %#v", got, want)
+	got := authorizer.CapabilitiesForProfiles(reader, []string{"dev", "prod", "stageblue"})
+	if want := map[string]ProfileCapabilities{"stageblue": {Decrypt: true}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("CapabilitiesForProfiles(reader) = %#v, want %#v", got, want)
+	}
+	if got := authorizer.CapabilitiesForProfiles(principalWithGroups("unknown"), []string{"dev"}); len(got) != 0 {
+		t.Fatalf("CapabilitiesForProfiles(unknown) = %#v, want no visible profiles", got)
+	}
+	if got := authorizer.CapabilitiesForProfiles(principalWithGroups("nolisters"), []string{"dev"}); len(got) != 0 {
+		t.Fatalf("CapabilitiesForProfiles(nolister) = %#v, want no visible profiles without profiles:list", got)
+	}
+}
+
+func TestProfileCapabilitiesUseOnePolicySnapshot(t *testing.T) {
+	initial := "g, group:admins, role:admin\np, role:admin, profiles, profiles:list, allow\np, role:admin, profile:dev, encrypt, allow\np, role:admin, profile:dev, decrypt, allow\n"
+	path := policyFile(t, initial)
+	authorizer := loadAuthorizer(t, path, []string{"dev"})
+
+	var rewrite sync.Once
+	rewritten := false
+	replacePolicyMatcher(t, authorizer, path, func(args ...interface{}) (interface{}, error) {
+		rewrite.Do(func() {
+			updated := "g, group:admins, role:admin\np, role:admin, profiles, profiles:list, allow\np, role:admin, profile:dev, encrypt, allow\np, role:admin, profile:dev, decrypt, deny\n"
+			if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+				t.Errorf("rewrite policy: %v", err)
+				return
+			}
+			rewritten = true
+		})
+		resource, resourceOK := args[0].(string)
+		selector, selectorOK := args[1].(string)
+		if !resourceOK || !selectorOK {
+			return false, nil
+		}
+		return matchesPolicyObject(resource, selector), nil
+	})
+
+	got := authorizer.CapabilitiesForProfiles(principalWithGroups("admins"), []string{"dev"})
+	want := map[string]ProfileCapabilities{"dev": {Encrypt: true, Decrypt: true}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("CapabilitiesForProfiles() = %#v, want one consistent pre-reload snapshot %#v", got, want)
+	}
+	if !rewritten {
+		t.Fatal("policy rewrite hook was not exercised")
 	}
 }
 

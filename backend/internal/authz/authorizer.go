@@ -27,6 +27,11 @@ const (
 	ResourceProfiles = "profiles"
 )
 
+type ProfileCapabilities struct {
+	Encrypt bool
+	Decrypt bool
+}
+
 var (
 	ErrForbidden = errors.New("authorization denied")
 	ErrPolicy    = errors.New("authorization policy unavailable")
@@ -192,19 +197,23 @@ func authorizeWithPolicy(policy *Policy, principal authn.Principal, action, reso
 	return nil
 }
 
-func (a *Authorizer) FilterProfiles(principal authn.Principal, profileIDs []string) []string {
+func (a *Authorizer) CapabilitiesForProfiles(principal authn.Principal, profileIDs []string) map[string]ProfileCapabilities {
 	policy, err := a.currentPolicy()
 	if err != nil || authorizeWithPolicy(policy, principal, ActionListProfiles, ResourceProfiles) != nil {
 		return nil
 	}
-	filtered := make([]string, 0, len(profileIDs))
+	capabilities := make(map[string]ProfileCapabilities, len(profileIDs))
 	for _, profileID := range profileIDs {
 		resource := ProfileResource(profileID)
-		if authorizeWithPolicy(policy, principal, ActionEncrypt, resource) == nil || authorizeWithPolicy(policy, principal, ActionDecrypt, resource) == nil {
-			filtered = append(filtered, profileID)
+		profileCapabilities := ProfileCapabilities{
+			Encrypt: authorizeWithPolicy(policy, principal, ActionEncrypt, resource) == nil,
+			Decrypt: authorizeWithPolicy(policy, principal, ActionDecrypt, resource) == nil,
+		}
+		if profileCapabilities.Encrypt || profileCapabilities.Decrypt {
+			capabilities[profileID] = profileCapabilities
 		}
 	}
-	return filtered
+	return capabilities
 }
 
 func (a *Authorizer) AuthorizeRotate(principal authn.Principal, sourceProfileID, destinationProfileID string) error {

@@ -18,11 +18,21 @@ describe('API client', () => {
 
   it('loads public profiles from the same-origin endpoint', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ profiles: [{ id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false } }] }),
+    )
+
+    await expect(api.fetchProfiles()).resolves.toEqual([
+      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false } },
+    ])
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/profiles', expect.objectContaining({ headers: { Accept: 'application/json' } }))
+  })
+
+  it('rejects a profile response without boolean capabilities', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({ profiles: [{ id: 'dev', label: 'Development' }] }),
     )
 
-    await expect(api.fetchProfiles()).resolves.toEqual([{ id: 'dev', label: 'Development' }])
-    expect(fetchMock).toHaveBeenCalledWith('/api/v1/profiles', expect.objectContaining({ headers: { Accept: 'application/json' } }))
+    await expect(api.fetchProfiles()).rejects.toMatchObject({ name: 'ApiError', code: 'invalid_response' })
   })
 
   it('rejects a malformed session response', async () => {
