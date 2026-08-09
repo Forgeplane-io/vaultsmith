@@ -75,7 +75,8 @@ func nativeHTTPFixture(t *testing.T) (http.Handler, *authn.Authenticator, config
 		Redis:   redisConfig,
 	}
 	authenticator := &authn.Authenticator{Config: cfg, Redis: runtime, Sessions: authn.NewSessionManager(runtime.SessionStore(), cfg.Session)}
-	policy, err := authz.LoadPolicy(writeNativePolicy(t), []string{"dev", "prod", "read"})
+	policyPath := writeNativePolicy(t)
+	policy, err := authz.LoadPolicy(policyPath, []string{"dev", "prod", "read"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,16 +86,20 @@ func nativeHTTPFixture(t *testing.T) (http.Handler, *authn.Authenticator, config
 	}
 	executor := &recordingExecutor{}
 	api := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}, {ID: "prod", Label: "Production"}, {ID: "read", Label: "Read only"}}, executor, Dependencies{Auth: authenticator, Authorizer: authorizer, AuthConfig: cfg})
-	return WrapSecurity(authenticator.SessionMiddleware(api), cfg), authenticator, cfg, server.Addr(), executor
+	return WrapSecurity(authenticator.SessionMiddleware(api), cfg), authenticator, cfg, policyPath, executor
 }
 
-func seedNativeSession(t *testing.T, authenticator *authn.Authenticator) string {
+func seedNativeSession(t *testing.T, authenticator *authn.Authenticator, requestedGroups ...string) string {
 	t.Helper()
+	groups := []string{"admins"}
+	if len(requestedGroups) > 0 {
+		groups = requestedGroups
+	}
 	ctx, err := authenticator.Sessions.Load(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	authn.StorePrincipal(ctx, authenticator.Sessions, authn.Principal{Issuer: "https://issuer", Subject: "subject", Groups: []string{"admins"}, Email: "user@example.test", ExpiresAt: time.Now().Add(time.Hour)}, "")
+	authn.StorePrincipal(ctx, authenticator.Sessions, authn.Principal{Issuer: "https://issuer", Subject: "subject", Groups: groups, Email: "user@example.test", ExpiresAt: time.Now().Add(time.Hour)}, "")
 	token, _, err := authenticator.Sessions.Commit(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +227,44 @@ func TestNativeHTTPAuthorizedSessionCSRFAndProfileFiltering(t *testing.T) {
 	handler.ServeHTTP(unknownResponse, unknown)
 	if unknownResponse.Code != http.StatusForbidden {
 		t.Fatalf("unknown profile status = %d, want 403: %s", unknownResponse.Code, unknownResponse.Body.String())
+	}
+}
+
+func TestNativeHTTPProfileDenialReturnsEmptyResult(t *testing.T) {
+	handler, authenticator, cfg, _, _ := nativeHTTPFixture(t)
+	token := seedNativeSession(t, authenticator, "unknown")
+	request := httptest.NewRequest(http.MethodGet, "https://example.test/api/v1/profiles", nil)
+	request.AddCookie(&http.Cookie{Name: cfg.Session.CookieName, Value: token})
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	if profiles := decodeJSONBody[profilesResponse](t, response).Profiles; len(profiles) != 0 {
+		t.Fatalf("profiles = %#v, want empty result", profiles)
+	}
+}
+
+func TestNativeHTTPPolicyFailureReturnsNotReady(t *testing.T) {
+	handler, authenticator, cfg, policyPath, _ := nativeHTTPFixture(t)
+	token := seedNativeSession(t, authenticator)
+	if err := os.Remove(policyPath); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "https://example.test/api/v1/profiles", nil)
+	request.AddCookie(&http.Cookie{Name: cfg.Session.CookieName, Value: token})
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", response.Code, response.Body.String())
+	}
+	body := decodeJSONBody[errorResponse](t, response)
+	if body.Error.Code != "not_ready" || strings.Contains(response.Body.String(), policyPath) {
+		t.Fatalf("body = %#v", body)
 	}
 }
 
