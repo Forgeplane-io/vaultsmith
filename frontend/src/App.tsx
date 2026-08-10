@@ -21,6 +21,8 @@ export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [session, setSession] = useState<Session | null>(null)
   const [signedOut, setSignedOut] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+  const [logoutFailed, setLogoutFailed] = useState(false)
   const [profileId, setProfileId] = useState('')
   const [destinationProfileId, setDestinationProfileId] = useState('')
   const [mode, setMode] = useState<OperationMode>('encrypt')
@@ -45,7 +47,10 @@ export default function App() {
   const operationControllerRef = useRef<AbortController | null>(null)
   const operationAbortReasonRef = useRef<'cancelled' | 'timeout' | null>(null)
   const operationGenerationRef = useRef(0)
+  const profileLoadControllerRef = useRef<AbortController | null>(null)
   const profileRefreshControllerRef = useRef<AbortController | null>(null)
+  const logoutControllerRef = useRef<AbortController | null>(null)
+  const signingOutRef = useRef(false)
   const initialProfileSelectionRef = useRef(true)
   const modeRef = useRef(mode)
   const valueRef = useRef(value)
@@ -68,6 +73,7 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (signingOutRef.current) return
     let active = true
     let loadStage: 'session' | 'profiles' = 'session'
     const recoveringStaleSnapshot = recoveringStaleCapabilities
@@ -78,9 +84,14 @@ export default function App() {
     setLoadFailureStage(null)
     setStatus(recoveringStaleSnapshot ? 'Refreshing environments…' : 'Checking session…')
     const controller = new AbortController()
+    profileLoadControllerRef.current = controller
+    const hasAuthority = () => active
+      && profileLoadControllerRef.current === controller
+      && !controller.signal.aborted
+      && !signingOutRef.current
     fetchSession(controller.signal)
       .then((session) => {
-        if (!active) return undefined
+        if (!hasAuthority()) return undefined
         setSession(session)
         if (session.authRequired && !session.authenticated) {
           redirectToLogin()
@@ -92,7 +103,7 @@ export default function App() {
         return fetchProfiles(controller.signal)
       })
       .then((loadedProfiles) => {
-        if (!active || !loadedProfiles) return
+        if (!hasAuthority() || !loadedProfiles) return
         applyLoadedProfiles(loadedProfiles)
         setProfileSnapshotValid(true)
         setRecoveringStaleCapabilities(false)
@@ -104,7 +115,7 @@ export default function App() {
           : '')
       })
       .catch((reason: unknown) => {
-        if (!active) return
+        if (!hasAuthority()) return
         if (reason instanceof ApiError && reason.code === 'unauthorized') {
           redirectToLogin()
           setStatus('Sign-in required…')
@@ -120,10 +131,13 @@ export default function App() {
         setStatus('')
       })
       .finally(() => {
-        if (active) setLoadingProfiles(false)
+        if (!hasAuthority()) return
+        profileLoadControllerRef.current = null
+        setLoadingProfiles(false)
       })
     return () => {
       active = false
+      if (profileLoadControllerRef.current === controller) profileLoadControllerRef.current = null
       controller.abort()
     }
   }, [profileLoadAttempt])
@@ -131,9 +145,14 @@ export default function App() {
   useEffect(() => () => {
     operationGenerationRef.current += 1
     operationControllerRef.current?.abort()
+    const profileLoadController = profileLoadControllerRef.current
+    profileLoadControllerRef.current = null
+    profileLoadController?.abort()
     const profileRefreshController = profileRefreshControllerRef.current
     profileRefreshControllerRef.current = null
     profileRefreshController?.abort()
+    logoutControllerRef.current?.abort()
+    logoutControllerRef.current = null
   }, [])
 
   const byteLength = useMemo(() => utf8ByteLength(value), [value])
@@ -150,7 +169,8 @@ export default function App() {
   const modeAvailable = mode === 'encrypt' ? encryptAvailable : mode === 'decrypt' ? decryptAvailable : rotateAvailable
   const selectedProfileEligible = profileIsEligible(eligibleProfiles, profileId)
   const selectedDestinationEligible = mode !== 'rotate' || profileIsEligible(encryptProfiles, destinationProfileId)
-  const canSubmit = profileSnapshotReady && !busy && modeAvailable && selectedProfileEligible && selectedDestinationEligible && value.length > 0 && !overLimit
+  const workbenchLocked = busy || signingOut
+  const canSubmit = profileSnapshotReady && !workbenchLocked && modeAvailable && selectedProfileEligible && selectedDestinationEligible && value.length > 0 && !overLimit
   const canClear = Boolean(value || output || ansibleVariableName)
   const inputName = mode === 'encrypt' ? 'Value to protect' : mode === 'decrypt' ? 'Protected value to read' : 'Protected value to move'
   const outputName = mode === 'encrypt' ? 'Protected value' : mode === 'decrypt' ? 'Decrypted value' : 'Moved protected value'
@@ -160,13 +180,13 @@ export default function App() {
       ? 'Choose an environment, then paste complete protected text or a YAML !vault block.'
       : 'Choose source and destination environments, then paste complete protected text.'
   const shownOutput = mode === 'decrypt' && output && !revealed ? 'Decrypted value hidden' : output
-  const copyDisabled = !output
+  const copyDisabled = workbenchLocked || !output
   const copyLabel = mode === 'decrypt' && output && !revealed ? 'Copy without revealing' : 'Copy result'
-  const canCopyAnsibleSnippet = Boolean(output) && (mode === 'encrypt' || mode === 'rotate') && isValidAnsibleVariableIdentifier(ansibleVariableName)
+  const canCopyAnsibleSnippet = !workbenchLocked && Boolean(output) && (mode === 'encrypt' || mode === 'rotate') && isValidAnsibleVariableIdentifier(ansibleVariableName)
   const handoffTargetProfileId = mode === 'rotate' ? destinationProfileId : profileId
   const handoffTargetMode: OperationMode = mode === 'decrypt' ? 'encrypt' : 'decrypt'
   const handoffEligible = profileSnapshotReady && profileIsEligible(profilesForMode(profiles, handoffTargetMode), handoffTargetProfileId)
-  const canUseResultAsInput = Boolean(output) && handoffEligible
+  const canUseResultAsInput = !workbenchLocked && Boolean(output) && handoffEligible
   const handoffUnavailableReason = mode === 'rotate'
     ? 'The destination environment is not available for decryption.'
     : handoffTargetMode === 'decrypt'
@@ -203,6 +223,7 @@ export default function App() {
   }
 
   function changeMode(nextMode: OperationMode) {
+    if (signingOut) return
     const retainedInput = Boolean(value) && nextMode !== mode
     const nextProfiles = profilesForMode(profiles, nextMode)
     setProfileId((current) => profileIsEligible(nextProfiles, current) ? current : '')
@@ -219,13 +240,14 @@ export default function App() {
   }
 
   function changeValue(nextValue: string) {
+    if (signingOut) return
     setValue(nextValue)
     invalidateOutput()
     setModeNotice('')
   }
 
   function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
-    if (mode === 'encrypt') return
+    if (signingOut || mode === 'encrypt') return
 
     const pastedText = event.clipboardData.getData('text/plain')
     const normalized = normalizeVaultPaste(pastedText)
@@ -237,12 +259,13 @@ export default function App() {
   }
 
   function changeProfile(nextProfileId: string) {
+    if (signingOut) return
     setProfileId(nextProfileId)
     invalidateOutput()
   }
 
   function useSuggestedDecryptProfile(expectedProfileId: string) {
-    if (busy || mode === 'encrypt' || !profileSnapshotReady) return
+    if (workbenchLocked || mode === 'encrypt' || !profileSnapshotReady) return
 
     const currentInspection = inspectVaultFormat(value, profileId)
     const currentSuggestion = vaultIdSuggestedProfile(currentInspection, profileId, decryptProfiles)
@@ -252,12 +275,13 @@ export default function App() {
   }
 
   function changeDestinationProfile(nextProfileId: string) {
+    if (signingOut) return
     setDestinationProfileId(nextProfileId)
     invalidateOutput()
   }
 
   function useResultAsInput() {
-    if (busy || !canUseResultAsInput) return
+    if (workbenchLocked || !canUseResultAsInput) return
 
     const nextMode: OperationMode = mode === 'decrypt' ? 'encrypt' : 'decrypt'
     const result = output
@@ -325,7 +349,7 @@ export default function App() {
   }
 
   function retryProfiles() {
-    if (busy) return
+    if (workbenchLocked || signingOutRef.current) return
     const retryingSession = loadFailureStage === 'session'
     setProfileSnapshotValid(false)
     setLoadingProfiles(true)
@@ -340,6 +364,7 @@ export default function App() {
   }
 
   async function submit() {
+    if (signingOut) return
     if (!profileSnapshotReady || !selectedProfileEligible || !selectedDestinationEligible) {
       setError(mode === 'rotate'
         ? 'Select an available source and destination environment.'
@@ -437,7 +462,7 @@ export default function App() {
   }
 
   async function copyResult() {
-    if (!output) return
+    if (signingOut || !output) return
     const requestId = ++resultCopyRequestRef.current
     if (!navigator.clipboard?.writeText) {
       if (resultCopyRequestRef.current !== requestId) return
@@ -455,7 +480,7 @@ export default function App() {
   }
 
   async function copyAnsibleSnippet() {
-    if (!output || (mode !== 'encrypt' && mode !== 'rotate') || !isValidAnsibleVariableIdentifier(ansibleVariableName)) return
+    if (signingOut || !output || (mode !== 'encrypt' && mode !== 'rotate') || !isValidAnsibleVariableIdentifier(ansibleVariableName)) return
 
     const requestId = ++snippetCopyRequestRef.current
     let snippet: string
@@ -489,12 +514,50 @@ export default function App() {
     }
   }
 
+  function clearSensitiveStateForSignOut() {
+    operationGenerationRef.current += 1
+    const operationController = operationControllerRef.current
+    operationControllerRef.current = null
+    operationController?.abort()
+
+    const profileLoadController = profileLoadControllerRef.current
+    profileLoadControllerRef.current = null
+    profileLoadController?.abort()
+
+    const profileRefreshController = profileRefreshControllerRef.current
+    profileRefreshControllerRef.current = null
+    profileRefreshController?.abort()
+
+    snippetCopyRequestRef.current += 1
+    resultCopyRequestRef.current += 1
+    valueRef.current = ''
+    setBusy(false)
+    setLoadingProfiles(false)
+    setValue('')
+    setOutput('')
+    setAnsibleVariableName('')
+    setAnsibleSnippetFallback('')
+    setRevealed(false)
+    setModeNotice('')
+  }
+
   async function handleLogout() {
-    if (busy) return
+    if (signingOutRef.current || signedOut) return
+
+    signingOutRef.current = true
+    const controller = new AbortController()
+    logoutControllerRef.current = controller
+    const isCurrentLogout = () => logoutControllerRef.current === controller
+
+    clearSensitiveStateForSignOut()
+    setSigningOut(true)
+    setLogoutFailed(false)
     setStatus('Signing out…')
     setError('')
+
     try {
-      await logout()
+      await logout(controller.signal)
+      if (!isCurrentLogout()) return
       setSession(null)
       setProfiles([])
       setProfileSnapshotValid(false)
@@ -502,23 +565,25 @@ export default function App() {
       setProfileLoadFailed(false)
       setProfileLoadError('')
       setLoadFailureStage(null)
-      setValue('')
-      setOutput('')
-      setAnsibleVariableName('')
-      setAnsibleSnippetFallback('')
-      setRevealed(false)
-      setModeNotice('')
       setError('')
       setStatus('')
       setSignedOut(true)
     } catch (reason) {
+      if (!isCurrentLogout()) return
       setStatus('')
-      setError(safeErrorMessage(reason, 'Could not sign out. Try again.'))
+      setLogoutFailed(true)
+      setError(logoutErrorMessage(reason))
+    } finally {
+      if (isCurrentLogout()) {
+        logoutControllerRef.current = null
+        signingOutRef.current = false
+        setSigningOut(false)
+      }
     }
   }
 
   function clearAll() {
-    if (busy || !canClear) return
+    if (workbenchLocked || !canClear) return
     operationGenerationRef.current += 1
     snippetCopyRequestRef.current += 1
     resultCopyRequestRef.current += 1
@@ -569,7 +634,9 @@ export default function App() {
           {session?.authenticated && (
             <div className="session-controls">
               {session.email && <span className="session-email">{session.email}</span>}
-              <button className="quiet-button" type="button" onClick={() => void handleLogout()} disabled={busy}>Sign out</button>
+              <button className="quiet-button" type="button" onClick={() => void handleLogout()} disabled={signingOut}>
+                {signingOut ? 'Signing out…' : logoutFailed ? 'Retry sign out' : 'Sign out'}
+              </button>
             </div>
           )}
         </div>
@@ -589,14 +656,14 @@ export default function App() {
           {visibleError && (
             <div className="error-banner" role="alert">
               <span>{visibleError}</span>
-              {profileLoadFailed && !loadingProfiles && <button className="secondary-button" type="button" onClick={retryProfiles}>{loadFailureStage === 'session' ? 'Retry loading session' : 'Retry loading environments'}</button>}
+              {profileLoadFailed && !logoutFailed && !loadingProfiles && <button className="secondary-button" type="button" onClick={retryProfiles} disabled={workbenchLocked}>{loadFailureStage === 'session' ? 'Retry loading session' : 'Retry loading environments'}</button>}
             </div>
           )}
 
           <form
             className="operation-form"
             aria-label="Vault operation form"
-            aria-busy={busy}
+            aria-busy={workbenchLocked}
             onSubmit={(event) => {
               event.preventDefault()
               void submit()
@@ -610,7 +677,7 @@ export default function App() {
                     <select
                       id="source-profile-select"
                       value={profileId}
-                      disabled={!profileSnapshotReady || busy || decryptProfiles.length === 0}
+                      disabled={!profileSnapshotReady || workbenchLocked || decryptProfiles.length === 0}
                       onChange={(event) => changeProfile(event.target.value)}
                     >
                       {!profileIsEligible(decryptProfiles, profileId) && <option value="">Select an environment</option>}
@@ -624,7 +691,7 @@ export default function App() {
                     <select
                       id="destination-profile-select"
                       value={destinationProfileId}
-                      disabled={!profileSnapshotReady || busy || encryptProfiles.length === 0}
+                      disabled={!profileSnapshotReady || workbenchLocked || encryptProfiles.length === 0}
                       onChange={(event) => changeDestinationProfile(event.target.value)}
                     >
                       {!profileIsEligible(encryptProfiles, destinationProfileId) && <option value="">Select an environment</option>}
@@ -640,7 +707,7 @@ export default function App() {
                   <select
                     id="profile-select"
                     value={profileId}
-                    disabled={!profileSnapshotReady || busy || eligibleProfiles.length === 0}
+                    disabled={!profileSnapshotReady || workbenchLocked || eligibleProfiles.length === 0}
                     onChange={(event) => changeProfile(event.target.value)}
                   >
                     {!profileIsEligible(eligibleProfiles, profileId) && (
@@ -656,9 +723,9 @@ export default function App() {
               <fieldset className="mode-fieldset">
                 <legend>Operation</legend>
                 <div className="mode-switch">
-                  <button type="button" className={mode === 'encrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set encrypt mode" aria-pressed={mode === 'encrypt'} aria-describedby={profileSnapshotReady && !encryptAvailable ? 'encrypt-mode-unavailable' : undefined} onClick={() => changeMode('encrypt')} disabled={busy || !profileSnapshotReady || !encryptAvailable}>Encrypt</button>
-                  <button type="button" className={mode === 'decrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set decrypt mode" aria-pressed={mode === 'decrypt'} aria-describedby={profileSnapshotReady && !decryptAvailable ? 'decrypt-mode-unavailable' : undefined} onClick={() => changeMode('decrypt')} disabled={busy || !profileSnapshotReady || !decryptAvailable}>Decrypt</button>
-                  <button type="button" className={mode === 'rotate' ? 'mode-button active' : 'mode-button'} aria-label="Set rotate mode" aria-pressed={mode === 'rotate'} aria-describedby={profileSnapshotReady && !rotateAvailable ? 'rotate-mode-unavailable' : undefined} onClick={() => changeMode('rotate')} disabled={busy || !profileSnapshotReady || !rotateAvailable}>Rotate</button>
+                  <button type="button" className={mode === 'encrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set encrypt mode" aria-pressed={mode === 'encrypt'} aria-describedby={profileSnapshotReady && !encryptAvailable ? 'encrypt-mode-unavailable' : undefined} onClick={() => changeMode('encrypt')} disabled={workbenchLocked || !profileSnapshotReady || !encryptAvailable}>Encrypt</button>
+                  <button type="button" className={mode === 'decrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set decrypt mode" aria-pressed={mode === 'decrypt'} aria-describedby={profileSnapshotReady && !decryptAvailable ? 'decrypt-mode-unavailable' : undefined} onClick={() => changeMode('decrypt')} disabled={workbenchLocked || !profileSnapshotReady || !decryptAvailable}>Decrypt</button>
+                  <button type="button" className={mode === 'rotate' ? 'mode-button active' : 'mode-button'} aria-label="Set rotate mode" aria-pressed={mode === 'rotate'} aria-describedby={profileSnapshotReady && !rotateAvailable ? 'rotate-mode-unavailable' : undefined} onClick={() => changeMode('rotate')} disabled={workbenchLocked || !profileSnapshotReady || !rotateAvailable}>Rotate</button>
                 </div>
                 {profileSnapshotReady && (!encryptAvailable || !decryptAvailable || !rotateAvailable) && (
                   <div className="mode-availability-list">
@@ -684,7 +751,7 @@ export default function App() {
                   onChange={(event) => changeValue(event.target.value)}
                   onPaste={handlePaste}
                   placeholder={mode === 'encrypt' ? 'Paste a value…' : 'Paste protected text…'}
-                  disabled={busy || (!recoveringStaleCapabilities && (loadingProfiles || !modeAvailable) && value.length === 0)}
+                  disabled={workbenchLocked || (!recoveringStaleCapabilities && (loadingProfiles || !modeAvailable) && value.length === 0)}
                   spellCheck={false}
                   autoComplete="off"
                   autoCorrect="off"
@@ -699,7 +766,7 @@ export default function App() {
                     selectedProfileId={profileId}
                     selectedProfileLabel={selectedProfileLabel}
                     suggestedProfile={suggestedDecryptProfile}
-                    suggestionDisabled={busy}
+                    suggestionDisabled={workbenchLocked}
                     onUseSuggestedProfile={useSuggestedDecryptProfile}
                   />
                 )}
@@ -708,7 +775,7 @@ export default function App() {
                     {busy ? (mode === 'encrypt' ? 'Encrypting…' : mode === 'decrypt' ? 'Decrypting…' : 'Rotating…') : (mode === 'encrypt' ? 'Encrypt' : mode === 'decrypt' ? 'Decrypt' : 'Rotate')}
                   </button>
                   {busy && <button className="secondary-button" type="button" onClick={cancelOperation}>Cancel</button>}
-                  <button className="quiet-button" type="button" onClick={clearAll} disabled={busy || !canClear}>Clear values</button>
+                  <button className="quiet-button" type="button" onClick={clearAll} disabled={workbenchLocked || !canClear}>Clear values</button>
                 </div>
               </div>
 
@@ -752,6 +819,7 @@ export default function App() {
                         autoCapitalize="off"
                         aria-describedby="ansible-variable-name-help"
                         aria-invalid={ansibleVariableName.length > 0 && !isValidAnsibleVariableIdentifier(ansibleVariableName)}
+                        disabled={workbenchLocked}
                       />
                       <span className="field-help" id="ansible-variable-name-help">Letters, numbers, and underscores; start with a letter or underscore. Reserved Ansible names are not allowed.</span>
                     </div>
@@ -774,8 +842,8 @@ export default function App() {
                 )}
                 <div className="panel-actions output-actions">
                   {output && !handoffEligible && <span className="result-handoff-notice" id="result-handoff-unavailable">{handoffUnavailableReason}</span>}
-                  {mode === 'decrypt' && output && <button className="secondary-button" type="button" onClick={() => { setRevealed((current) => !current); setError('') }}>{revealed ? 'Hide result' : 'Reveal result'}</button>}
-                  <button className="secondary-button" type="button" onClick={useResultAsInput} aria-describedby={output && !handoffEligible ? 'result-handoff-unavailable' : undefined} disabled={busy || !canUseResultAsInput}>Use result as input</button>
+                  {mode === 'decrypt' && output && <button className="secondary-button" type="button" disabled={workbenchLocked} onClick={() => { if (signingOut) return; setRevealed((current) => !current); setError('') }}>{revealed ? 'Hide result' : 'Reveal result'}</button>}
+                  <button className="secondary-button" type="button" onClick={useResultAsInput} aria-describedby={output && !handoffEligible ? 'result-handoff-unavailable' : undefined} disabled={!canUseResultAsInput}>Use result as input</button>
                   <button className="secondary-button" type="button" onClick={() => void copyResult()} disabled={copyDisabled}>{copyLabel}</button>
                 </div>
               </div>
@@ -891,6 +959,21 @@ function redirectToLogin(): void {
   if (typeof window === 'undefined') return
   const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`
   window.location.assign(`/auth/login?return_to=${encodeURIComponent(returnTo || '/')}`)
+}
+
+function logoutErrorMessage(reason: unknown): string {
+  if (reason instanceof ApiError) {
+    if (reason.code === 'logout_timeout') {
+      return 'Sign-out was not confirmed. The request timed out. Retry sign-out.'
+    }
+    if (reason.status === 503 || reason.code === 'not_ready') {
+      return 'Sign-out was not confirmed. The service is unavailable. Retry sign-out.'
+    }
+    if (reason.code === 'network_error') {
+      return 'Sign-out was not confirmed. The service could not be reached. Retry sign-out.'
+    }
+  }
+  return 'Sign-out was not confirmed. Retry sign-out.'
 }
 
 function safeErrorMessage(reason: unknown, fallback: string, context: 'session' | 'profiles' | 'operation' = 'operation'): string {

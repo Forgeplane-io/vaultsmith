@@ -9,6 +9,8 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
     ...init,
   })
 
+const emptyResponse = (status = 204) => new Response(null, { status })
+
 const stalledJSONResponse = (signal: AbortSignal | null | undefined, onBodyStart: () => void) => ({
   ok: true,
   status: 200,
@@ -120,7 +122,7 @@ describe('API client', () => {
       authRequired: true,
       email: 'operator@example.test',
       csrfToken: 'csrf-fixture',
-    })).mockImplementationOnce(async () => jsonResponse({ ok: true }))
+    })).mockImplementationOnce(async () => emptyResponse())
 
     await api.fetchSession()
     await api.logout()
@@ -130,6 +132,177 @@ describe('API client', () => {
       credentials: 'same-origin',
       headers: { Accept: 'application/json', 'X-CSRF-Token': 'csrf-fixture' },
     }))
+  })
+
+  it('confirms a non-204 logout response only after an anonymous session check', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ accepted: true }))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: false, authRequired: true, csrfToken: '' }))
+
+    await expect(api.logout()).resolves.toBeUndefined()
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/auth/logout', expect.objectContaining({ method: 'POST' }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/session', expect.objectContaining({ method: 'GET' }))
+  })
+
+  it('rejects a non-204 logout response when the session remains authenticated', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ accepted: true }))
+      .mockResolvedValueOnce(jsonResponse({
+        authenticated: true,
+        authRequired: true,
+        email: 'operator@example.test',
+        csrfToken: 'csrf-fixture',
+      }))
+
+    await expect(api.logout()).rejects.toMatchObject({
+      name: 'ApiError',
+      code: 'logout_unconfirmed',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('settles a stalled logout locally after ten seconds and ignores its late response', async () => {
+    vi.useFakeTimers()
+    let resolveLogout!: (response: Response) => void
+    let logoutSignal: AbortSignal | null | undefined
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+      logoutSignal = init?.signal
+      return new Promise<Response>((resolve) => {
+        resolveLogout = resolve
+      })
+    })
+
+    const logoutRequest = api.logout()
+    const outcome = logoutRequest.then(
+      () => ({ state: 'resolved' as const, reason: null }),
+      (reason: unknown) => ({ state: 'rejected' as const, reason }),
+    )
+    let settled = false
+    void outcome.then(() => { settled = true })
+
+    try {
+      await vi.advanceTimersByTimeAsync(9_999)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(settled).toBe(true)
+      expect(logoutSignal?.aborted).toBe(true)
+      expect(await outcome).toMatchObject({
+        state: 'rejected',
+        reason: { name: 'ApiError', code: 'logout_timeout' },
+      })
+
+      resolveLogout(jsonResponse({ accepted: true }))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(await outcome).toMatchObject({
+        state: 'rejected',
+        reason: { code: 'logout_timeout' },
+      })
+      expect(fetchMock).toHaveBeenCalledOnce()
+    } finally {
+      resolveLogout?.(emptyResponse())
+      await Promise.resolve()
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds a stalled anonymous-session verification within the same logout timeout', async () => {
+    vi.useFakeTimers()
+    let resolveVerification: ((response: Response) => void) | undefined
+    let verificationSignal: AbortSignal | null | undefined
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ accepted: true }))
+      .mockImplementationOnce((_input, init) => {
+        verificationSignal = init?.signal
+        return new Promise<Response>((resolve) => {
+          resolveVerification = resolve
+        })
+      })
+
+    const outcome = api.logout().then(
+      () => ({ state: 'resolved' as const, reason: null }),
+      (reason: unknown) => ({ state: 'rejected' as const, reason }),
+    )
+
+    try {
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(await outcome).toMatchObject({
+        state: 'rejected',
+        reason: { name: 'ApiError', code: 'logout_timeout' },
+      })
+      expect(verificationSignal?.aborted).toBe(true)
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+
+      resolveVerification?.(jsonResponse({ authenticated: false, authRequired: true, csrfToken: '' }))
+      await Promise.resolve()
+      expect(await outcome).toMatchObject({
+        state: 'rejected',
+        reason: { code: 'logout_timeout' },
+      })
+    } finally {
+      resolveVerification?.(jsonResponse({ authenticated: false, authRequired: true, csrfToken: '' }))
+      await Promise.resolve()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not let a timed-out verification restore CSRF authority after a newer logout succeeds', async () => {
+    vi.useFakeTimers()
+    let resolveLateVerification: ((response: Response) => void) | undefined
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({
+        authenticated: true,
+        authRequired: true,
+        email: 'operator@example.test',
+        csrfToken: 'csrf-current',
+      }))
+      .mockResolvedValueOnce(jsonResponse({ accepted: true }))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveLateVerification = resolve
+      }))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(jsonResponse({ value: 'vault-output' }))
+
+    try {
+      await api.fetchSession()
+      const firstLogout = api.logout()
+      const timedOut = expect(firstLogout).rejects.toMatchObject({ name: 'ApiError', code: 'logout_timeout' })
+      await vi.advanceTimersByTimeAsync(10_000)
+      await timedOut
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+
+      await expect(api.logout()).resolves.toBeUndefined()
+      resolveLateVerification?.(jsonResponse({
+        authenticated: false,
+        authRequired: true,
+        csrfToken: 'csrf-late',
+      }))
+      await vi.advanceTimersByTimeAsync(0)
+
+      await api.runOperation({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })
+      expect(fetchMock).toHaveBeenNthCalledWith(5, '/api/v1/operations', expect.objectContaining({
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    } finally {
+      resolveLateVerification?.(jsonResponse({ authenticated: false, authRequired: true, csrfToken: '' }))
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not retry a failed logout request', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(
+      { error: { code: 'not_ready', message: 'private service detail' } },
+      { status: 503 },
+    ))
+
+    await expect(api.logout()).rejects.toMatchObject({
+      name: 'ApiError',
+      code: 'not_ready',
+      status: 503,
+    })
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 
   it('turns API errors into safe typed errors', async () => {

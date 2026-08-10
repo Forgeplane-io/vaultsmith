@@ -11,6 +11,8 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
     ...init,
   })
 
+const emptyResponse = (status = 204) => new Response(null, { status })
+
 const defaultProfiles = [{ id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true } }]
 const sourceAndDestinationProfiles = [
   ...defaultProfiles,
@@ -26,10 +28,22 @@ function profilesResponse(profiles = defaultProfiles) {
 }
 
 const sessionResponse = () => jsonResponse({ authenticated: false, authRequired: false, csrfToken: '' })
+const authenticatedSessionResponse = () => jsonResponse({
+  authenticated: true,
+  authRequired: true,
+  email: 'operator@example.test',
+  csrfToken: 'csrf-token',
+})
 
 function mockProfileLoad(profiles = defaultProfiles) {
   return vi.spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(sessionResponse())
+    .mockResolvedValueOnce(profilesResponse(profiles))
+}
+
+function mockAuthenticatedProfileLoad(profiles = defaultProfiles) {
+  return vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(authenticatedSessionResponse())
     .mockResolvedValueOnce(profilesResponse(profiles))
 }
 
@@ -53,11 +67,8 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('keeps the user on an explicit signed-out screen after logout', async () => {
-    vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(jsonResponse({ authenticated: true, authRequired: true, email: 'user@example.test', csrfToken: 'csrf-token' }))
-      .mockResolvedValueOnce(profilesResponse())
-      .mockResolvedValueOnce(jsonResponse({}))
+    mockAuthenticatedProfileLoad()
+      .mockResolvedValueOnce(emptyResponse())
     const user = userEvent.setup()
 
     render(<App />)
@@ -66,6 +77,263 @@ describe('Vaultsmith operator experience', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Signed out' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sign in again' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument()
+  })
+
+  it('clears revealed plaintext immediately and keeps sign-out single-flight', async () => {
+    let resolveLogout!: (response: Response) => void
+    let resolveResultCopy!: () => void
+    const fetchMock = mockAuthenticatedProfileLoad()
+      .mockResolvedValueOnce(jsonResponse({ value: 'decrypted-secret' }))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveLogout = resolve
+      }))
+    const user = userEvent.setup()
+    const clipboard = { writeText: vi.fn(() => new Promise<void>((resolve) => { resolveResultCopy = resolve })) }
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard })
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    await user.type(input, pastedVault)
+    await user.click(screen.getByRole('button', { name: 'Decrypt' }))
+    await user.click(await screen.findByRole('button', { name: 'Reveal result' }))
+    expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('decrypted-secret')
+    await user.click(screen.getByRole('button', { name: 'Copy result' }))
+    expect(clipboard.writeText).toHaveBeenCalledWith('decrypted-secret')
+
+    const signOut = screen.getByRole('button', { name: 'Sign out' })
+    act(() => {
+      fireEvent.click(signOut)
+      fireEvent.click(signOut)
+    })
+
+    expect(screen.getByRole('button', { name: 'Signing out…' })).toBeDisabled()
+    expect(screen.getByRole('form', { name: 'Vault operation form' })).toHaveAttribute('aria-busy', 'true')
+    expect(input).toBeDisabled()
+    expect(input).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('')
+    expect(screen.queryByRole('button', { name: 'Reveal result' })).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Environment' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toBeDisabled()
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => path === '/auth/logout')).toHaveLength(1))
+
+    await act(async () => { resolveResultCopy() })
+    expect(screen.getByRole('status')).toHaveTextContent('Signing out…')
+    expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('')
+
+    resolveLogout(emptyResponse())
+    expect(await screen.findByRole('heading', { level: 1, name: 'Signed out' })).toBeInTheDocument()
+  })
+
+  it('clears snippet state and ignores a pending clipboard callback when sign-out fails', async () => {
+    const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
+    let rejectLateCopy!: (reason?: unknown) => void
+    const fetchMock = mockAuthenticatedProfileLoad()
+      .mockResolvedValueOnce(jsonResponse({ value: ciphertext }))
+      .mockResolvedValueOnce(jsonResponse(
+        { error: { code: 'not_ready', message: 'private service detail' } },
+        { status: 503 },
+      ))
+    const clipboard = {
+      writeText: vi.fn()
+        .mockRejectedValueOnce(new Error('first clipboard failure'))
+        .mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+          rejectLateCopy = reject
+        })),
+    }
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard })
+
+    render(<App />)
+    const input = await findReadyValueInput()
+    await user.type(input, 'fixture-value')
+    await user.click(screen.getByRole('button', { name: 'Encrypt' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue(ciphertext))
+    await user.type(screen.getByRole('textbox', { name: 'Ansible variable name' }), 'app_secret')
+    const copySnippet = screen.getByRole('button', { name: 'Copy Ansible snippet' })
+    await user.click(copySnippet)
+    expect(await screen.findByRole('textbox', { name: 'Ansible snippet to copy manually' })).toBeInTheDocument()
+    await user.click(copySnippet)
+
+    await user.click(screen.getByRole('button', { name: 'Sign out' }))
+
+    expect(input).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+    expect(screen.queryByRole('textbox', { name: 'Ansible variable name' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Ansible snippet to copy manually' })).not.toBeInTheDocument()
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Sign-out was not confirmed. The service is unavailable. Retry sign-out.')
+    expect(alert).not.toHaveTextContent('private service detail')
+    expect(screen.getByRole('button', { name: 'Retry sign out' })).toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/auth/logout')).toHaveLength(1)
+
+    await act(async () => {
+      rejectLateCopy(new Error('late clipboard failure'))
+    })
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Sign-out was not confirmed')
+    expect(screen.queryByRole('textbox', { name: 'Ansible snippet to copy manually' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('aborts an active operation and ignores its late completion when sign-out starts', async () => {
+    let resolveOperation!: (response: Response) => void
+    let resolveLogout: ((response: Response) => void) | undefined
+    let operationSignal: AbortSignal | null | undefined
+    const operationResponse = new Promise<Response>((resolve) => {
+      resolveOperation = resolve
+    })
+    const fetchMock = mockAuthenticatedProfileLoad()
+      .mockImplementationOnce((_input, init) => {
+        operationSignal = init?.signal
+        return operationResponse
+      })
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveLogout = resolve
+      }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    const input = await findReadyValueInput()
+    await user.type(input, 'fixture-value')
+    await user.click(screen.getByRole('button', { name: 'Encrypt' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Encrypting…')
+
+    const signOut = screen.getByRole('button', { name: 'Sign out' })
+    try {
+      expect(signOut).toBeEnabled()
+      await user.click(signOut)
+      expect(operationSignal?.aborted).toBe(true)
+      expect(input).toHaveValue('')
+      expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+      expect(fetchMock.mock.calls.filter(([path]) => path === '/auth/logout')).toHaveLength(1)
+
+      resolveLogout?.(jsonResponse(
+        { error: { code: 'not_ready', message: 'private service detail' } },
+        { status: 503 },
+      ))
+      expect(await screen.findByRole('alert')).toHaveTextContent('Sign-out was not confirmed')
+
+      resolveOperation(jsonResponse({ value: 'late-vault-output' }))
+      await act(async () => { await Promise.resolve() })
+      expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+      expect(screen.queryByDisplayValue('late-vault-output')).not.toBeInTheDocument()
+    } finally {
+      resolveLogout?.(emptyResponse())
+      resolveOperation(emptyResponse())
+    }
+  })
+
+  it('times out an unconfirmed sign-out, ignores its late response, and retries manually', async () => {
+    let resolveLateLogout!: (response: Response) => void
+    let logoutSignal: AbortSignal | null | undefined
+    const fetchMock = mockAuthenticatedProfileLoad()
+      .mockImplementationOnce((_input, init) => {
+        logoutSignal = init?.signal
+        return new Promise<Response>((resolve) => {
+          resolveLateLogout = resolve
+        })
+      })
+      .mockResolvedValueOnce(emptyResponse())
+
+    render(<App />)
+    const input = await findReadyValueInput()
+    fireEvent.change(input, { target: { value: 'fixture-value' } })
+    vi.useFakeTimers()
+
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+      expect(input).toHaveValue('')
+      expect(screen.getByRole('button', { name: 'Signing out…' })).toBeDisabled()
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+
+      expect(logoutSignal?.aborted).toBe(true)
+      expect(screen.queryByRole('heading', { name: 'Signed out' })).not.toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent('Sign-out was not confirmed. The request timed out. Retry sign-out.')
+      expect(fetchMock.mock.calls.filter(([path]) => path === '/auth/logout')).toHaveLength(1)
+
+      resolveLateLogout(emptyResponse())
+      await act(async () => { await Promise.resolve() })
+      expect(screen.queryByRole('heading', { name: 'Signed out' })).not.toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent('Sign-out was not confirmed')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry sign out' }))
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      expect(screen.getByRole('heading', { level: 1, name: 'Signed out' })).toBeInTheDocument()
+      expect(fetchMock.mock.calls.filter(([path]) => path === '/auth/logout')).toHaveLength(2)
+    } finally {
+      resolveLateLogout?.(emptyResponse())
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows the signed-out screen after a verified anonymous session', async () => {
+    const fetchMock = mockAuthenticatedProfileLoad()
+      .mockResolvedValueOnce(jsonResponse({ accepted: true }))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: false, authRequired: true, csrfToken: '' }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Signed out' })).toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/session')).toHaveLength(2)
+  })
+
+  it('invalidates a pending profile load when sign-out starts and ignores its late completion', async () => {
+    let resolveProfiles!: (response: Response) => void
+    let profileSignal: AbortSignal | null | undefined
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(authenticatedSessionResponse())
+      .mockImplementationOnce((_input, init) => {
+        profileSignal = init?.signal
+        return new Promise<Response>((resolve) => {
+          resolveProfiles = resolve
+        })
+      })
+      .mockResolvedValueOnce(jsonResponse(
+        { error: { code: 'not_ready', message: 'private service detail' } },
+        { status: 503 },
+      ))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    expect(profileSignal?.aborted).toBe(true)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sign-out was not confirmed')
+    resolveProfiles(profilesResponse())
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Sign-out was not confirmed')
+    expect(screen.queryByRole('option', { name: 'Development' })).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/profiles')).toHaveLength(1)
+  })
+
+  it('disables environment-load retry while sign-out is in progress', async () => {
+    let resolveLogout!: (response: Response) => void
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(authenticatedSessionResponse())
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+        resolveLogout = resolve
+      }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    const retryProfiles = await screen.findByRole('button', { name: 'Retry loading environments' })
+    await user.click(screen.getByRole('button', { name: 'Sign out' }))
+
+    expect(retryProfiles).toBeDisabled()
+    fireEvent.click(retryProfiles)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+
+    resolveLogout(jsonResponse(
+      { error: { code: 'not_ready', message: 'private service detail' } },
+      { status: 503 },
+    ))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sign-out was not confirmed')
   })
 
   it('loads a public profile label without exposing its environment name', async () => {
