@@ -21,9 +21,9 @@ Application limits:
 
 ## Use Vaultsmith
 
-### Install with Helm
+### Published release
 
-The public OCI chart is version `0.3.1`:
+The latest public OCI chart is version `0.3.1`. It predates this change and does not include the bundled Valkey dependency. Do not use it for the self-contained setup below until a release containing this change is published.
 
 ```sh
 helm upgrade --install vaultsmith \
@@ -34,13 +34,22 @@ helm upgrade --install vaultsmith \
   -f /path/to/vaultsmith-values.yaml
 ```
 
-Use `auth.mode: native` for a deployed instance. The chart includes the official Valkey chart and generates its password Secret by default, so you do not need to provision Redis or Valkey separately. Native mode still requires OIDC, a CSRF Secret, a Casbin policy, and profile-password Secrets. If NetworkPolicy is enabled, allow DNS and OIDC egress explicitly; the chart adds egress to the bundled Valkey pods. Set `valkey.enabled: false` only when using an external Redis-compatible service, then configure `auth.redis.address` and its credentials.
+### Install this change from source
+
+From the repository root, install the chart directly until the next chart release is published:
+
+```sh
+helm upgrade --install vaultsmith deploy/helm/vaultsmith \
+  --namespace vaultsmith \
+  --create-namespace \
+  -f /path/to/vaultsmith-values.yaml
+```
+
+Use `auth.mode: native` for a deployed instance. The source chart includes the official Valkey chart and generates its password Secret by default, so you do not need to provision Redis or Valkey separately. Native mode still requires OIDC, a CSRF Secret, a Casbin policy, and profile-password Secrets. If NetworkPolicy is enabled, allow DNS and OIDC egress explicitly; the chart adds egress to the bundled Valkey pods. Set `valkey.enabled: false` only when using an external Redis-compatible service, then configure `auth.redis.address` and its credentials.
 
 The chart creates `ClusterIP` Services for Vaultsmith and Valkey. Ingress and NetworkPolicy are disabled by default. Put a maintained TLS and authentication edge in front of Vaultsmith. NetworkPolicy does not authenticate HTTP callers.
 
 For the complete values example, policy format, edge boundary, verification steps, and rollback guidance, see [`docs/deployment.md`](docs/deployment.md).
-
-For a source checkout, use `deploy/helm/vaultsmith` instead of the OCI reference and omit `--version`; the source chart version is maintained separately.
 
 ### Authentication
 

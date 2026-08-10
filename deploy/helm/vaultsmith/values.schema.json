@@ -46,10 +46,17 @@
         "enabled": { "type": "boolean" },
         "nameOverride": { "type": "string" },
         "fullnameOverride": { "type": "string" },
+        "deploymentStrategy": { "type": "string", "enum": ["Recreate", "RollingUpdate"] },
+        "dataStorage": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
         "service": {
           "type": "object",
           "properties": {
-            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            "port": { "const": 6379 }
           }
         }
       }
@@ -355,6 +362,32 @@
                   "address": { "minLength": 1 }
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["valkey"],
+        "properties": {
+          "valkey": {
+            "properties": {
+              "enabled": { "const": true },
+              "dataStorage": {
+                "properties": {
+                  "enabled": { "const": true }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "valkey": {
+            "properties": {
+              "deploymentStrategy": { "const": "Recreate" }
             }
           }
         }

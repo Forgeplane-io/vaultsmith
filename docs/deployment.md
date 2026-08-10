@@ -35,11 +35,11 @@ If the issuer uses a private CA, mount a PEM bundle and set `OIDC_CA_FILE`. Do n
 
 ## Helm chart
 
-The chart creates `ClusterIP` Services for Vaultsmith and the bundled official Valkey chart. Valkey is enabled by default, uses a generated password Secret, and does not require a separately provisioned Redis service. The bundled chart requests a 1 GiB PVC by default; set `valkey.dataStorage.className` for a specific storage class or disable it for ephemeral test deployments. The chart does not create the OIDC, CSRF, or profile-password Secrets. Ingress and NetworkPolicy are disabled by default.
+The chart creates `ClusterIP` Services for Vaultsmith and the bundled official Valkey chart. Valkey is enabled by default, uses a generated password Secret, and does not require a separately provisioned Redis service. The bundled chart requests a 1 GiB PVC by default; set `valkey.dataStorage.className` for a specific storage class or disable it for ephemeral test deployments. Persistent standalone Valkey uses a `Recreate` rollout to avoid concurrent pods sharing the `ReadWriteOnce` claim. The chart does not create the OIDC, CSRF, or profile-password Secrets. Ingress and NetworkPolicy are disabled by default.
 
 ### Published chart
 
-The public OCI chart is version `0.3.1`:
+The latest public OCI chart is version `0.3.1`. It predates this change and does not include the bundled Valkey dependency. Do not use it for the self-contained setup below until a release containing this change is published.
 
 ```sh
 helm upgrade --install vaultsmith \
@@ -50,7 +50,17 @@ helm upgrade --install vaultsmith \
   -f /path/to/vaultsmith-values.yaml
 ```
 
-For a source checkout, use `deploy/helm/vaultsmith` instead of the OCI reference and omit `--version`; the source chart version is maintained separately.
+### Install this change from source
+
+From the repository root, install the chart directly until the next chart release is published:
+
+```sh
+helm upgrade --install vaultsmith deploy/helm/vaultsmith \
+  --namespace vaultsmith \
+  --create-namespace \
+  -f /path/to/vaultsmith-values.yaml \
+  --wait
+```
 
 ### Minimal native values
 
@@ -146,9 +156,7 @@ A Gateway, HTTPRoute, Ingress annotation, or NetworkPolicy object is not proof t
 3. Install or upgrade the release:
 
    ```sh
-   helm upgrade --install vaultsmith \
-     oci://ghcr.io/forgeplane-io/charts/vaultsmith \
-     --version 0.3.1 \
+   helm upgrade --install vaultsmith deploy/helm/vaultsmith \
      --namespace vaultsmith \
      --create-namespace \
      -f /path/to/vaultsmith-values.yaml \

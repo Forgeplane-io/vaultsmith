@@ -251,6 +251,7 @@ grep -Fq 'name: vaultsmith-valkey-auth' "$TMP_DIR/bundled-native-render.yaml" ||
 assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'- name: REDIS_ADDR\n              value: "vaultsmith-valkey:6379"' 'bundled Valkey address was not wired into Vaultsmith'
 assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'- name: REDIS_USERNAME\n              value: "default"' 'bundled Valkey username was not wired into Vaultsmith'
 assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'- name: REDIS_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  name: "vaultsmith-valkey-auth"\n                  key: "default"\n                  optional: false' 'bundled Valkey password Secret was not wired into Vaultsmith'
+assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'strategy:\n    type: Recreate' 'persistent bundled Valkey does not use Recreate strategy'
 assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'app.kubernetes.io/name: "valkey"\n              app.kubernetes.io/instance: "vaultsmith"\n      ports:\n        - protocol: TCP\n          port: 6379' 'bundled Valkey NetworkPolicy egress is missing'
 
 external_valkey_error='auth.redis.address must be empty when the bundled Valkey chart is enabled'
@@ -262,6 +263,8 @@ assert_render_fails_with "$external_address_error" -f "$TMP_DIR/bundled-native.y
 assert_render_fails_with 'valkey.auth.enabled must remain true when the bundled Valkey chart is enabled' -f "$TMP_DIR/valid.yaml" --set valkey.auth.enabled=false
 assert_render_fails_with 'valkey.auth.usersExistingSecret is managed by the parent chart' -f "$TMP_DIR/valid.yaml" --set valkey.auth.usersExistingSecret=other
 assert_render_fails_with 'valkey.auth.aclUsers.default.passwordKey must be default for the bundled Valkey chart' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.default.passwordKey=other
+assert_render_fails_with 'valkey/deploymentStrategy' -f "$TMP_DIR/valid.yaml" --set valkey.deploymentStrategy=RollingUpdate
+assert_render_fails_with 'valkey/service/port' -f "$TMP_DIR/valid.yaml" --set valkey.service.port=6380
 
 egress_error='networkPolicy.allowedEgress must allow OIDC and Redis egress in native mode, or disable networkPolicy explicitly'
 assert_render_fails_with "$egress_error" -f "$TMP_DIR/native.yaml" --set-json 'networkPolicy.allowedEgress=[]'

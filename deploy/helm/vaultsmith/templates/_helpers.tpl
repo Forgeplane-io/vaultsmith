@@ -103,6 +103,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if and .Values.auth.policy.data .Values.auth.policy.existingConfigMap }}{{ fail "auth.policy.data and auth.policy.existingConfigMap are mutually exclusive" }}{{ end }}
 {{- if .Values.valkey.enabled }}
 {{- if not .Values.valkey.auth.enabled }}{{ fail "valkey.auth.enabled must remain true when the bundled Valkey chart is enabled" }}{{ end }}
+{{- if and .Values.valkey.dataStorage.enabled (ne .Values.valkey.deploymentStrategy "Recreate") }}{{ fail "valkey.deploymentStrategy must be Recreate when persistent Valkey storage is enabled" }}{{ end }}
 {{- if ne .Values.valkey.auth.usersExistingSecret `{{ include "valkey.fullname" . }}-auth` }}{{ fail "valkey.auth.usersExistingSecret is managed by the parent chart" }}{{ end }}
 {{- if not (hasKey .Values.valkey.auth.aclUsers "default") }}{{ fail "valkey.auth.aclUsers.default is required for the bundled Valkey chart" }}{{ end }}
 {{- if ne .Values.valkey.auth.aclUsers.default.passwordKey "default" }}{{ fail "valkey.auth.aclUsers.default.passwordKey must be default for the bundled Valkey chart" }}{{ end }}

@@ -68,7 +68,9 @@ valkey:
   enabled: true
   service:
     type: ClusterIP
+    # The official chart currently configures the Valkey server on TCP 6379.
     port: 6379
+  deploymentStrategy: Recreate
   serviceAccount:
     automount: false
   dataStorage:

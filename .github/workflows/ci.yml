@@ -149,6 +149,8 @@ jobs:
         run: |
           set -euo pipefail
           valkey_password_digest_before="$(kubectl get secret vaultsmith-valkey-auth --namespace "$NAMESPACE" -o jsonpath='{.data.default}' | sha256sum | cut -d' ' -f1)"
+          valkey_strategy_before="$(kubectl get deployment vaultsmith-valkey --namespace "$NAMESPACE" -o jsonpath='{.spec.strategy.type}')"
+          test "$valkey_strategy_before" = Recreate
           helm upgrade "$RELEASE_NAME" deploy/helm/vaultsmith \
             --namespace "$NAMESPACE" \
             --reuse-values \
@@ -157,7 +159,9 @@ jobs:
             --wait \
             --timeout 180s
           valkey_password_digest_after="$(kubectl get secret vaultsmith-valkey-auth --namespace "$NAMESPACE" -o jsonpath='{.data.default}' | sha256sum | cut -d' ' -f1)"
+          valkey_strategy_after="$(kubectl get deployment vaultsmith-valkey --namespace "$NAMESPACE" -o jsonpath='{.spec.strategy.type}')"
           test "$valkey_password_digest_before" = "$valkey_password_digest_after"
+          test "$valkey_strategy_after" = Recreate
           deny_all_policy="$(kubectl get networkpolicy --namespace "$NAMESPACE" -o json)"
           test "$(jq '.items | length' <<<"$deny_all_policy")" -eq 1
           test "$(jq -c '.items[0].spec.ingress // []' <<<"$deny_all_policy")" = '[]'
