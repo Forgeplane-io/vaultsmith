@@ -12,10 +12,19 @@ import {
   type Session,
   utf8ByteLength,
 } from './api'
-import { formatAnsibleVaultSnippet, isValidAnsibleVariableIdentifier } from './ansibleSnippet'
+import {
+  ansibleVariableValidationMessage,
+  formatAnsibleVaultSnippet,
+  isValidAnsibleVariableIdentifier,
+} from './ansibleSnippet'
 import { normalizeVaultPaste } from './pasteHandling'
 import { inspectVaultFormat, type VaultFormatInspection } from './vaultFormat'
 import './styles.css'
+
+type CopyFeedback = {
+  tone: 'success' | 'error'
+  message: string
+}
 
 export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([])
@@ -41,6 +50,8 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('Checking session…')
   const [error, setError] = useState('')
+  const [resultCopyFeedback, setResultCopyFeedback] = useState<CopyFeedback | null>(null)
+  const [snippetCopyFeedback, setSnippetCopyFeedback] = useState<CopyFeedback | null>(null)
   const [modeNotice, setModeNotice] = useState('')
   const snippetCopyRequestRef = useRef(0)
   const resultCopyRequestRef = useRef(0)
@@ -57,13 +68,22 @@ export default function App() {
   modeRef.current = mode
   valueRef.current = value
 
-  function applyLoadedProfiles(loadedProfiles: Profile[]) {
-    const selectedMode = modeRef.current
-    const eligibleProfiles = profilesForMode(loadedProfiles, selectedMode)
+  function applyLoadedProfiles(loadedProfiles: Profile[], announceModeChange = false) {
+    const previousMode = modeRef.current
+    const nextMode = modeIsAvailable(loadedProfiles, previousMode)
+      ? previousMode
+      : preferredAvailableMode(loadedProfiles)
+    const eligibleProfiles = profilesForMode(loadedProfiles, nextMode)
     const encryptProfiles = profilesForMode(loadedProfiles, 'encrypt')
     const allowInitialSelection = initialProfileSelectionRef.current && valueRef.current.length === 0
     initialProfileSelectionRef.current = false
     setProfiles(loadedProfiles)
+    if (nextMode !== previousMode) {
+      setMode(nextMode)
+      if (announceModeChange) {
+        setModeNotice(`${operationLabel(previousMode)} is unavailable. Switched to ${operationLabel(nextMode)}.`)
+      }
+    }
     setProfileId((current) => profileIsEligible(eligibleProfiles, current)
       ? current
       : allowInitialSelection ? eligibleProfiles[0]?.id || '' : '')
@@ -82,6 +102,7 @@ export default function App() {
     setProfileLoadFailed(false)
     setProfileLoadError('')
     setLoadFailureStage(null)
+    setModeNotice('')
     setStatus(recoveringStaleSnapshot ? 'Refreshing environments…' : 'Checking session…')
     const controller = new AbortController()
     profileLoadControllerRef.current = controller
@@ -104,7 +125,7 @@ export default function App() {
       })
       .then((loadedProfiles) => {
         if (!hasAuthority() || !loadedProfiles) return
-        applyLoadedProfiles(loadedProfiles)
+        applyLoadedProfiles(loadedProfiles, recoveringStaleSnapshot)
         setProfileSnapshotValid(true)
         setRecoveringStaleCapabilities(false)
         setError('')
@@ -172,21 +193,28 @@ export default function App() {
   const workbenchLocked = busy || signingOut
   const canSubmit = profileSnapshotReady && !workbenchLocked && modeAvailable && selectedProfileEligible && selectedDestinationEligible && value.length > 0 && !overLimit
   const canClear = Boolean(value || output || ansibleVariableName)
-  const inputName = mode === 'encrypt' ? 'Value to protect' : mode === 'decrypt' ? 'Protected value to read' : 'Protected value to move'
-  const outputName = mode === 'encrypt' ? 'Protected value' : mode === 'decrypt' ? 'Decrypted value' : 'Moved protected value'
+  const inputName = mode === 'encrypt' ? 'Value to encrypt' : mode === 'decrypt' ? 'Protected value to decrypt' : 'Protected value to re-key'
+  const outputName = mode === 'encrypt' ? 'Encrypted value' : mode === 'decrypt' ? 'Decrypted value' : 'Re-keyed value'
   const modeGuidance = mode === 'encrypt'
-    ? 'Choose an environment, then enter a value.'
+    ? 'Choose an environment, then enter a value to encrypt.'
     : mode === 'decrypt'
-      ? 'Choose an environment, then paste complete protected text or a YAML !vault block.'
-      : 'Choose source and destination environments, then paste complete protected text.'
+      ? 'Choose an environment, then paste protected text or a YAML !vault block to decrypt.'
+      : 'Choose source and destination environments, then paste protected text or a YAML !vault block to re-key.'
   const shownOutput = mode === 'decrypt' && output && !revealed ? 'Decrypted value hidden' : output
+  const outputByteLength = useMemo(() => utf8ByteLength(output), [output])
   const copyDisabled = workbenchLocked || !output
   const copyLabel = mode === 'decrypt' && output && !revealed ? 'Copy without revealing' : 'Copy result'
   const canCopyAnsibleSnippet = !workbenchLocked && Boolean(output) && (mode === 'encrypt' || mode === 'rotate') && isValidAnsibleVariableIdentifier(ansibleVariableName)
+  const ansibleVariableValidation = ansibleVariableValidationMessage(ansibleVariableName)
   const handoffTargetProfileId = mode === 'rotate' ? destinationProfileId : profileId
   const handoffTargetMode: OperationMode = mode === 'decrypt' ? 'encrypt' : 'decrypt'
   const handoffEligible = profileSnapshotReady && profileIsEligible(profilesForMode(profiles, handoffTargetMode), handoffTargetProfileId)
   const canUseResultAsInput = !workbenchLocked && Boolean(output) && handoffEligible
+  const handoffLabel = mode === 'encrypt'
+    ? 'Decrypt this result'
+    : mode === 'decrypt'
+      ? 'Encrypt this result'
+      : 'Decrypt with destination environment'
   const handoffUnavailableReason = mode === 'rotate'
     ? 'The destination environment is not available for decryption.'
     : handoffTargetMode === 'decrypt'
@@ -207,10 +235,10 @@ export default function App() {
     ? 'input-byte-count vault-format-diagnostics'
     : 'input-byte-count'
   const heading = mode === 'encrypt'
-    ? 'Protect a value'
+    ? 'Encrypt a value'
     : mode === 'decrypt'
-      ? 'Read a protected value'
-      : 'Move a protected value'
+      ? 'Decrypt a protected value'
+      : 'Re-key a protected value'
 
   function invalidateOutput() {
     snippetCopyRequestRef.current += 1
@@ -218,6 +246,8 @@ export default function App() {
     setOutput('')
     setRevealed(false)
     setAnsibleSnippetFallback('')
+    setResultCopyFeedback(null)
+    setSnippetCopyFeedback(null)
     setError('')
     if (!recoveringStaleCapabilities) setStatus('')
   }
@@ -293,12 +323,14 @@ export default function App() {
     setOutput('')
     setAnsibleVariableName('')
     setAnsibleSnippetFallback('')
+    setResultCopyFeedback(null)
+    setSnippetCopyFeedback(null)
     setRevealed(false)
     setError('')
     setModeNotice('')
     setStatus(nextMode === 'decrypt'
-      ? 'Switched to decrypt mode and moved the result into the protected value input.'
-      : 'Switched to encrypt mode and moved the result into the value input.')
+      ? 'Switched to Decrypt mode and placed the result in the protected value input.'
+      : 'Switched to Encrypt mode and placed the result in the value input.')
   }
 
   function resultCopyFallbackMessage(prefix: string): string {
@@ -318,13 +350,14 @@ export default function App() {
     setProfileLoadFailed(false)
     setProfileLoadError('')
     setLoadFailureStage(null)
+    setModeNotice('')
     setError('')
     setStatus('Refreshing environments…')
 
     try {
       const loadedProfiles = await fetchProfiles(controller.signal)
       if (profileRefreshControllerRef.current !== controller || controller.signal.aborted) return
-      applyLoadedProfiles(loadedProfiles)
+      applyLoadedProfiles(loadedProfiles, true)
       setProfileSnapshotValid(true)
       setRecoveringStaleCapabilities(false)
       setStatus('Your permissions changed. Environments were refreshed; review the selection and try again.')
@@ -398,9 +431,11 @@ export default function App() {
     setError('')
     setOutput('')
     setAnsibleSnippetFallback('')
+    setResultCopyFeedback(null)
+    setSnippetCopyFeedback(null)
     setRevealed(false)
     setModeNotice('')
-    setStatus(operationMode === 'encrypt' ? 'Encrypting…' : operationMode === 'decrypt' ? 'Decrypting…' : 'Rotating…')
+    setStatus(operationProgressLabel(operationMode))
 
     try {
       const request = operationMode === 'rotate'
@@ -418,7 +453,7 @@ export default function App() {
         return
       }
       setOutput(result)
-      setStatus(operationMode === 'encrypt' ? 'Protected value ready' : operationMode === 'decrypt' ? 'Decrypted value ready' : 'Moved value ready')
+      setStatus(operationReadyLabel(operationMode))
     } catch (reason: unknown) {
       if (!isCurrentOperation()) return
       if (controller.signal.aborted) {
@@ -464,18 +499,22 @@ export default function App() {
   async function copyResult() {
     if (signingOut || !output) return
     const requestId = ++resultCopyRequestRef.current
+    setResultCopyFeedback(null)
     if (!navigator.clipboard?.writeText) {
       if (resultCopyRequestRef.current !== requestId) return
-      setError(resultCopyFallbackMessage('Clipboard access is unavailable'))
+      setResultCopyFeedback({ tone: 'error', message: resultCopyFallbackMessage('Clipboard access is unavailable') })
       return
     }
     try {
       await navigator.clipboard.writeText(output)
       if (resultCopyRequestRef.current !== requestId) return
-      setStatus(mode === 'decrypt' && !revealed ? 'Copied without revealing the value' : 'Copied')
+      setResultCopyFeedback({
+        tone: 'success',
+        message: mode === 'decrypt' && !revealed ? 'Copied without revealing the value' : 'Copied',
+      })
     } catch {
       if (resultCopyRequestRef.current !== requestId) return
-      setError(resultCopyFallbackMessage('Clipboard access was blocked'))
+      setResultCopyFeedback({ tone: 'error', message: resultCopyFallbackMessage('Clipboard access was blocked') })
     }
   }
 
@@ -483,34 +522,31 @@ export default function App() {
     if (signingOut || !output || (mode !== 'encrypt' && mode !== 'rotate') || !isValidAnsibleVariableIdentifier(ansibleVariableName)) return
 
     const requestId = ++snippetCopyRequestRef.current
+    setSnippetCopyFeedback(null)
     let snippet: string
     try {
       snippet = formatAnsibleVaultSnippet(ansibleVariableName, output)
     } catch {
       if (snippetCopyRequestRef.current !== requestId) return
       setAnsibleSnippetFallback('')
-      setStatus('')
-      setError('Could not prepare the Ansible snippet; copy the result manually')
+      setSnippetCopyFeedback({ tone: 'error', message: 'Could not prepare the Ansible snippet; copy the result manually' })
       return
     }
     if (!navigator.clipboard?.writeText) {
       if (snippetCopyRequestRef.current !== requestId) return
       setAnsibleSnippetFallback(snippet)
-      setStatus('')
-      setError('Clipboard access is unavailable; copy the Ansible snippet manually')
+      setSnippetCopyFeedback({ tone: 'error', message: 'Clipboard access is unavailable; copy the Ansible snippet manually' })
       return
     }
     try {
       await navigator.clipboard.writeText(snippet)
       if (snippetCopyRequestRef.current !== requestId) return
       setAnsibleSnippetFallback('')
-      setError('')
-      setStatus('Copied Ansible snippet')
+      setSnippetCopyFeedback({ tone: 'success', message: 'Copied Ansible snippet' })
     } catch {
       if (snippetCopyRequestRef.current !== requestId) return
       setAnsibleSnippetFallback(snippet)
-      setStatus('')
-      setError('Clipboard access was blocked; copy the Ansible snippet manually')
+      setSnippetCopyFeedback({ tone: 'error', message: 'Clipboard access was blocked; copy the Ansible snippet manually' })
     }
   }
 
@@ -537,6 +573,8 @@ export default function App() {
     setOutput('')
     setAnsibleVariableName('')
     setAnsibleSnippetFallback('')
+    setResultCopyFeedback(null)
+    setSnippetCopyFeedback(null)
     setRevealed(false)
     setModeNotice('')
   }
@@ -591,6 +629,8 @@ export default function App() {
     setOutput('')
     setAnsibleVariableName('')
     setAnsibleSnippetFallback('')
+    setResultCopyFeedback(null)
+    setSnippetCopyFeedback(null)
     setRevealed(false)
     setError('')
     if (!recoveringStaleCapabilities) setStatus('')
@@ -603,7 +643,7 @@ export default function App() {
         <header className="console-topbar">
           <div className="topbar-inner">
             <div className="brand-lockup">
-              <img className="brand-mark" src="/vaultsmith-logo.png" alt="Vaultsmith logo" width="32" height="32" />
+              <img className="brand-mark" src="/vaultsmith-logo.png" alt="" width="32" height="32" />
               <span className="brand-name">Vaultsmith</span>
             </div>
           </div>
@@ -628,7 +668,7 @@ export default function App() {
       <header className="console-topbar">
         <div className="topbar-inner">
           <div className="brand-lockup">
-            <img className="brand-mark" src="/vaultsmith-logo.png" alt="Vaultsmith logo" width="32" height="32" />
+            <img className="brand-mark" src="/vaultsmith-logo.png" alt="" width="32" height="32" />
             <span className="brand-name">Vaultsmith</span>
           </div>
           {session?.authenticated && (
@@ -651,14 +691,23 @@ export default function App() {
         </div>
 
         <section className="workbench-card" aria-label="Vault operation">
-          {status && <p className="status-line" role="status" aria-live="polite">{status}</p>}
-
-          {visibleError && (
-            <div className="error-banner" role="alert">
-              <span>{visibleError}</span>
-              {profileLoadFailed && !logoutFailed && !loadingProfiles && <button className="secondary-button" type="button" onClick={retryProfiles} disabled={workbenchLocked}>{loadFailureStage === 'session' ? 'Retry loading session' : 'Retry loading environments'}</button>}
+          <div className="global-feedback">
+            <div className="status-slot">
+              {status
+                ? <p className="status-line" role="status" aria-live="polite">{status}</p>
+                : <span className="feedback-placeholder" aria-hidden="true">&nbsp;</span>}
             </div>
-          )}
+            <div className="error-slot">
+              {visibleError
+                ? (
+                  <div className="error-banner" role="alert">
+                    <span>{visibleError}</span>
+                    {profileLoadFailed && !logoutFailed && !loadingProfiles && <button className="secondary-button" type="button" onClick={retryProfiles} disabled={workbenchLocked}>{loadFailureStage === 'session' ? 'Retry loading session' : 'Retry loading environments'}</button>}
+                  </div>
+                )
+                : <span className="feedback-placeholder" aria-hidden="true">&nbsp;</span>}
+            </div>
+          </div>
 
           <form
             className="operation-form"
@@ -720,27 +769,35 @@ export default function App() {
                 </div>
               )}
 
-              <fieldset className="mode-fieldset">
-                <legend>Operation</legend>
-                <div className="mode-switch">
-                  <button type="button" className={mode === 'encrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set encrypt mode" aria-pressed={mode === 'encrypt'} aria-describedby={profileSnapshotReady && !encryptAvailable ? 'encrypt-mode-unavailable' : undefined} onClick={() => changeMode('encrypt')} disabled={workbenchLocked || !profileSnapshotReady || !encryptAvailable}>Encrypt</button>
-                  <button type="button" className={mode === 'decrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set decrypt mode" aria-pressed={mode === 'decrypt'} aria-describedby={profileSnapshotReady && !decryptAvailable ? 'decrypt-mode-unavailable' : undefined} onClick={() => changeMode('decrypt')} disabled={workbenchLocked || !profileSnapshotReady || !decryptAvailable}>Decrypt</button>
-                  <button type="button" className={mode === 'rotate' ? 'mode-button active' : 'mode-button'} aria-label="Set rotate mode" aria-pressed={mode === 'rotate'} aria-describedby={profileSnapshotReady && !rotateAvailable ? 'rotate-mode-unavailable' : undefined} onClick={() => changeMode('rotate')} disabled={workbenchLocked || !profileSnapshotReady || !rotateAvailable}>Rotate</button>
-                </div>
-                {profileSnapshotReady && (!encryptAvailable || !decryptAvailable || !rotateAvailable) && (
-                  <div className="mode-availability-list">
-                    {!encryptAvailable && <p id="encrypt-mode-unavailable">No environments are available for encryption.</p>}
-                    {!decryptAvailable && <p id="decrypt-mode-unavailable">No environments are available for decryption.</p>}
-                    {!rotateAvailable && <p id="rotate-mode-unavailable">Rotate requires an available decrypt source and encrypt destination.</p>}
+              <div className="operation-controls">
+                <fieldset className="mode-fieldset">
+                  <legend>Operation</legend>
+                  <div className="mode-switch">
+                    <button type="button" className={mode === 'encrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set encrypt mode" aria-pressed={mode === 'encrypt'} onClick={() => changeMode('encrypt')} disabled={workbenchLocked || !profileSnapshotReady || !encryptAvailable}>Encrypt</button>
+                    <button type="button" className={mode === 'decrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set decrypt mode" aria-pressed={mode === 'decrypt'} onClick={() => changeMode('decrypt')} disabled={workbenchLocked || !profileSnapshotReady || !decryptAvailable}>Decrypt</button>
+                    <button type="button" className={mode === 'rotate' ? 'mode-button active' : 'mode-button'} aria-label="Set re-key mode" aria-pressed={mode === 'rotate'} onClick={() => changeMode('rotate')} disabled={workbenchLocked || !profileSnapshotReady || !rotateAvailable}>Re-key</button>
                   </div>
-                )}
-              </fieldset>
+                </fieldset>
+                <div className="mode-availability-list" aria-label="Operation availability">
+                  {profileSnapshotReady && (!encryptAvailable || !decryptAvailable || !rotateAvailable)
+                    ? (
+                      <>
+                        {!encryptAvailable && <p>No environments are available for encryption.</p>}
+                        {!decryptAvailable && <p>No environments are available for decryption.</p>}
+                        {!rotateAvailable && <p>Re-key requires an available decrypt source and encrypt destination.</p>}
+                      </>
+                    )
+                    : <span className="availability-placeholder" aria-hidden="true">&nbsp;</span>}
+                </div>
+              </div>
             </div>
 
-            {modeNotice && <p className="mode-notice" aria-live="polite">{modeNotice}</p>}
+            <div className="mode-notice-slot">
+              {modeNotice ? <p className="mode-notice" aria-live="polite">{modeNotice}</p> : <span className="feedback-placeholder" aria-hidden="true">&nbsp;</span>}
+            </div>
 
             <div className="editor-grid">
-              <div className="editor-card">
+              <section className="editor-card" aria-label="Input editor">
                 <div className="editor-card-header">
                   <label className="editor-caption" htmlFor="value-input">{inputName}</label>
                   <span className="editor-limit">{formatLimit(byteLimit)} max</span>
@@ -750,7 +807,7 @@ export default function App() {
                   value={value}
                   onChange={(event) => changeValue(event.target.value)}
                   onPaste={handlePaste}
-                  placeholder={mode === 'encrypt' ? 'Paste a value…' : 'Paste protected text…'}
+                  placeholder={mode === 'encrypt' ? 'Paste a value…' : 'Paste protected text or a YAML !vault block…'}
                   disabled={workbenchLocked || (!recoveringStaleCapabilities && (loadingProfiles || !modeAvailable) && value.length === 0)}
                   spellCheck={false}
                   autoComplete="off"
@@ -759,29 +816,13 @@ export default function App() {
                   aria-describedby={inputDescriptionIds}
                   rows={12}
                 />
-                <div className="editor-card-footer" id="input-byte-count"><strong>{byteLength.toLocaleString()} / {byteLimit.toLocaleString()} bytes</strong></div>
-                {formatInspection && value && (
-                  <VaultFormatDiagnostics
-                    inspection={formatInspection}
-                    selectedProfileId={profileId}
-                    selectedProfileLabel={selectedProfileLabel}
-                    suggestedProfile={suggestedDecryptProfile}
-                    suggestionDisabled={workbenchLocked}
-                    onUseSuggestedProfile={useSuggestedDecryptProfile}
-                  />
-                )}
-                <div className="panel-actions">
-                  <button className="primary-button" type="submit" disabled={!canSubmit}>
-                    {busy ? (mode === 'encrypt' ? 'Encrypting…' : mode === 'decrypt' ? 'Decrypting…' : 'Rotating…') : (mode === 'encrypt' ? 'Encrypt' : mode === 'decrypt' ? 'Decrypt' : 'Rotate')}
-                  </button>
-                  {busy && <button className="secondary-button" type="button" onClick={cancelOperation}>Cancel</button>}
-                  <button className="quiet-button" type="button" onClick={clearAll} disabled={workbenchLocked || !canClear}>Clear values</button>
-                </div>
-              </div>
+                <div className="editor-card-footer" id="input-byte-count"><span>Input size</span><strong>{byteLength.toLocaleString()} / {byteLimit.toLocaleString()} bytes</strong></div>
+              </section>
 
-              <div className="editor-card output-card">
+              <section className="editor-card output-card" aria-label="Output editor">
                 <div className="editor-card-header">
                   <label className="editor-caption" htmlFor="result-output">{outputName}</label>
+                  <span className="editor-limit">Result</span>
                 </div>
                 <textarea
                   id="result-output"
@@ -795,6 +836,27 @@ export default function App() {
                   className={mode === 'decrypt' && output && !revealed ? 'masked-output' : ''}
                   placeholder="No result yet"
                 />
+                <div className="editor-card-footer" id="output-byte-count"><span>Result size</span><strong>{outputByteLength.toLocaleString()} bytes</strong></div>
+              </section>
+            </div>
+
+            <div className="editor-aux-grid">
+              <div className="auxiliary-slot input-auxiliary-slot">
+                {formatInspection && value
+                  ? (
+                    <VaultFormatDiagnostics
+                      inspection={formatInspection}
+                      selectedProfileId={profileId}
+                      selectedProfileLabel={selectedProfileLabel}
+                      suggestedProfile={suggestedDecryptProfile}
+                      suggestionDisabled={workbenchLocked}
+                      onUseSuggestedProfile={useSuggestedDecryptProfile}
+                    />
+                  )
+                  : <span className="auxiliary-placeholder" aria-hidden="true">&nbsp;</span>}
+              </div>
+
+              <div className="auxiliary-slot output-auxiliary-slot">
                 {output && (mode === 'encrypt' || mode === 'rotate') && (
                   <div className="snippet-controls">
                     <div className="field-label">
@@ -806,6 +868,7 @@ export default function App() {
                           snippetCopyRequestRef.current += 1
                           setAnsibleVariableName(event.target.value)
                           setAnsibleSnippetFallback('')
+                          setSnippetCopyFeedback(null)
                           setStatus('')
                           if (error) setError('')
                         }}
@@ -818,12 +881,13 @@ export default function App() {
                         autoCorrect="off"
                         autoCapitalize="off"
                         aria-describedby="ansible-variable-name-help"
-                        aria-invalid={ansibleVariableName.length > 0 && !isValidAnsibleVariableIdentifier(ansibleVariableName)}
+                        aria-invalid={Boolean(ansibleVariableValidation)}
                         disabled={workbenchLocked}
                       />
-                      <span className="field-help" id="ansible-variable-name-help">Letters, numbers, and underscores; start with a letter or underscore. Reserved Ansible names are not allowed.</span>
+                      <span className="field-help" id="ansible-variable-name-help">{ansibleVariableValidation || 'Use letters, numbers, and underscores. Start with a letter or underscore. Reserved Ansible names are not allowed.'}</span>
                     </div>
                     <button className="secondary-button" type="button" onClick={() => void copyAnsibleSnippet()} disabled={!canCopyAnsibleSnippet}>Copy Ansible snippet</button>
+                    {snippetCopyFeedback && <span className={`copy-feedback ${snippetCopyFeedback.tone}`} role={snippetCopyFeedback.tone === 'error' ? 'alert' : 'status'}>{snippetCopyFeedback.message}</span>}
                   </div>
                 )}
                 {ansibleSnippetFallback && (
@@ -840,12 +904,25 @@ export default function App() {
                     <span className="field-help" id="ansible-snippet-fallback-help">Clipboard access failed. Select this formatted snippet and copy it manually.</span>
                   </div>
                 )}
-                <div className="panel-actions output-actions">
-                  {output && !handoffEligible && <span className="result-handoff-notice" id="result-handoff-unavailable">{handoffUnavailableReason}</span>}
-                  {mode === 'decrypt' && output && <button className="secondary-button" type="button" disabled={workbenchLocked} onClick={() => { if (signingOut) return; setRevealed((current) => !current); setError('') }}>{revealed ? 'Hide result' : 'Reveal result'}</button>}
-                  <button className="secondary-button" type="button" onClick={useResultAsInput} aria-describedby={output && !handoffEligible ? 'result-handoff-unavailable' : undefined} disabled={!canUseResultAsInput}>Use result as input</button>
-                  <button className="secondary-button" type="button" onClick={() => void copyResult()} disabled={copyDisabled}>{copyLabel}</button>
-                </div>
+                {!output || (mode !== 'encrypt' && mode !== 'rotate') ? <span className="auxiliary-placeholder" aria-hidden="true">&nbsp;</span> : null}
+              </div>
+            </div>
+
+            <div className="editor-actions-grid">
+              <div className="panel-actions input-actions">
+                <button className="primary-button" type="submit" disabled={!canSubmit}>
+                  {busy ? operationProgressLabel(mode) : operationLabel(mode)}
+                </button>
+                {busy && <button className="secondary-button" type="button" onClick={cancelOperation}>Cancel</button>}
+                <button className="quiet-button" type="button" onClick={clearAll} disabled={workbenchLocked || !canClear}>Clear values</button>
+              </div>
+
+              <div className="panel-actions output-actions">
+                {output && !handoffEligible && <span className="result-handoff-notice" id="result-handoff-unavailable">{handoffUnavailableReason}</span>}
+                {mode === 'decrypt' && output && <button className="secondary-button" type="button" disabled={workbenchLocked} onClick={() => { if (signingOut) return; setRevealed((current) => !current); setError(''); setResultCopyFeedback(null) }}>{revealed ? 'Hide result' : 'Reveal result'}</button>}
+                <button className="secondary-button" type="button" onClick={useResultAsInput} aria-describedby={output && !handoffEligible ? 'result-handoff-unavailable' : undefined} disabled={!canUseResultAsInput}>{handoffLabel}</button>
+                <button className="secondary-button" type="button" onClick={() => void copyResult()} disabled={copyDisabled}>{copyLabel}</button>
+                {resultCopyFeedback && <span className={`copy-feedback ${resultCopyFeedback.tone}`} role={resultCopyFeedback.tone === 'error' ? 'alert' : 'status'}>{resultCopyFeedback.message}</span>}
               </div>
             </div>
           </form>
@@ -853,6 +930,32 @@ export default function App() {
       </main>
     </div>
   )
+}
+
+function operationLabel(mode: OperationMode): string {
+  return mode === 'encrypt' ? 'Encrypt' : mode === 'decrypt' ? 'Decrypt' : 'Re-key'
+}
+
+function operationProgressLabel(mode: OperationMode): string {
+  return mode === 'encrypt' ? 'Encrypting…' : mode === 'decrypt' ? 'Decrypting…' : 'Re-keying…'
+}
+
+function operationReadyLabel(mode: OperationMode): string {
+  return mode === 'encrypt' ? 'Encrypted value ready' : mode === 'decrypt' ? 'Decrypted value ready' : 'Re-keyed value ready'
+}
+
+function modeIsAvailable(profiles: Profile[], mode: OperationMode): boolean {
+  if (mode === 'rotate') {
+    return profilesForMode(profiles, 'encrypt').length > 0 && profilesForMode(profiles, 'decrypt').length > 0
+  }
+  return profilesForMode(profiles, mode).length > 0
+}
+
+function preferredAvailableMode(profiles: Profile[]): OperationMode {
+  if (modeIsAvailable(profiles, 'encrypt')) return 'encrypt'
+  if (modeIsAvailable(profiles, 'decrypt')) return 'decrypt'
+  if (modeIsAvailable(profiles, 'rotate')) return 'rotate'
+  return 'encrypt'
 }
 
 function profilesForMode(profiles: Profile[], mode: OperationMode): Profile[] {
@@ -997,12 +1100,12 @@ function safeErrorMessage(reason: unknown, fallback: string, context: 'session' 
 function operationErrorMessage(reason: unknown, mode: OperationMode): string {
   if (reason instanceof ApiError && reason.code === 'operation_failed') {
     if (mode === 'decrypt') {
-      return 'Could not read this value. Check the selected environment and paste complete protected text.'
+      return 'Could not decrypt this value. Check the selected environment and paste protected text or a YAML !vault block.'
     }
     if (mode === 'rotate') {
-      return 'Could not move this value. Check both selected environments and paste complete protected text.'
+      return 'Could not re-key this value. Check both selected environments and paste protected text or a YAML !vault block.'
     }
-    return 'Could not protect this value. Check the selected environment and try again.'
+    return 'Could not encrypt this value. Check the selected environment and try again.'
   }
   return safeErrorMessage(reason, 'Value operation failed')
 }

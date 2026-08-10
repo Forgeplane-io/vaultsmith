@@ -40,6 +40,15 @@ export function isValidAnsibleVariableIdentifier(identifier: string): boolean {
   return match?.[0] === identifier && !RESERVED_ANSIBLE_VARIABLE_NAMES.has(identifier)
 }
 
+export function ansibleVariableValidationMessage(identifier: string): string {
+  if (!identifier) return ''
+  if (!/^[A-Za-z_]/u.test(identifier)) return 'Start with a letter or underscore.'
+  if (identifier.includes('-')) return 'Variable names cannot contain hyphens.'
+  if (!/^[A-Za-z0-9_]+$/u.test(identifier)) return 'Use only letters, numbers, and underscores.'
+  if (RESERVED_ANSIBLE_VARIABLE_NAMES.has(identifier)) return 'This name is reserved by Ansible.'
+  return ''
+}
+
 /**
  * Formats raw ciphertext without parsing or normalizing it.
  *
