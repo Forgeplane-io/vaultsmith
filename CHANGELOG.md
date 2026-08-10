@@ -2,6 +2,13 @@
 
 All notable changes to Vaultsmith are documented here. Release Please maintains this file from Conventional Commits.
 
+## [0.3.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.2.1...v0.3.0) (2026-08-10)
+
+
+### Features
+
+* **ui:** add Vault ID environment selection ([0e45fb5](https://github.com/Forgeplane-io/vaultsmith/commit/0e45fb55dad38e80bec6de78d6df59b77b25843e))
+
 ## [0.2.1](https://github.com/Forgeplane-io/vaultsmith/compare/v0.2.0...v0.2.1) (2026-08-09)
 
 
