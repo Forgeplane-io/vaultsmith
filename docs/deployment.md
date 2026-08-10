@@ -35,16 +35,16 @@ If the issuer uses a private CA, mount a PEM bundle and set `OIDC_CA_FILE`. Do n
 
 ## Helm chart
 
-The chart creates a `ClusterIP` Service. Ingress and NetworkPolicy are disabled by default. The chart does not create application Secrets.
+The chart creates `ClusterIP` Services for Vaultsmith and the bundled official Valkey chart. Valkey is enabled by default, uses a generated password Secret, and does not require a separately provisioned Redis service. The bundled chart requests a 1 GiB PVC by default; set `valkey.dataStorage.className` for a specific storage class or disable it for ephemeral test deployments. Persistent standalone Valkey uses a `Recreate` rollout to avoid concurrent pods sharing the `ReadWriteOnce` claim. The chart does not create the OIDC, CSRF, or profile-password Secrets. Ingress and NetworkPolicy are disabled by default.
 
 ### Published chart
 
-The public OCI chart is version `0.3.0`:
+The public OCI chart is version `0.3.1`:
 
 ```sh
 helm upgrade --install vaultsmith \
   oci://ghcr.io/forgeplane-io/charts/vaultsmith \
-  --version 0.3.0 \
+  --version 0.3.1 \
   --namespace vaultsmith \
   --create-namespace \
   -f /path/to/vaultsmith-values.yaml
@@ -71,7 +71,6 @@ auth:
     redirectURL: https://vault.example.test/auth/callback
     publicBaseURL: https://vault.example.test
   redis:
-    address: redis.example.test:6379
     keyPrefix: "vaultsmith:"
   policy:
     existingConfigMap: vaultsmith-policy
@@ -87,7 +86,7 @@ secret:
   existingSecret: vaultsmith-passwords
 ```
 
-Create the referenced Secret and policy ConfigMap before installing. Each `passwordSecretKey` must exist in `secret.existingSecret`.
+Create the referenced application Secret and policy ConfigMap before installing. Each `passwordSecretKey` must exist in `secret.existingSecret`. The bundled Valkey service and password Secret are created by the chart. Set `valkey.enabled: false` and configure `auth.redis.address` and its credentials when using an external Redis-compatible service.
 
 ### Casbin policy
 
@@ -112,7 +111,7 @@ For native mode, if `networkPolicy.enabled` is true, provide `networkPolicy.allo
 
 - Cluster DNS over UDP and TCP port 53.
 - The OIDC issuer over TCP port 443.
-- Redis on its configured port, commonly TCP 6379.
+- Redis on its configured port, commonly TCP 6379. The bundled Valkey egress rule is added automatically; provide this rule when `valkey.enabled: false`.
 
 The chart rejects native mode with an enabled NetworkPolicy and an empty egress list. Disabling NetworkPolicy is explicit unrestricted egress; otherwise use destination selectors or narrow CIDRs for the actual OIDC and Redis endpoints. Do not copy a broad placeholder CIDR into production.
 
@@ -135,7 +134,7 @@ A Gateway, HTTPRoute, Ingress annotation, or NetworkPolicy object is not proof t
 
 ## Deploy and verify
 
-1. Create the namespace, application Secrets, Redis, OIDC client, and policy source.
+1. Create the namespace, application Secrets, OIDC client, and policy source. The chart creates Valkey unless `valkey.enabled` is false.
 2. Render and lint the exact values file:
 
    ```sh
@@ -149,7 +148,7 @@ A Gateway, HTTPRoute, Ingress annotation, or NetworkPolicy object is not proof t
    ```sh
    helm upgrade --install vaultsmith \
      oci://ghcr.io/forgeplane-io/charts/vaultsmith \
-     --version 0.3.0 \
+     --version 0.3.1 \
      --namespace vaultsmith \
      --create-namespace \
      -f /path/to/vaultsmith-values.yaml \

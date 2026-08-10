@@ -9,7 +9,7 @@ Vaultsmith is a web UI and HTTP API for encrypting, decrypting, and re-keying An
 - Re-key a value from one profile to another.
 - Copy an Ansible `!vault` variable snippet from the result.
 
-The server reads vault passwords from environment variables. It does not persist submitted values or accept file uploads. Native mode stores only an opaque, HTTP-only session cookie in the browser; passwords and plaintext are not stored there. Request bodies are not logged.
+The server reads vault passwords from environment variables. It does not persist submitted values or accept file uploads. Native mode uses an opaque, HTTP-only session cookie and a separate readable CSRF cookie; passwords and plaintext are not stored in browser state. Request bodies are not logged.
 
 Application limits:
 
@@ -23,20 +23,20 @@ Application limits:
 
 ### Install with Helm
 
-The public OCI chart is version `0.3.0`:
+The public OCI chart is version `0.3.1`:
 
 ```sh
 helm upgrade --install vaultsmith \
   oci://ghcr.io/forgeplane-io/charts/vaultsmith \
-  --version 0.3.0 \
+  --version 0.3.1 \
   --namespace vaultsmith \
   --create-namespace \
   -f /path/to/vaultsmith-values.yaml
 ```
 
-Use `auth.mode: native` for a deployed instance. Native mode requires OIDC, Redis, a CSRF Secret, a Casbin policy, and profile-password Secrets. Create those referenced resources before installing. If NetworkPolicy is enabled, allow DNS, OIDC, and Redis egress explicitly.
+Use `auth.mode: native` for a deployed instance. The chart includes the official Valkey chart and generates its password Secret by default, so you do not need to provision Redis or Valkey separately. Native mode still requires OIDC, a CSRF Secret, a Casbin policy, and profile-password Secrets. If NetworkPolicy is enabled, allow DNS and OIDC egress explicitly; the chart adds egress to the bundled Valkey pods. Set `valkey.enabled: false` only when using an external Redis-compatible service, then configure `auth.redis.address` and its credentials.
 
-The chart creates a `ClusterIP` Service. Ingress and NetworkPolicy are disabled by default. Put a maintained TLS and authentication edge in front of the Service. NetworkPolicy does not authenticate HTTP callers.
+The chart creates `ClusterIP` Services for Vaultsmith and Valkey. Ingress and NetworkPolicy are disabled by default. Put a maintained TLS and authentication edge in front of Vaultsmith. NetworkPolicy does not authenticate HTTP callers.
 
 For the complete values example, policy format, edge boundary, verification steps, and rollback guidance, see [`docs/deployment.md`](docs/deployment.md).
 

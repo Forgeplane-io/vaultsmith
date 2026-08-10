@@ -40,6 +40,27 @@
         "existingSecret": { "type": "string" }
       }
     },
+    "valkey": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "nameOverride": { "type": "string" },
+        "fullnameOverride": { "type": "string" },
+        "deploymentStrategy": { "type": "string", "enum": ["Recreate", "RollingUpdate"] },
+        "dataStorage": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "port": { "const": 6379 }
+          }
+        }
+      }
+    },
     "serviceAccount": {
       "type": "object",
       "properties": {
@@ -264,9 +285,7 @@
                 }
               },
               "redis": {
-                "required": ["address", "keyPrefix"],
                 "properties": {
-                  "address": { "minLength": 1 },
                   "keyPrefix": { "minLength": 1 }
                 }
               },
@@ -316,5 +335,63 @@
         "required": ["existingSecret"]
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["valkey"],
+        "properties": {
+          "auth": {
+            "properties": {
+              "mode": { "const": "native" }
+            }
+          },
+          "valkey": {
+            "properties": {
+              "enabled": { "const": false }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "auth": {
+            "properties": {
+              "redis": {
+                "properties": {
+                  "address": { "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["valkey"],
+        "properties": {
+          "valkey": {
+            "properties": {
+              "enabled": { "const": true },
+              "dataStorage": {
+                "properties": {
+                  "enabled": { "const": true }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "valkey": {
+            "properties": {
+              "deploymentStrategy": { "const": "Recreate" }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

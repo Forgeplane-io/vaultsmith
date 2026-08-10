@@ -4,3 +4,9 @@ description: A UI for Ansible Vault 1.1/AES256 values
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+
+dependencies:
+  - name: valkey
+    version: 0.11.0
+    repository: oci://ghcr.io/valkey-io/valkey-helm
+    condition: valkey.enabled
