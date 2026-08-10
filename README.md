@@ -9,9 +9,9 @@ Vaultsmith is a web UI and HTTP API for encrypting, decrypting, and re-keying An
 - Re-key a value from one profile to another.
 - Copy an Ansible `!vault` variable snippet from the result.
 
-The server reads vault passwords from environment variables. Vaultsmith does not persist submitted values, accept file uploads, use persistent browser storage, or log request bodies.
+The server reads vault passwords from environment variables. It does not persist submitted values, accept file uploads, use persistent browser storage, or log request bodies.
 
-Limits:
+Application limits:
 
 - Encrypt input: 1 MiB of UTF-8 plaintext.
 - Decrypt and re-key input: 5 MiB of UTF-8 Vault text.
@@ -29,7 +29,7 @@ Requirements:
 
 `ansible-vault` is not required at runtime. The optional compatibility test uses it when available.
 
-Build the frontend, then start a local development server in `off` mode:
+Build the frontend, then start a private local server in `off` mode:
 
 ```sh
 npm ci --prefix frontend
@@ -43,16 +43,16 @@ export COOKIE_SECURE=false  # local HTTP only
 go run ./backend/cmd/server
 ```
 
-Open <http://localhost:8080>. Check the server with:
+Open <http://localhost:8080>. Check the process with:
 
 ```sh
 curl -fsS http://localhost:8080/healthz
 curl -fsS http://localhost:8080/readyz
 ```
 
-`AUTH_MODE=off` disables authentication and CSRF protection. Use it only on a private local machine. Never expose an off-mode server.
+`AUTH_MODE=off` disables authentication and CSRF protection. Never expose an off-mode server.
 
-For frontend development, leave the Go server running and start Vite in a second terminal:
+For frontend development, keep the Go server running and start Vite in a second terminal:
 
 ```sh
 npm run dev --prefix frontend
@@ -83,86 +83,56 @@ The server rejects duplicate profile IDs, reserved environment names, missing pa
 
 ### Authentication modes
 
-`AUTH_MODE` must be set explicitly:
+Set `AUTH_MODE` explicitly:
 
 | Mode | Use | Behavior |
 | --- | --- | --- |
-| `off` | Local development only | Skips authentication and CSRF protection. |
+| `off` | Private local development only | Skips authentication and CSRF protection. |
 | `native` | Protected deployments | Uses OIDC Authorization Code + PKCE, Redis-backed opaque sessions, CSRF protection, and profile-scoped Casbin authorization. |
 
-An unset or blank mode is a startup error. Native mode does not fall back to `off` when OIDC, Redis, or policy loading fails.
+An unset or blank mode is a startup error. Native mode does not fall back to `off` when OIDC, Redis, or policy loading fails. In Helm YAML, write the development value as `mode: "off"`; unquoted `off` may parse as Boolean `false` and is rejected.
 
 Native mode needs an OIDC issuer, client credentials, redirect URL, public base URL, Redis, a CSRF secret, and a Casbin policy file. Identity is the verified `(iss, sub)` pair. If the issuer uses a private CA, set `OIDC_CA_FILE` to a mounted PEM bundle. Do not disable TLS verification.
 
-See [`docs/deployment.md`](docs/deployment.md) for the complete native configuration and trust boundary.
+See [`docs/deployment.md`](docs/deployment.md) for the native configuration and deployment boundary.
 
 ## HTTP API
 
-Vaultsmith exposes a same-origin browser API. Native mode uses an opaque session cookie and does not accept bearer tokens or client-provided identity headers.
+The browser API is same-origin. Native mode uses an opaque session cookie and does not accept bearer tokens or client-provided identity headers.
 
-The main endpoints are:
+| Method and path | Purpose |
+| --- | --- |
+| `GET /healthz` | Liveness. |
+| `GET /readyz` | Readiness. |
+| `GET /api/v1/session` | Session and CSRF bootstrap. |
+| `GET /api/v1/profiles` | Profiles allowed for the current user and their capabilities. |
+| `POST /api/v1/operations` | Encrypt, decrypt, or rotate a value. |
+| `GET /auth/login` | Start native OIDC login. |
+| `GET /auth/callback` | Complete native OIDC login. |
+| `POST /auth/logout` | CSRF-protected logout. |
 
-- `GET /healthz`: liveness check.
-- `GET /readyz`: readiness check.
-- `GET /api/v1/session`: session and CSRF bootstrap.
-- `GET /api/v1/profiles`: profiles allowed for the current user, with `encrypt` and `decrypt` capability flags.
-- `POST /api/v1/operations`: encrypt, decrypt, or re-key a value.
-- `GET /auth/login` and `GET /auth/callback`: native OIDC login.
-- `POST /auth/logout`: CSRF-protected logout.
-
-The operation modes are `encrypt`, `decrypt`, and `rotate`. A rotate request names both `sourceProfileId` and `destinationProfileId`.
-
-In native mode, complete OIDC login first. The browser sends the host-only session cookie on API requests and sends the CSRF token returned by `/api/v1/session` on mutations.
+Operation modes are `encrypt`, `decrypt`, and `rotate`. A rotate request names `sourceProfileId` and `destinationProfileId`. In native mode, the browser sends the CSRF token returned by `/api/v1/session` on mutations.
 
 Keep plaintext, ciphertext, passwords, cookies, and tokens out of shell history, logs, screenshots, tickets, and pull requests.
 
 ## Deploy with Helm
 
-The chart is in `deploy/helm/vaultsmith`. It creates a `ClusterIP` service. Ingress and NetworkPolicy are disabled by default. The chart does not create application Secrets. Manage external policy ConfigMaps separately; inline policy data is the chart-managed alternative.
+The chart is in `deploy/helm/vaultsmith`. It creates a `ClusterIP` Service. Ingress and NetworkPolicy are disabled by default. The chart does not create application Secrets.
 
-Use native mode for a deployment:
-
-```yaml
-# vaultsmith-values.yaml; use synthetic values here and keep real references outside Git.
-auth:
-  mode: native
-  csrf:
-    existingSecret: vaultsmith-auth
-    key: csrf-secret
-  oidc:
-    issuerURL: https://id.example.test/realms/vaultsmith
-    clientID: vaultsmith
-    clientSecret:
-      existingSecret: vaultsmith-auth
-      key: oidc-client-secret
-    redirectURL: https://vault.example.test/auth/callback
-    publicBaseURL: https://vault.example.test
-  redis:
-    address: redis.example.test:6379
-  policy:
-    existingConfigMap: vaultsmith-policy
-    key: policy.csv
-
-profiles:
-  - id: dev
-    label: Development
-    passwordEnv: VAULT_PASSWORD_DEV
-    passwordSecretKey: dev
-
-secret:
-  existingSecret: vaultsmith-passwords
-```
-
-Create the referenced Secrets and policy ConfigMap before installing the chart. Put a maintained private TLS/authentication edge in front of the service. NetworkPolicy controls pod reachability; it does not authenticate HTTP callers.
+The public OCI chart is version `0.3.0`:
 
 ```sh
-helm upgrade --install vaultsmith deploy/helm/vaultsmith \
+helm upgrade --install vaultsmith \
+  oci://ghcr.io/forgeplane-io/charts/vaultsmith \
+  --version 0.3.0 \
   --namespace vaultsmith \
   --create-namespace \
   -f /path/to/vaultsmith-values.yaml
 ```
 
-For the complete edge, NetworkPolicy, private-CA, Casbin, and migration contract, read [`docs/deployment.md`](docs/deployment.md).
+Create the referenced Secrets and policy ConfigMap before installing. Use `auth.policy.data` instead of an external policy ConfigMap when the policy should be managed by Helm. For native mode with NetworkPolicy enabled, allow DNS, OIDC, and Redis egress explicitly. Put a maintained private TLS/authentication edge in front of the Service; NetworkPolicy does not authenticate HTTP callers.
+
+For a source checkout, use `deploy/helm/vaultsmith` instead of the OCI reference and omit `--version`; the source chart version is maintained separately. See [`docs/deployment.md`](docs/deployment.md) for values, Casbin policy, NetworkPolicy, edge, verification, and rollback details.
 
 ## Native integration test
 
@@ -178,7 +148,7 @@ For browser testing, keep the stack running:
 ./scripts/integration-native.sh --interactive
 ```
 
-The harness always removes its containers and volumes on exit. Unless `KEEP_INTEGRATION_TMP=1` is set, it also removes the temporary directory containing its binary, policy, cookies, and temporary credentials. See [`integration/README.md`](integration/README.md) for the test flow and cleanup rules.
+The harness removes its containers, volumes, and temporary state on exit unless `KEEP_INTEGRATION_TMP=1` is set. See [`integration/README.md`](integration/README.md) for the test flow and cleanup rules.
 
 ## Development checks
 
@@ -193,13 +163,9 @@ make helm-lint
 make chart-test
 ```
 
-Use `SMOKE_PORT=18080 ./scripts/smoke.sh` when port 8080 is busy. The optional `make compatibility` target runs the Ansible CLI compatibility tests when `ansible-vault` is installed.
+Use `SMOKE_PORT=18080 ./scripts/smoke.sh` when port 8080 is busy. `make compatibility` runs the Ansible CLI compatibility tests when the optional CLI is installed.
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for pull-request, release, and sensitive-data rules.
-
-## Security
-
-Report vulnerabilities as described in [`SECURITY.md`](SECURITY.md).
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for pull-request, release, and sensitive-data rules. Report vulnerabilities as described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 
