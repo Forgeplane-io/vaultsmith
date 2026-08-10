@@ -697,16 +697,6 @@ export default function App() {
                 ? <p className="status-line" role="status" aria-live="polite">{status}</p>
                 : <span className="feedback-placeholder" aria-hidden="true">&nbsp;</span>}
             </div>
-            <div className="error-slot">
-              {visibleError
-                ? (
-                  <div className="error-banner" role="alert">
-                    <span>{visibleError}</span>
-                    {profileLoadFailed && !logoutFailed && !loadingProfiles && <button className="secondary-button" type="button" onClick={retryProfiles} disabled={workbenchLocked}>{loadFailureStage === 'session' ? 'Retry loading session' : 'Retry loading environments'}</button>}
-                  </div>
-                )
-                : <span className="feedback-placeholder" aria-hidden="true">&nbsp;</span>}
-            </div>
           </div>
 
           <form
@@ -832,7 +822,7 @@ export default function App() {
                         onUseSuggestedProfile={useSuggestedDecryptProfile}
                       />
                     )
-                    : <span className="auxiliary-placeholder" aria-hidden="true">&nbsp;</span>}
+                    : <span className="auxiliary-placeholder" aria-hidden="true" />}
                 </div>
 
                 <div className="panel-actions input-actions">
@@ -913,7 +903,7 @@ export default function App() {
                       <span className="field-help" id="ansible-snippet-fallback-help">Clipboard access failed. Select this formatted snippet and copy it manually.</span>
                     </div>
                   )}
-                  {!output || (mode !== 'encrypt' && mode !== 'rotate') ? <span className="auxiliary-placeholder" aria-hidden="true">&nbsp;</span> : null}
+                  {!output || (mode !== 'encrypt' && mode !== 'rotate') ? <span className="auxiliary-placeholder" aria-hidden="true" /> : null}
                 </div>
 
                 <div className="panel-actions output-actions">
@@ -926,6 +916,16 @@ export default function App() {
               </div>
             </div>
           </form>
+          <div className="error-slot">
+            {visibleError
+              ? (
+                <div className="error-banner" role="alert">
+                  <span>{visibleError}</span>
+                  {profileLoadFailed && !logoutFailed && !loadingProfiles && <button className="secondary-button" type="button" onClick={retryProfiles} disabled={workbenchLocked}>{loadFailureStage === 'session' ? 'Retry loading session' : 'Retry loading environments'}</button>}
+                </div>
+              )
+              : <span className="feedback-placeholder" aria-hidden="true">&nbsp;</span>}
+          </div>
         </section>
       </main>
     </div>
