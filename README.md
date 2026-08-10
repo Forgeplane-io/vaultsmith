@@ -90,7 +90,7 @@ The server rejects duplicate profile IDs, reserved environment names, missing pa
 | `off` | Local development only | Skips authentication and CSRF protection. |
 | `native` | Protected deployments | Uses OIDC Authorization Code + PKCE, Redis-backed opaque sessions, CSRF protection, and profile-scoped Casbin authorization. |
 
-An unset or blank mode is a startup error. Native mode does not fall back to `off` when OIDC, Redis, or policy loading fails.
+An unset or blank mode is a startup error. Native mode does not fall back to `off` when OIDC, Redis, or policy loading fails. In Helm YAML, write the development value as `mode: "off"`; some YAML parsers treat unquoted `off` as Boolean `false`, which the chart rejects.
 
 Native mode needs an OIDC issuer, client credentials, redirect URL, public base URL, Redis, a CSRF secret, and a Casbin policy file. Identity is the verified `(iss, sub)` pair. If the issuer uses a private CA, set `OIDC_CA_FILE` to a mounted PEM bundle. Do not disable TLS verification.
 

@@ -11,7 +11,8 @@ containerPort: 8080
 # Authentication is deliberately explicit. `off` is for local/development use only;
 # production deployments should set this to `native` and provide every required ref.
 auth:
-  # Required: set explicitly to `native` or `off`.
+  # Required: set explicitly to "native" or "off". Quote "off" in YAML;
+  # unquoted `off` may be parsed as Boolean false and is rejected.
   mode: ""
   csrf:
     existingSecret: ""
