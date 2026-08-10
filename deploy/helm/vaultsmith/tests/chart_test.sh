@@ -260,10 +260,19 @@ assert_render_fails_with "$external_valkey_error" -f "$TMP_DIR/bundled-native.ya
 external_address_error='auth.redis.address is required when valkey.enabled is false'
 assert_render_fails_with 'auth/redis/address' -f "$TMP_DIR/bundled-native.yaml" --set valkey.enabled=false
 assert_render_fails_with "$external_address_error" -f "$TMP_DIR/bundled-native.yaml" --set valkey.enabled=false --skip-schema-validation
-assert_render_fails_with 'valkey.auth.enabled must remain true when the bundled Valkey chart is enabled' -f "$TMP_DIR/valid.yaml" --set valkey.auth.enabled=false
-assert_render_fails_with 'valkey.auth.usersExistingSecret is managed by the parent chart' -f "$TMP_DIR/valid.yaml" --set valkey.auth.usersExistingSecret=other
-assert_render_fails_with 'valkey.auth.aclUsers.default.passwordKey must be default for the bundled Valkey chart' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.default.passwordKey=other
+assert_render_fails_with 'valkey/auth/enabled' -f "$TMP_DIR/valid.yaml" --set valkey.auth.enabled=false
+assert_render_fails_with 'valkey.auth.enabled must remain true when the bundled Valkey chart is enabled' -f "$TMP_DIR/valid.yaml" --set valkey.auth.enabled=false --skip-schema-validation
+assert_render_fails_with 'valkey/auth/usersExistingSecret' -f "$TMP_DIR/valid.yaml" --set valkey.auth.usersExistingSecret=other
+assert_render_fails_with 'valkey.auth.usersExistingSecret is managed by the parent chart' -f "$TMP_DIR/valid.yaml" --set valkey.auth.usersExistingSecret=other --skip-schema-validation
+assert_render_fails_with 'valkey/auth/aclUsers/default/passwordKey' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.default.passwordKey=other
+assert_render_fails_with 'valkey.auth.aclUsers.default.passwordKey must be default for the bundled Valkey chart' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.default.passwordKey=other --skip-schema-validation
+assert_render_fails_with 'valkey/auth/aclUsers' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.extra.permissions='~* +@read'
+assert_render_fails_with 'valkey.auth.aclUsers must contain exactly the managed default user' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.extra.permissions='~* +@read' --skip-schema-validation
+assert_render_fails_with 'valkey/auth/aclUsers/default' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.default.password=inline
+assert_render_fails_with 'valkey.auth.aclUsers.default.password must not be set' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.default.password=inline --skip-schema-validation
 assert_render_fails_with 'valkey/deploymentStrategy' -f "$TMP_DIR/valid.yaml" --set valkey.deploymentStrategy=RollingUpdate
+assert_render_fails_with 'valkey.deploymentStrategy must be Recreate for the bundled standalone Valkey chart' -f "$TMP_DIR/valid.yaml" --set valkey.deploymentStrategy=RollingUpdate --skip-schema-validation
+assert_render_fails_with 'valkey.deploymentStrategy must be Recreate for the bundled standalone Valkey chart' -f "$TMP_DIR/valid.yaml" --set valkey.deploymentStrategy=RollingUpdate --set valkey.dataStorage.enabled=false --skip-schema-validation
 assert_render_fails_with 'valkey/service/port' -f "$TMP_DIR/valid.yaml" --set valkey.service.port=6380
 
 egress_error='networkPolicy.allowedEgress must allow OIDC and Redis egress in native mode, or disable networkPolicy explicitly'

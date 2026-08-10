@@ -35,7 +35,7 @@ If the issuer uses a private CA, mount a PEM bundle and set `OIDC_CA_FILE`. Do n
 
 ## Helm chart
 
-The chart creates `ClusterIP` Services for Vaultsmith and the bundled official Valkey chart. Valkey is enabled by default, uses a generated password Secret, and does not require a separately provisioned Redis service. The bundled chart requests a 1 GiB PVC by default; set `valkey.dataStorage.className` for a specific storage class or disable it for ephemeral test deployments. Persistent standalone Valkey uses a `Recreate` rollout to avoid concurrent pods sharing the `ReadWriteOnce` claim. The chart does not create the OIDC, CSRF, or profile-password Secrets. Ingress and NetworkPolicy are disabled by default.
+The chart creates `ClusterIP` Services for Vaultsmith and the bundled official Valkey chart. Valkey is enabled by default, uses a generated password Secret, and does not require a separately provisioned Redis service. The bundled chart requests a 1 GiB PVC by default; set `valkey.dataStorage.className` for a specific storage class or disable it for ephemeral test deployments. The bundled standalone Valkey uses a `Recreate` rollout to avoid concurrent pods sharing a `ReadWriteOnce` claim; the strategy remains fixed for every standalone backing mode. The chart does not create the OIDC, CSRF, or profile-password Secrets. Ingress and NetworkPolicy are disabled by default.
 
 ### Published chart
 
