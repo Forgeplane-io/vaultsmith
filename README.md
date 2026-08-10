@@ -65,12 +65,12 @@ The bundled UI uses same-origin requests. Configured CORS origins are explicit. 
 | `GET /readyz` | Readiness. |
 | `GET /api/v1/session` | Session and CSRF bootstrap. |
 | `GET /api/v1/profiles` | Profiles allowed for the current user and their capabilities. |
-| `POST /api/v1/operations` | Encrypt, decrypt, or rotate a value. |
+| `POST /api/v1/operations` | Encrypt, decrypt, or re-key a value. |
 | `GET /auth/login` | Start native OIDC login. |
 | `GET /auth/callback` | Complete native OIDC login. |
 | `POST /auth/logout` | CSRF-protected logout. |
 
-Operation modes are `encrypt`, `decrypt`, and `rotate`. A rotate request names `sourceProfileId` and `destinationProfileId`. In native mode, mutations require the CSRF token returned by `/api/v1/session`.
+Operation modes are `encrypt`, `decrypt`, and `rotate` (the API name for re-key). A re-key request names `sourceProfileId` and `destinationProfileId`. In native mode, mutations require the CSRF token returned by `/api/v1/session`.
 
 Keep plaintext, ciphertext, passwords, cookies, and tokens out of shell history, logs, screenshots, tickets, and pull requests.
 

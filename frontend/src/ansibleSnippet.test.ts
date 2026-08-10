@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatAnsibleVaultSnippet, isValidAnsibleVariableIdentifier } from './ansibleSnippet'
+import { ansibleVariableValidationMessage, formatAnsibleVaultSnippet, isValidAnsibleVariableIdentifier } from './ansibleSnippet'
 
 const INDENT = ' '.repeat(10)
 const VAULT_1_2_CIPHERTEXT = [
@@ -26,7 +26,15 @@ describe('Ansible Vault snippet helpers', () => {
     expect(isValidAnsibleVariableIdentifier(key)).toBe(true)
     expect(formatAnsibleVaultSnippet(key, VAULT_1_2_CIPHERTEXT)).toMatch(new RegExp(`^'${key}': !vault \\|`))
   })
-  it('rejects Python-reserved Ansible variable names', () => {
+  it('reports the first useful validation message for common invalid names', () => {
+    expect(ansibleVariableValidationMessage('1password')).toBe('Start with a letter or underscore.')
+    expect(ansibleVariableValidationMessage('-password')).toBe('Start with a letter or underscore.')
+    expect(ansibleVariableValidationMessage('db-password')).toBe('Variable names cannot contain hyphens.')
+    expect(ansibleVariableValidationMessage('class')).toBe('This name is reserved by Ansible.')
+    expect(ansibleVariableValidationMessage('db_password')).toBe('')
+  })
+
+  it('preserves Python-reserved Ansible variable names', () => {
     for (const key of ['class', 'for', 'True', 'False', 'None', 'await']) {
       expect(isValidAnsibleVariableIdentifier(key)).toBe(false)
       expect(() => formatAnsibleVaultSnippet(key, VAULT_1_2_CIPHERTEXT)).toThrow('Invalid Ansible variable identifier')

@@ -51,7 +51,7 @@ const pastedVault = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
 const pastedYamlVault = `app_secret: !vault |\n          ${pastedVault.replace('\n', '\n          ')}`
 
 async function findReadyValueInput() {
-  const input = await screen.findByRole('textbox', { name: 'Value to protect' })
+  const input = await screen.findByRole('textbox', { name: 'Value to encrypt' })
   await waitFor(() => expect(input).toBeEnabled())
   return input
 }
@@ -94,7 +94,7 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     await user.type(input, pastedVault)
     await user.click(screen.getByRole('button', { name: 'Decrypt' }))
     await user.click(await screen.findByRole('button', { name: 'Reveal result' }))
@@ -149,7 +149,7 @@ describe('Vaultsmith operator experience', () => {
     const input = await findReadyValueInput()
     await user.type(input, 'fixture-value')
     await user.click(screen.getByRole('button', { name: 'Encrypt' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue(ciphertext))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext))
     await user.type(screen.getByRole('textbox', { name: 'Ansible variable name' }), 'app_secret')
     const copySnippet = screen.getByRole('button', { name: 'Copy Ansible snippet' })
     await user.click(copySnippet)
@@ -159,7 +159,7 @@ describe('Vaultsmith operator experience', () => {
     await user.click(screen.getByRole('button', { name: 'Sign out' }))
 
     expect(input).toHaveValue('')
-    expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('')
     expect(screen.queryByRole('textbox', { name: 'Ansible variable name' })).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Ansible snippet to copy manually' })).not.toBeInTheDocument()
     const alert = await screen.findByRole('alert')
@@ -206,7 +206,7 @@ describe('Vaultsmith operator experience', () => {
       await user.click(signOut)
       expect(operationSignal?.aborted).toBe(true)
       expect(input).toHaveValue('')
-      expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+      expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('')
       expect(fetchMock.mock.calls.filter(([path]) => path === '/auth/logout')).toHaveLength(1)
 
       resolveLogout?.(jsonResponse(
@@ -217,7 +217,7 @@ describe('Vaultsmith operator experience', () => {
 
       resolveOperation(jsonResponse({ value: 'late-vault-output' }))
       await act(async () => { await Promise.resolve() })
-      expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+      expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('')
       expect(screen.queryByDisplayValue('late-vault-output')).not.toBeInTheDocument()
     } finally {
       resolveLogout?.(emptyResponse())
@@ -375,7 +375,7 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('button', { name: 'Clear values' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: 'Encrypt' }))
 
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('vault-output'))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('vault-output'))
     expect(fetchMock).toHaveBeenLastCalledWith(
       '/api/v1/operations',
       expect.objectContaining({
@@ -397,7 +397,7 @@ describe('Vaultsmith operator experience', () => {
     const input = await findReadyValueInput()
     await user.type(input, 'fixture-value')
     await user.click(screen.getByRole('button', { name: 'Encrypt' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue(ciphertext))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext))
 
     const keyInput = screen.getByRole('textbox', { name: 'Ansible variable name' })
     const snippetButton = screen.getByRole('button', { name: 'Copy Ansible snippet' })
@@ -409,7 +409,7 @@ describe('Vaultsmith operator experience', () => {
     await user.clear(keyInput)
     await user.type(keyInput, 'class')
     expect(snippetButton).toBeDisabled()
-    expect(screen.getByText(/reserved Ansible names are not allowed/i)).toBeInTheDocument()
+    expect(screen.getByText('This name is reserved by Ansible.')).toBeVisible()
     await user.clear(keyInput)
     await user.type(keyInput, 'app_secret')
     expect(snippetButton).toBeEnabled()
@@ -439,7 +439,7 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    await user.type(screen.getByRole('textbox', { name: 'Protected value to read' }), ciphertext)
+    await user.type(screen.getByRole('textbox', { name: 'Protected value to decrypt' }), ciphertext)
     await user.click(screen.getByRole('button', { name: 'Decrypt' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Reveal result' })).toBeInTheDocument())
 
@@ -466,7 +466,7 @@ describe('Vaultsmith operator experience', () => {
     const input = await findReadyValueInput()
     await user.type(input, 'fixture-value')
     await user.click(screen.getByRole('button', { name: 'Encrypt' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue(ciphertext))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext))
     await user.type(screen.getByRole('textbox', { name: 'Ansible variable name' }), 'app_secret')
     await user.click(screen.getByRole('button', { name: 'Copy Ansible snippet' }))
 
@@ -493,7 +493,7 @@ describe('Vaultsmith operator experience', () => {
     const input = await findReadyValueInput()
     await user.type(input, 'fixture-value')
     await user.click(screen.getByRole('button', { name: 'Encrypt' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue(ciphertext))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext))
     await user.type(screen.getByRole('textbox', { name: 'Ansible variable name' }), 'app_secret')
     await user.click(screen.getByRole('button', { name: 'Copy Ansible snippet' }))
     expect(clipboard.writeText).toHaveBeenCalledOnce()
@@ -506,7 +506,7 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Ansible snippet to copy manually' })).not.toBeInTheDocument()
-    expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('')
   })
 
   it('ignores late result clipboard completions after result handoff', async () => {
@@ -526,19 +526,19 @@ describe('Vaultsmith operator experience', () => {
     const input = await findReadyValueInput()
     await user.type(input, 'fixture-value')
     await user.click(screen.getByRole('button', { name: 'Encrypt' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue(ciphertext))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext))
     await user.click(screen.getByRole('button', { name: 'Copy result' }))
     expect(clipboard.writeText).toHaveBeenCalledOnce()
 
-    await user.click(screen.getByRole('button', { name: 'Use result as input' }))
-    expect(screen.getByRole('textbox', { name: 'Protected value to read' })).toHaveValue(ciphertext)
-    expect(screen.getByRole('status')).toHaveTextContent('Switched to decrypt mode and moved the result into the protected value input.')
+    await user.click(screen.getByRole('button', { name: 'Decrypt this result' }))
+    expect(screen.getByRole('textbox', { name: 'Protected value to decrypt' })).toHaveValue(ciphertext)
+    expect(screen.getByRole('status')).toHaveTextContent('Switched to Decrypt mode and placed the result in the protected value input.')
 
     await act(async () => {
       resolveCopy?.()
     })
 
-    expect(screen.getByRole('status')).toHaveTextContent('Switched to decrypt mode and moved the result into the protected value input.')
+    expect(screen.getByRole('status')).toHaveTextContent('Switched to Decrypt mode and placed the result in the protected value input.')
     expect(screen.getByRole('status')).not.toHaveTextContent('Copied')
   })
 
@@ -552,7 +552,7 @@ describe('Vaultsmith operator experience', () => {
     const input = await findReadyValueInput()
     await user.type(input, 'fixture-value')
     await user.click(screen.getByRole('button', { name: 'Encrypt' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue(ciphertext))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext))
     const keyInput = screen.getByRole('textbox', { name: 'Ansible variable name' })
     await user.type(keyInput, 'app_secret')
 
@@ -576,17 +576,17 @@ describe('Vaultsmith operator experience', () => {
     const input = await findReadyValueInput()
     await user.type(input, 'fixture-value')
     await user.click(screen.getByRole('button', { name: 'Encrypt' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('first-output'))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('first-output'))
 
     await user.clear(input)
-    expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('')
 
     await user.type(input, 'new-value')
     await user.click(screen.getByRole('button', { name: 'Encrypt' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('second-output'))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('second-output'))
 
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    expect(screen.getByRole('textbox', { name: 'Protected value to read' })).toHaveValue('new-value')
+    expect(screen.getByRole('textbox', { name: 'Protected value to decrypt' })).toHaveValue('new-value')
     expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('')
 
     await user.click(screen.getByRole('button', { name: 'Decrypt' }))
@@ -595,7 +595,7 @@ describe('Vaultsmith operator experience', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Environment' }), 'prod')
     expect(screen.queryByRole('button', { name: 'Reveal result' })).not.toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('')
-    expect(screen.getByRole('textbox', { name: 'Protected value to read' })).toHaveValue('new-value')
+    expect(screen.getByRole('textbox', { name: 'Protected value to decrypt' })).toHaveValue('new-value')
   })
 
   it('keeps Clear values disabled while an operation is in flight', async () => {
@@ -614,7 +614,7 @@ describe('Vaultsmith operator experience', () => {
 
     expect(screen.getByRole('button', { name: 'Clear values' })).toBeDisabled()
     resolveOperation(jsonResponse({ value: 'vault-output' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('vault-output'))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('vault-output'))
   })
 
   it('switches to decrypt mode and sends vault text', async () => {
@@ -625,9 +625,9 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    expect(screen.getByText(/complete protected text/i)).toBeInTheDocument()
+    expect(screen.getByText(/protected text or a YAML !vault block/i)).toBeInTheDocument()
     expect(screen.getByText(/YAML !vault block/i)).toBeInTheDocument()
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     await user.type(input, '$ANSIBLE_VAULT;1.1;AES256\nfixture')
     await user.click(screen.getByRole('button', { name: 'Decrypt' }))
 
@@ -649,7 +649,7 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
     const preventDefault = vi.spyOn(event, 'preventDefault')
     fireEvent(input, event)
@@ -672,8 +672,8 @@ describe('Vaultsmith operator experience', () => {
 
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
-    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to move' })
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to re-key' })
     const event = createEvent.paste(input, { clipboardData: { getData } as unknown as DataTransfer })
     const preventDefault = vi.spyOn(event, 'preventDefault')
     fireEvent(input, event)
@@ -708,14 +708,14 @@ describe('Vaultsmith operator experience', () => {
 
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
-    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
     expect(screen.getByRole('combobox', { name: 'From environment' })).toHaveValue('dev')
     expect(screen.getByRole('combobox', { name: 'To environment' })).toHaveValue('prod')
-    const input = screen.getByRole('textbox', { name: 'Protected value to move' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to re-key' })
     await user.type(input, '$ANSIBLE_VAULT;1.1;AES256\nfixture')
-    await user.click(screen.getByRole('button', { name: 'Rotate' }))
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
 
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Moved protected value' })).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;prod\nrotated-ciphertext'))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;prod\nrotated-ciphertext'))
     expect(screen.getByRole('textbox', { name: 'Ansible variable name' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Copy Ansible snippet' })).toBeDisabled()
     expect(fetchMock).toHaveBeenLastCalledWith(
@@ -743,13 +743,13 @@ describe('Vaultsmith operator experience', () => {
     expect(within(decryptSelect).queryByRole('option', { name: 'Write only' })).not.toBeInTheDocument()
     expect(decryptSelect).toHaveValue('')
 
-    await user.type(screen.getByRole('textbox', { name: 'Protected value to read' }), 'vault-text')
+    await user.type(screen.getByRole('textbox', { name: 'Protected value to decrypt' }), 'vault-text')
     expect(screen.getByRole('button', { name: 'Decrypt' })).toBeDisabled()
     fireEvent.submit(screen.getByRole('form', { name: 'Vault operation form' }))
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(0)
 
     await user.selectOptions(decryptSelect, 'read')
-    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
     const sourceSelect = screen.getByRole('combobox', { name: 'From environment' })
     const destinationSelect = screen.getByRole('combobox', { name: 'To environment' })
     expect(within(sourceSelect).getByRole('option', { name: 'Read only' })).toBeInTheDocument()
@@ -760,6 +760,65 @@ describe('Vaultsmith operator experience', () => {
     expect(destinationSelect).toHaveValue('write')
   })
 
+  it('selects the first available operation when Encrypt is unavailable at startup', async () => {
+    mockProfileLoad([asymmetricProfiles[1]])
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Read only' })
+
+    expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Environment' })).toHaveValue('read')
+    expect(screen.getByRole('textbox', { name: 'Protected value to decrypt' })).toBeEnabled()
+    expect(screen.getByText('No environments are available for encryption.')).toBeVisible()
+  })
+
+  it('shows specific inline Ansible variable validation without moving the Copy action', async () => {
+    mockProfileLoad()
+      .mockResolvedValueOnce(jsonResponse({ value: '$ANSIBLE_VAULT;1.2;AES256;dev\\n00112233' }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    const input = await findReadyValueInput()
+    await user.type(input, 'fixture-value')
+    await user.click(screen.getByRole('button', { name: 'Encrypt' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;dev\\n00112233'))
+
+    const variableInput = screen.getByRole('textbox', { name: 'Ansible variable name' })
+    const copyButton = screen.getByRole('button', { name: 'Copy Ansible snippet' })
+    await user.type(variableInput, '1secret')
+    expect(screen.getByText('Start with a letter or underscore.')).toBeVisible()
+    expect(variableInput).toHaveAttribute('aria-invalid', 'true')
+    expect(copyButton).toBeDisabled()
+
+    await user.clear(variableInput)
+    await user.type(variableInput, 'foo-bar')
+    expect(screen.getByText('Variable names cannot contain hyphens.')).toBeVisible()
+    expect(copyButton).toBeDisabled()
+
+    await user.clear(variableInput)
+    await user.type(variableInput, 'app_secret')
+    expect(screen.queryByText('Variable names cannot contain hyphens.')).not.toBeInTheDocument()
+    expect(variableInput).toHaveAttribute('aria-invalid', 'false')
+    expect(copyButton).toBeEnabled()
+  })
+
+  it('uses the explicit destination in re-key handoff terminology', async () => {
+    mockProfileLoad(sourceAndDestinationProfiles)
+      .mockResolvedValueOnce(jsonResponse({ value: '$ANSIBLE_VAULT;1.2;AES256;prod\\n00112233' }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
+    await user.type(screen.getByRole('textbox', { name: 'Protected value to re-key' }), 'vault-text')
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;prod\\n00112233'))
+
+    expect(screen.getByRole('button', { name: 'Decrypt with destination environment' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Use result as input' })).not.toBeInTheDocument()
+  })
+
   it('disables unavailable modes and exposes the reason', async () => {
     mockProfileLoad([asymmetricProfiles[0]])
 
@@ -768,11 +827,9 @@ describe('Vaultsmith operator experience', () => {
 
     expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toHaveAccessibleDescription('No environments are available for decryption.')
     expect(screen.getByText('No environments are available for decryption.')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Set rotate mode' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Set rotate mode' })).toHaveAccessibleDescription('Rotate requires an available decrypt source and encrypt destination.')
-    expect(screen.getByText('Rotate requires an available decrypt source and encrypt destination.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Set re-key mode' })).toBeDisabled()
+    expect(screen.getByText('Re-key requires an available decrypt source and encrypt destination.')).toBeVisible()
   })
 
   it('does not hand a rotated result to an ineligible decrypt destination', async () => {
@@ -782,14 +839,14 @@ describe('Vaultsmith operator experience', () => {
 
     render(<App />)
     await screen.findByRole('option', { name: 'Write only' })
-    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
     await user.selectOptions(screen.getByRole('combobox', { name: 'From environment' }), 'read')
     await user.selectOptions(screen.getByRole('combobox', { name: 'To environment' }), 'write')
-    await user.type(screen.getByRole('textbox', { name: 'Protected value to move' }), 'vault-text')
-    await user.click(screen.getByRole('button', { name: 'Rotate' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Moved protected value' })).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;write\nrotated'))
+    await user.type(screen.getByRole('textbox', { name: 'Protected value to re-key' }), 'vault-text')
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;write\nrotated'))
 
-    const handoff = screen.getByRole('button', { name: 'Use result as input' })
+    const handoff = screen.getByRole('button', { name: 'Decrypt with destination environment' })
     expect(handoff).toBeDisabled()
     expect(handoff).toHaveAccessibleDescription('The destination environment is not available for decryption.')
     expect(screen.getByText('The destination environment is not available for decryption.')).toBeVisible()
@@ -815,7 +872,7 @@ describe('Vaultsmith operator experience', () => {
 
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument())
     expect(screen.getByRole('status')).toHaveTextContent('Operation cancelled')
-    expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('')
   })
 
   it('disables rotate mode when no profiles are available', async () => {
@@ -824,9 +881,8 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'No environments available' })
 
-    const rotateMode = screen.getByRole('button', { name: 'Set rotate mode' })
+    const rotateMode = screen.getByRole('button', { name: 'Set re-key mode' })
     expect(rotateMode).toBeDisabled()
-    expect(rotateMode).toHaveAccessibleDescription('Rotate requires an available decrypt source and encrypt destination.')
   })
 
   it('enforces the encrypt UTF-8 byte limit before submission', async () => {
@@ -852,19 +908,19 @@ describe('Vaultsmith operator experience', () => {
     const input = await findReadyValueInput()
     await user.type(input, 'fixture-value')
     await user.click(screen.getByRole('button', { name: 'Encrypt' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue(ciphertext))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext))
 
-    const handoff = screen.getByRole('button', { name: 'Use result as input' })
+    const handoff = screen.getByRole('button', { name: 'Decrypt this result' })
     expect(handoff).toBeEnabled()
     await user.click(handoff)
 
     expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('textbox', { name: 'Protected value to read' })).toHaveValue(ciphertext)
+    expect(screen.getByRole('textbox', { name: 'Protected value to decrypt' })).toHaveValue(ciphertext)
     expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('')
     expect(screen.queryByRole('textbox', { name: 'Ansible variable name' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Use result as input' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Encrypt this result' })).toBeDisabled()
     expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite')
-    expect(screen.getByRole('status')).toHaveTextContent('Switched to decrypt mode and moved the result into the protected value input.')
+    expect(screen.getByRole('status')).toHaveTextContent('Switched to Decrypt mode and placed the result in the protected value input.')
     expect(screen.getByRole('status')).not.toHaveTextContent(ciphertext)
     expect(setItem).not.toHaveBeenCalled()
   })
@@ -878,20 +934,20 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    await user.type(screen.getByRole('textbox', { name: 'Protected value to read' }), 'vault-text')
+    await user.type(screen.getByRole('textbox', { name: 'Protected value to decrypt' }), 'vault-text')
     await user.click(screen.getByRole('button', { name: 'Decrypt' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Reveal result' })).toBeInTheDocument())
     expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('Decrypted value hidden')
 
-    await user.click(screen.getByRole('button', { name: 'Use result as input' }))
+    await user.click(screen.getByRole('button', { name: 'Encrypt this result' }))
 
     expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('textbox', { name: 'Value to protect' })).toHaveValue(plaintext)
-    expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Value to encrypt' })).toHaveValue(plaintext)
+    expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('')
     expect(screen.queryByRole('button', { name: 'Reveal result' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Copy result' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Use result as input' })).toBeDisabled()
-    expect(screen.getByRole('status')).toHaveTextContent('Switched to encrypt mode and moved the result into the value input.')
+    expect(screen.getByRole('button', { name: 'Decrypt this result' })).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent('Switched to Encrypt mode and placed the result in the value input.')
   })
 
   it('hands off a rotated result into decrypt input using the destination profile', async () => {
@@ -902,20 +958,20 @@ describe('Vaultsmith operator experience', () => {
 
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
-    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
-    await user.type(screen.getByRole('textbox', { name: 'Protected value to move' }), 'vault-text')
-    await user.click(screen.getByRole('button', { name: 'Rotate' }))
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Moved protected value' })).toHaveValue(ciphertext))
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
+    await user.type(screen.getByRole('textbox', { name: 'Protected value to re-key' }), 'vault-text')
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue(ciphertext))
     await user.type(screen.getByRole('textbox', { name: 'Ansible variable name' }), 'app_secret')
 
-    await user.click(screen.getByRole('button', { name: 'Use result as input' }))
+    await user.click(screen.getByRole('button', { name: 'Decrypt with destination environment' }))
 
     expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('combobox', { name: 'Environment' })).toHaveValue('prod')
-    expect(screen.getByRole('textbox', { name: 'Protected value to read' })).toHaveValue(ciphertext)
+    expect(screen.getByRole('textbox', { name: 'Protected value to decrypt' })).toHaveValue(ciphertext)
     expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('')
     expect(screen.queryByRole('textbox', { name: 'Ansible variable name' })).not.toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('Switched to decrypt mode and moved the result into the protected value input.')
+    expect(screen.getByRole('status')).toHaveTextContent('Switched to Decrypt mode and placed the result in the protected value input.')
   })
 
   it('reveals, copies, and clears decrypted output only on explicit actions', async () => {
@@ -928,7 +984,7 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    await user.type(screen.getByRole('textbox', { name: 'Protected value to read' }), 'vault-text')
+    await user.type(screen.getByRole('textbox', { name: 'Protected value to decrypt' }), 'vault-text')
     await user.click(screen.getByRole('button', { name: 'Decrypt' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Reveal result' })).toBeInTheDocument())
     expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('Decrypted value hidden')
@@ -954,7 +1010,7 @@ describe('Vaultsmith operator experience', () => {
     expect(input).toHaveAttribute('autocomplete', 'off')
     expect(input).toHaveAttribute('autocorrect', 'off')
     expect(input).toHaveAttribute('autocapitalize', 'off')
-    expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveAttribute('autocapitalize', 'off')
+    expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveAttribute('autocapitalize', 'off')
   })
 
   it('offers a retry when profiles fail to load', async () => {
@@ -1015,15 +1071,15 @@ describe('Vaultsmith operator experience', () => {
 
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
-    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to move' })
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
+    const input = screen.getByRole('textbox', { name: 'Protected value to re-key' })
     await user.type(input, 'vault-text')
-    await user.click(screen.getByRole('button', { name: 'Rotate' }))
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
     expect(screen.getByRole('status')).toHaveTextContent('Refreshing environments…')
     expect(screen.getByRole('status')).not.toHaveTextContent('Environments were refreshed')
-    expect(screen.getByRole('button', { name: 'Rotate' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
     expect(input).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Clear values' })).toBeEnabled()
 
@@ -1033,19 +1089,39 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Refreshing environments…')
     await user.type(input, 'replacement-value')
     expect(screen.getByRole('status')).toHaveTextContent('Refreshing environments…')
-    expect(screen.getByRole('button', { name: 'Rotate' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
 
     resolveRefresh(profilesResponse(refreshedProfiles))
 
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Your permissions changed. Environments were refreshed; review the selection and try again.'))
-    expect(screen.getByRole('button', { name: 'Set rotate mode' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Set re-key mode' })).toHaveAttribute('aria-pressed', 'true')
     expect(input).toHaveValue('replacement-value')
     expect(screen.getByRole('combobox', { name: 'From environment' })).toHaveValue('')
     expect(screen.getByRole('combobox', { name: 'To environment' })).toHaveValue('')
     expect(within(screen.getByRole('combobox', { name: 'From environment' })).getByRole('option', { name: 'Production' })).toBeInTheDocument()
     expect(within(screen.getByRole('combobox', { name: 'To environment' })).getByRole('option', { name: 'Development' })).toBeInTheDocument()
     expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+  })
+
+  it('switches to an available operation after a permission refresh removes the current mode', async () => {
+    const fetchMock = mockProfileLoad(defaultProfiles)
+      .mockResolvedValueOnce(jsonResponse(
+        { error: { code: 'forbidden', message: 'private-policy-detail' } },
+        { status: 403 },
+      ))
+      .mockResolvedValueOnce(profilesResponse([asymmetricProfiles[1]]))
+    const user = userEvent.setup()
+
+    render(<App />)
+    const input = await findReadyValueInput()
+    await user.type(input, 'fixture-value')
+    await user.click(screen.getByRole('button', { name: 'Encrypt' }))
+
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/profiles')).toHaveLength(2))
+    expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('Encrypt is unavailable. Switched to Decrypt.')).toBeVisible()
+    expect(screen.getByRole('combobox', { name: 'Environment' })).toHaveValue('')
   })
 
   it('keeps recovery and clearing available when stale-capability refresh fails', async () => {
@@ -1128,12 +1204,12 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     await user.type(input, '$ANSIBLE_VAULT;1.1;AES256\nfixture')
     await user.click(screen.getByRole('button', { name: 'Decrypt' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/check the selected Environment/i)
-    expect(screen.getByRole('alert')).toHaveTextContent(/complete protected text/i)
+    expect(screen.getByRole('alert')).toHaveTextContent(/protected text or a YAML !vault block/i)
     expect(input).toHaveValue('$ANSIBLE_VAULT;1.1;AES256\nfixture')
   })
 
@@ -1156,7 +1232,7 @@ describe('Vaultsmith operator experience', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Operation cancelled'))
     expect(document.querySelector('form')).toHaveAttribute('aria-busy', 'false')
     expect(input).toHaveValue('fixture-value')
-    expect(screen.getByRole('textbox', { name: 'Protected value' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('')
   })
 
   it('times out a stalled operation with recovery guidance', async () => {
@@ -1201,7 +1277,7 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     fireEvent.change(input, { target: { value: '$ANSIBLE_VAULT;1.2;AES256;dev\nfixture-ciphertext' } })
 
     const diagnostics = screen.getByRole('region', { name: 'Vault format diagnostics' })
@@ -1221,16 +1297,16 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const decryptInput = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const decryptInput = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     fireEvent.change(decryptInput, { target: { value: '$ANSIBLE_VAULT;1.2;AES256;prod\nfixture' } })
     expect(screen.getByRole('region', { name: 'Vault format diagnostics' })).toHaveTextContent(/differs from selected environment ID “dev” \(Development\)/)
     expect(screen.getByRole('button', { name: 'Decrypt' })).toBeEnabled()
 
-    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
-    const rotateInput = screen.getByRole('textbox', { name: 'Protected value to move' })
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
+    const rotateInput = screen.getByRole('textbox', { name: 'Protected value to re-key' })
     fireEvent.change(rotateInput, { target: { value: '$ANSIBLE_VAULT;1.2;AES256;prod\nfixture' } })
     expect(screen.getByRole('region', { name: 'Vault format diagnostics' })).toHaveTextContent(/differs from selected environment ID “dev” \(Development\)/)
-    expect(screen.getByRole('button', { name: 'Rotate' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeEnabled()
   })
 
   it('offers an exact decrypt-capable Vault ID as an explicit environment choice', async () => {
@@ -1241,7 +1317,7 @@ describe('Vaultsmith operator experience', () => {
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
     const environment = screen.getByRole('combobox', { name: 'Environment' })
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     fireEvent.change(input, { target: { value: '$ANSIBLE_VAULT;1.2;AES256;prod\nfixture' } })
 
     const suggestion = screen.getByRole('button', { name: 'Use Production' })
@@ -1267,10 +1343,10 @@ describe('Vaultsmith operator experience', () => {
 
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
-    await user.click(screen.getByRole('button', { name: 'Set rotate mode' }))
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
     const source = screen.getByRole('combobox', { name: 'From environment' })
     const destination = screen.getByRole('combobox', { name: 'To environment' })
-    const input = screen.getByRole('textbox', { name: 'Protected value to move' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to re-key' })
     fireEvent.change(input, { target: { value: '$ANSIBLE_VAULT;1.2;AES256;stage\nfixture' } })
 
     expect(source).toHaveValue('dev')
@@ -1295,7 +1371,7 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     const assertNoSuggestion = (value: string) => {
       fireEvent.change(input, { target: { value } })
       expect(screen.queryByRole('button', { name: /^Use (Development|Production|Staging)$/ })).not.toBeInTheDocument()
@@ -1328,7 +1404,7 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     fireEvent.change(input, { target: { value: '$ANSIBLE_VAULT;1.2;AES256;prod\nfixture' } })
     await user.click(screen.getByRole('button', { name: 'Decrypt' }))
 
@@ -1352,7 +1428,7 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     fireEvent.change(input, { target: { value: `$ANSIBLE_VAULT;1.2;AES128;prod${String.fromCharCode(10)}fixture` } })
 
     const diagnostics = screen.getByRole('region', { name: 'Vault format diagnostics' })
@@ -1372,7 +1448,7 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     await user.type(input, `$ANSIBLE_VAULT;1.1;AES256${String.fromCharCode(10)}fixture`)
     await user.click(screen.getByRole('button', { name: 'Decrypt' }))
 
@@ -1392,7 +1468,7 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     await user.type(input, `$ANSIBLE_VAULT;1.1;AES256${String.fromCharCode(10)}fixture`)
     await user.click(screen.getByRole('button', { name: 'Decrypt' }))
 
@@ -1407,7 +1483,7 @@ describe('Vaultsmith operator experience', () => {
     render(<App />)
     await screen.findByRole('option', { name: 'Development' })
     await user.click(screen.getByRole('button', { name: 'Set decrypt mode' }))
-    const input = screen.getByRole('textbox', { name: 'Protected value to read' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to decrypt' })
     fireEvent.change(input, { target: { value: 'private-fixture-ciphertext' } })
 
     const diagnostics = screen.getByRole('region', { name: 'Vault format diagnostics' })
