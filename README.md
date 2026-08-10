@@ -17,7 +17,9 @@ Application limits:
 - Decrypt and re-key input: 5 MiB of UTF-8 Vault text.
 - JSON request body: 8 MiB.
 
-![Vaultsmith workbench](docs/screenshots/workbench.png)
+![Vaultsmith empty Encrypt workbench](docs/screenshots/workbench.png)
+
+![Vaultsmith encrypted result](docs/screenshots/encrypted-value.png)
 
 ## Use Vaultsmith
 
