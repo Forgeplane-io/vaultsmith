@@ -155,14 +155,18 @@ secret:
 
 Create the referenced Secrets and policy ConfigMap before installing the chart. Put a maintained private TLS/authentication edge in front of the service. NetworkPolicy controls pod reachability; it does not authenticate HTTP callers.
 
+Install a published chart from GHCR and pin its version:
+
 ```sh
-helm upgrade --install vaultsmith deploy/helm/vaultsmith \
+helm upgrade --install vaultsmith \
+  oci://ghcr.io/forgeplane-io/charts/vaultsmith \
+  --version 0.3.0 \
   --namespace vaultsmith \
   --create-namespace \
   -f /path/to/vaultsmith-values.yaml
 ```
 
-For the complete edge, NetworkPolicy, private-CA, Casbin, and migration contract, read [`docs/deployment.md`](docs/deployment.md).
+From a source checkout, use `deploy/helm/vaultsmith` instead of the OCI reference. For the complete edge, NetworkPolicy, private-CA, Casbin, and migration contract, read [`docs/deployment.md`](docs/deployment.md).
 
 ## Native integration test
 
