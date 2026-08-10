@@ -39,7 +39,7 @@ The chart creates `ClusterIP` Services for Vaultsmith and the bundled official V
 
 ### Published chart
 
-The latest public OCI chart is version `0.3.1`. It predates this change and does not include the bundled Valkey dependency. Do not use it for the self-contained setup below until a release containing this change is published.
+The public OCI chart is version `0.3.1`:
 
 ```sh
 helm upgrade --install vaultsmith \
@@ -50,17 +50,7 @@ helm upgrade --install vaultsmith \
   -f /path/to/vaultsmith-values.yaml
 ```
 
-### Install this change from source
-
-From the repository root, install the chart directly until the next chart release is published:
-
-```sh
-helm upgrade --install vaultsmith deploy/helm/vaultsmith \
-  --namespace vaultsmith \
-  --create-namespace \
-  -f /path/to/vaultsmith-values.yaml \
-  --wait
-```
+For a source checkout, use `deploy/helm/vaultsmith` instead of the OCI reference and omit `--version`; the source chart version is maintained separately.
 
 ### Minimal native values
 
@@ -156,7 +146,9 @@ A Gateway, HTTPRoute, Ingress annotation, or NetworkPolicy object is not proof t
 3. Install or upgrade the release:
 
    ```sh
-   helm upgrade --install vaultsmith deploy/helm/vaultsmith \
+   helm upgrade --install vaultsmith \
+     oci://ghcr.io/forgeplane-io/charts/vaultsmith \
+     --version 0.3.1 \
      --namespace vaultsmith \
      --create-namespace \
      -f /path/to/vaultsmith-values.yaml \
