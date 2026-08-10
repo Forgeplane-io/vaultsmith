@@ -53,6 +53,32 @@
             "enabled": { "type": "boolean" }
           }
         },
+        "auth": {
+          "type": "object",
+          "properties": {
+            "enabled": { "const": true },
+            "usersExistingSecret": { "const": "{{ include \"valkey.fullname\" . }}-auth" },
+            "aclConfig": { "const": "" },
+            "aclUsers": {
+              "type": "object",
+              "required": ["default"],
+              "minProperties": 1,
+              "maxProperties": 1,
+              "properties": {
+                "default": {
+                  "type": "object",
+                  "required": ["passwordKey"],
+                  "properties": {
+                    "permissions": { "type": "string" },
+                    "passwordKey": { "const": "default" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
         "service": {
           "type": "object",
           "properties": {
@@ -373,12 +399,7 @@
         "properties": {
           "valkey": {
             "properties": {
-              "enabled": { "const": true },
-              "dataStorage": {
-                "properties": {
-                  "enabled": { "const": true }
-                }
-              }
+              "enabled": { "const": true }
             }
           }
         }
