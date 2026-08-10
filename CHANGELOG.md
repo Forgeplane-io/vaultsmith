@@ -2,6 +2,13 @@
 
 All notable changes to Vaultsmith are documented here. Release Please maintains this file from Conventional Commits.
 
+## [0.3.1](https://github.com/Forgeplane-io/vaultsmith/compare/v0.3.0...v0.3.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **auth:** bound sign-out and clear sensitive state ([5fc4c14](https://github.com/Forgeplane-io/vaultsmith/commit/5fc4c144bb2ae1747769a5091fef96329d7dffc9))
+
 ## [0.3.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.2.1...v0.3.0) (2026-08-10)
 
 
