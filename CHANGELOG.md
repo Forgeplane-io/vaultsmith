@@ -2,6 +2,26 @@
 
 All notable changes to Vaultsmith are documented here. Release Please maintains this file from Conventional Commits.
 
+## [0.4.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.3.1...v0.4.0) (2026-08-10)
+
+
+### Features
+
+* **chart:** bundle official Valkey ([8aa4fdb](https://github.com/Forgeplane-io/vaultsmith/commit/8aa4fdb3f525d4481542ca3ef435ff815e42e9bf))
+
+
+### Bug Fixes
+
+* **chart:** close Valkey storage and ACL contracts ([167b83a](https://github.com/Forgeplane-io/vaultsmith/commit/167b83a69c97c6fd3519dee068a4ae1312b61db1))
+* **chart:** harden Valkey rollout and release docs ([0e30103](https://github.com/Forgeplane-io/vaultsmith/commit/0e30103275d9ae021df730032c247062190c8200))
+* **ui:** address workbench review feedback ([43f4d21](https://github.com/Forgeplane-io/vaultsmith/commit/43f4d21d547bdfddccd2f4b8611274f0172c2d5c))
+* **ui:** tighten workbench spacing ([382391f](https://github.com/Forgeplane-io/vaultsmith/commit/382391fd413fca659154dfe27ae86c361368c23b))
+
+
+### Refactoring
+
+* **ui:** align Vaultsmith workbench layout ([f163aae](https://github.com/Forgeplane-io/vaultsmith/commit/f163aaedc3425fd71e7e2a2993266304e17e9cf6))
+
 ## [0.3.1](https://github.com/Forgeplane-io/vaultsmith/compare/v0.3.0...v0.3.1) (2026-08-10)
 
 
