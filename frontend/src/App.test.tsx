@@ -428,6 +428,27 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
+  it('keeps each editor, its auxiliary content, and its actions in one pane', async () => {
+    const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;dev\\n00112233'
+    mockProfileLoad().mockResolvedValueOnce(jsonResponse({ value: ciphertext }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    const input = await findReadyValueInput()
+    await user.type(input, 'fixture-value')
+    await user.click(screen.getByRole('button', { name: 'Encrypt' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext))
+
+    const inputPane = screen.getByRole('region', { name: 'Input editor' }).parentElement
+    const outputPane = screen.getByRole('region', { name: 'Output editor' }).parentElement
+    expect(inputPane).toHaveClass('editor-pane', 'input-pane')
+    expect(outputPane).toHaveClass('editor-pane', 'output-pane')
+    expect(inputPane).toContainElement(screen.getByRole('button', { name: 'Encrypt' }))
+    expect(inputPane).not.toContainElement(screen.getByRole('button', { name: 'Copy Ansible snippet' }))
+    expect(outputPane).toContainElement(screen.getByRole('textbox', { name: 'Ansible variable name' }))
+    expect(outputPane).toContainElement(screen.getByRole('button', { name: 'Copy Ansible snippet' }))
+  })
+
   it('keeps Ansible snippet controls out of decrypt results and gives generic copy failure guidance', async () => {
     const ciphertext = '$ANSIBLE_VAULT;1.1;AES256\n00112233'
     mockProfileLoad()
