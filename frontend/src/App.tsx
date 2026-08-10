@@ -796,133 +796,133 @@ export default function App() {
               {modeNotice ? <p className="mode-notice" aria-live="polite">{modeNotice}</p> : <span className="feedback-placeholder" aria-hidden="true">&nbsp;</span>}
             </div>
 
-            <div className="editor-grid">
-              <section className="editor-card" aria-label="Input editor">
-                <div className="editor-card-header">
-                  <label className="editor-caption" htmlFor="value-input">{inputName}</label>
-                  <span className="editor-limit">{formatLimit(byteLimit)} max</span>
-                </div>
-                <textarea
-                  id="value-input"
-                  value={value}
-                  onChange={(event) => changeValue(event.target.value)}
-                  onPaste={handlePaste}
-                  placeholder={mode === 'encrypt' ? 'Paste a value…' : 'Paste protected text or a YAML !vault block…'}
-                  disabled={workbenchLocked || (!recoveringStaleCapabilities && (loadingProfiles || !modeAvailable) && value.length === 0)}
-                  spellCheck={false}
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  aria-describedby={inputDescriptionIds}
-                  rows={12}
-                />
-                <div className="editor-card-footer" id="input-byte-count"><span>Input size</span><strong>{byteLength.toLocaleString()} / {byteLimit.toLocaleString()} bytes</strong></div>
-              </section>
+            <div className="editor-panes">
+              <div className="editor-pane input-pane">
+                <section className="editor-card" aria-label="Input editor">
+                  <div className="editor-card-header">
+                    <label className="editor-caption" htmlFor="value-input">{inputName}</label>
+                    <span className="editor-limit">{formatLimit(byteLimit)} max</span>
+                  </div>
+                  <textarea
+                    id="value-input"
+                    value={value}
+                    onChange={(event) => changeValue(event.target.value)}
+                    onPaste={handlePaste}
+                    placeholder={mode === 'encrypt' ? 'Paste a value…' : 'Paste protected text or a YAML !vault block…'}
+                    disabled={workbenchLocked || (!recoveringStaleCapabilities && (loadingProfiles || !modeAvailable) && value.length === 0)}
+                    spellCheck={false}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    aria-describedby={inputDescriptionIds}
+                    rows={12}
+                  />
+                  <div className="editor-card-footer" id="input-byte-count"><span>Input size</span><strong>{byteLength.toLocaleString()} / {byteLimit.toLocaleString()} bytes</strong></div>
+                </section>
 
-              <section className="editor-card output-card" aria-label="Output editor">
-                <div className="editor-card-header">
-                  <label className="editor-caption" htmlFor="result-output">{outputName}</label>
-                  <span className="editor-limit">Result</span>
-                </div>
-                <textarea
-                  id="result-output"
-                  value={shownOutput}
-                  readOnly
-                  spellCheck={false}
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  rows={12}
-                  className={mode === 'decrypt' && output && !revealed ? 'masked-output' : ''}
-                  placeholder="No result yet"
-                />
-                <div className="editor-card-footer" id="output-byte-count"><span>Result size</span><strong>{outputByteLength.toLocaleString()} bytes</strong></div>
-              </section>
-            </div>
-
-            <div className="editor-aux-grid">
-              <div className="auxiliary-slot input-auxiliary-slot">
-                {formatInspection && value
-                  ? (
-                    <VaultFormatDiagnostics
-                      inspection={formatInspection}
-                      selectedProfileId={profileId}
-                      selectedProfileLabel={selectedProfileLabel}
-                      suggestedProfile={suggestedDecryptProfile}
-                      suggestionDisabled={workbenchLocked}
-                      onUseSuggestedProfile={useSuggestedDecryptProfile}
-                    />
-                  )
-                  : <span className="auxiliary-placeholder" aria-hidden="true">&nbsp;</span>}
-              </div>
-
-              <div className="auxiliary-slot output-auxiliary-slot">
-                {output && (mode === 'encrypt' || mode === 'rotate') && (
-                  <div className="snippet-controls">
-                    <div className="field-label">
-                      <label htmlFor="ansible-variable-name">Ansible variable name</label>
-                      <input
-                        id="ansible-variable-name"
-                        value={ansibleVariableName}
-                        onChange={(event) => {
-                          snippetCopyRequestRef.current += 1
-                          setAnsibleVariableName(event.target.value)
-                          setAnsibleSnippetFallback('')
-                          setSnippetCopyFeedback(null)
-                          setStatus('')
-                          if (error) setError('')
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') event.preventDefault()
-                        }}
-                        placeholder="app_secret"
-                        autoComplete="off"
-                        spellCheck={false}
-                        autoCorrect="off"
-                        autoCapitalize="off"
-                        aria-describedby="ansible-variable-name-help"
-                        aria-invalid={Boolean(ansibleVariableValidation)}
-                        disabled={workbenchLocked}
+                <div className="auxiliary-slot input-auxiliary-slot">
+                  {formatInspection && value
+                    ? (
+                      <VaultFormatDiagnostics
+                        inspection={formatInspection}
+                        selectedProfileId={profileId}
+                        selectedProfileLabel={selectedProfileLabel}
+                        suggestedProfile={suggestedDecryptProfile}
+                        suggestionDisabled={workbenchLocked}
+                        onUseSuggestedProfile={useSuggestedDecryptProfile}
                       />
-                      <span className="field-help" id="ansible-variable-name-help">{ansibleVariableValidation || 'Use letters, numbers, and underscores. Start with a letter or underscore. Reserved Ansible names are not allowed.'}</span>
+                    )
+                    : <span className="auxiliary-placeholder" aria-hidden="true">&nbsp;</span>}
+                </div>
+
+                <div className="panel-actions input-actions">
+                  <button className="primary-button" type="submit" disabled={!canSubmit}>
+                    {busy ? operationProgressLabel(mode) : operationLabel(mode)}
+                  </button>
+                  {busy && <button className="secondary-button" type="button" onClick={cancelOperation}>Cancel</button>}
+                  <button className="quiet-button" type="button" onClick={clearAll} disabled={workbenchLocked || !canClear}>Clear values</button>
+                </div>
+              </div>
+
+              <div className="editor-pane output-pane">
+                <section className="editor-card output-card" aria-label="Output editor">
+                  <div className="editor-card-header">
+                    <label className="editor-caption" htmlFor="result-output">{outputName}</label>
+                    <span className="editor-limit">Result</span>
+                  </div>
+                  <textarea
+                    id="result-output"
+                    value={shownOutput}
+                    readOnly
+                    spellCheck={false}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    rows={12}
+                    className={mode === 'decrypt' && output && !revealed ? 'masked-output' : ''}
+                    placeholder="No result yet"
+                  />
+                  <div className="editor-card-footer" id="output-byte-count"><span>Result size</span><strong>{outputByteLength.toLocaleString()} bytes</strong></div>
+                </section>
+
+                <div className="auxiliary-slot output-auxiliary-slot">
+                  {output && (mode === 'encrypt' || mode === 'rotate') && (
+                    <div className="snippet-controls">
+                      <div className="field-label">
+                        <label htmlFor="ansible-variable-name">Ansible variable name</label>
+                        <input
+                          id="ansible-variable-name"
+                          value={ansibleVariableName}
+                          onChange={(event) => {
+                            snippetCopyRequestRef.current += 1
+                            setAnsibleVariableName(event.target.value)
+                            setAnsibleSnippetFallback('')
+                            setSnippetCopyFeedback(null)
+                            setStatus('')
+                            if (error) setError('')
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') event.preventDefault()
+                          }}
+                          placeholder="app_secret"
+                          autoComplete="off"
+                          spellCheck={false}
+                          autoCorrect="off"
+                          autoCapitalize="off"
+                          aria-describedby="ansible-variable-name-help"
+                          aria-invalid={Boolean(ansibleVariableValidation)}
+                          disabled={workbenchLocked}
+                        />
+                        <span className="field-help" id="ansible-variable-name-help">{ansibleVariableValidation || 'Use letters, numbers, and underscores. Start with a letter or underscore. Reserved Ansible names are not allowed.'}</span>
+                      </div>
+                      <button className="secondary-button" type="button" onClick={() => void copyAnsibleSnippet()} disabled={!canCopyAnsibleSnippet}>Copy Ansible snippet</button>
+                      {snippetCopyFeedback && <span className={`copy-feedback ${snippetCopyFeedback.tone}`} role={snippetCopyFeedback.tone === 'error' ? 'alert' : 'status'}>{snippetCopyFeedback.message}</span>}
                     </div>
-                    <button className="secondary-button" type="button" onClick={() => void copyAnsibleSnippet()} disabled={!canCopyAnsibleSnippet}>Copy Ansible snippet</button>
-                    {snippetCopyFeedback && <span className={`copy-feedback ${snippetCopyFeedback.tone}`} role={snippetCopyFeedback.tone === 'error' ? 'alert' : 'status'}>{snippetCopyFeedback.message}</span>}
-                  </div>
-                )}
-                {ansibleSnippetFallback && (
-                  <div className="snippet-fallback">
-                    <label htmlFor="ansible-snippet-fallback">Ansible snippet to copy manually</label>
-                    <textarea
-                      id="ansible-snippet-fallback"
-                      value={ansibleSnippetFallback}
-                      readOnly
-                      spellCheck={false}
-                      aria-describedby="ansible-snippet-fallback-help"
-                      rows={8}
-                    />
-                    <span className="field-help" id="ansible-snippet-fallback-help">Clipboard access failed. Select this formatted snippet and copy it manually.</span>
-                  </div>
-                )}
-                {!output || (mode !== 'encrypt' && mode !== 'rotate') ? <span className="auxiliary-placeholder" aria-hidden="true">&nbsp;</span> : null}
-              </div>
-            </div>
+                  )}
+                  {ansibleSnippetFallback && (
+                    <div className="snippet-fallback">
+                      <label htmlFor="ansible-snippet-fallback">Ansible snippet to copy manually</label>
+                      <textarea
+                        id="ansible-snippet-fallback"
+                        value={ansibleSnippetFallback}
+                        readOnly
+                        spellCheck={false}
+                        aria-describedby="ansible-snippet-fallback-help"
+                        rows={8}
+                      />
+                      <span className="field-help" id="ansible-snippet-fallback-help">Clipboard access failed. Select this formatted snippet and copy it manually.</span>
+                    </div>
+                  )}
+                  {!output || (mode !== 'encrypt' && mode !== 'rotate') ? <span className="auxiliary-placeholder" aria-hidden="true">&nbsp;</span> : null}
+                </div>
 
-            <div className="editor-actions-grid">
-              <div className="panel-actions input-actions">
-                <button className="primary-button" type="submit" disabled={!canSubmit}>
-                  {busy ? operationProgressLabel(mode) : operationLabel(mode)}
-                </button>
-                {busy && <button className="secondary-button" type="button" onClick={cancelOperation}>Cancel</button>}
-                <button className="quiet-button" type="button" onClick={clearAll} disabled={workbenchLocked || !canClear}>Clear values</button>
-              </div>
-
-              <div className="panel-actions output-actions">
-                {output && !handoffEligible && <span className="result-handoff-notice" id="result-handoff-unavailable">{handoffUnavailableReason}</span>}
-                {mode === 'decrypt' && output && <button className="secondary-button" type="button" disabled={workbenchLocked} onClick={() => { if (signingOut) return; setRevealed((current) => !current); setError(''); setResultCopyFeedback(null) }}>{revealed ? 'Hide result' : 'Reveal result'}</button>}
-                <button className="secondary-button" type="button" onClick={useResultAsInput} aria-describedby={output && !handoffEligible ? 'result-handoff-unavailable' : undefined} disabled={!canUseResultAsInput}>{handoffLabel}</button>
-                <button className="secondary-button" type="button" onClick={() => void copyResult()} disabled={copyDisabled}>{copyLabel}</button>
-                {resultCopyFeedback && <span className={`copy-feedback ${resultCopyFeedback.tone}`} role={resultCopyFeedback.tone === 'error' ? 'alert' : 'status'}>{resultCopyFeedback.message}</span>}
+                <div className="panel-actions output-actions">
+                  {output && !handoffEligible && <span className="result-handoff-notice" id="result-handoff-unavailable">{handoffUnavailableReason}</span>}
+                  {mode === 'decrypt' && output && <button className="secondary-button" type="button" disabled={workbenchLocked} onClick={() => { if (signingOut) return; setRevealed((current) => !current); setError(''); setResultCopyFeedback(null) }}>{revealed ? 'Hide result' : 'Reveal result'}</button>}
+                  <button className="secondary-button" type="button" onClick={useResultAsInput} aria-describedby={output && !handoffEligible ? 'result-handoff-unavailable' : undefined} disabled={!canUseResultAsInput}>{handoffLabel}</button>
+                  <button className="secondary-button" type="button" onClick={() => void copyResult()} disabled={copyDisabled}>{copyLabel}</button>
+                  {resultCopyFeedback && <span className={`copy-feedback ${resultCopyFeedback.tone}`} role={resultCopyFeedback.tone === 'error' ? 'alert' : 'status'}>{resultCopyFeedback.message}</span>}
+                </div>
               </div>
             </div>
           </form>
