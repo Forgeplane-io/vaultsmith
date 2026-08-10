@@ -1,6 +1,6 @@
 {{- include "vaultsmith.validate" . -}}
 {{- $hasIngress := or .Values.networkPolicy.denyAllIngress .Values.networkPolicy.allowedIngress }}
-{{- $hasEgress := .Values.networkPolicy.allowedEgress }}
+{{- $hasEgress := or .Values.networkPolicy.allowedEgress .Values.valkey.enabled }}
 {{- if and .Values.networkPolicy.enabled (or $hasIngress $hasEgress) }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -31,7 +31,7 @@ spec:
   {{- else if .Values.networkPolicy.denyAllIngress }}
   ingress: []
   {{- end }}
-  {{- if .Values.networkPolicy.allowedEgress }}
+  {{- if or .Values.networkPolicy.allowedEgress .Values.valkey.enabled }}
   egress:
     {{- range .Values.networkPolicy.allowedEgress }}
     - {{- with .to }}
@@ -42,6 +42,16 @@ spec:
       ports:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+    {{- end }}
+    {{- if .Values.valkey.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ default "valkey" .Values.valkey.nameOverride | quote }}
+              app.kubernetes.io/instance: {{ .Release.Name | quote }}
+      ports:
+        - protocol: TCP
+          port: 6379
     {{- end }}
   {{- end }}
 {{- end }}

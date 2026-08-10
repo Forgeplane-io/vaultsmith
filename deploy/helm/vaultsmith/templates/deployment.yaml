@@ -86,9 +86,9 @@ spec:
             - name: COOKIE_SAME_SITE
               value: {{ .Values.auth.session.sameSite | quote }}
             - name: REDIS_ADDR
-              value: {{ .Values.auth.redis.address | quote }}
+              value: {{ include "vaultsmith.redisAddress" . | quote }}
             - name: REDIS_USERNAME
-              value: {{ .Values.auth.redis.username | quote }}
+              value: {{ include "vaultsmith.redisUsername" . | quote }}
             - name: REDIS_DB
               value: {{ .Values.auth.redis.database | quote }}
             - name: REDIS_TLS
@@ -129,12 +129,12 @@ spec:
                   key: {{ .Values.auth.oidc.clientSecret.key | quote }}
                   optional: false
             {{- end }}
-            {{- if .Values.auth.redis.password.existingSecret }}
+            {{- if or .Values.valkey.enabled .Values.auth.redis.password.existingSecret }}
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.auth.redis.password.existingSecret | quote }}
-                  key: {{ .Values.auth.redis.password.key | quote }}
+                  name: {{ include "vaultsmith.redisPasswordSecretName" . | quote }}
+                  key: {{ include "vaultsmith.redisPasswordKey" . | quote }}
                   optional: false
             {{- end }}
             - name: VAULT_PROFILES_JSON

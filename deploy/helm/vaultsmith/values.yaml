@@ -62,6 +62,27 @@ auth:
   cors:
     allowedOrigins: []
 
+# The official Valkey chart is included by default. Set enabled to false only
+# when auth.redis.address points to an externally managed Valkey/Redis service.
+valkey:
+  enabled: true
+  service:
+    type: ClusterIP
+    port: 6379
+  serviceAccount:
+    automount: false
+  dataStorage:
+    enabled: true
+    requestedSize: 1Gi
+  auth:
+    enabled: true
+    # The parent chart creates this Secret and preserves its password on upgrade.
+    usersExistingSecret: '{{ include "valkey.fullname" . }}-auth'
+    aclUsers:
+      default:
+        permissions: "~* &* +@all"
+        passwordKey: default
+
 profiles: []
 
 secret:

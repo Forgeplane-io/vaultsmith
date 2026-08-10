@@ -147,6 +147,8 @@ auth:
     data: |-
       p, role:operator, profiles, profiles:list, allow
       p, role:operator, profile:dev, encrypt, allow
+valkey:
+  enabled: false
 networkPolicy:
   enabled: true
   allowedIngress:
@@ -201,6 +203,65 @@ grep -Fq 'path: policy.csv' "$TMP_DIR/native-render.yaml" || fail 'policy mount 
 grep -Fq '    - Egress' "$TMP_DIR/native-render.yaml" || fail 'native NetworkPolicy egress type is missing'
 grep -Fq 'port: 53' "$TMP_DIR/native-render.yaml" || fail 'native cluster DNS egress port is missing'
 grep -Fq 'port: 6379' "$TMP_DIR/native-render.yaml" || fail 'native Redis egress port is missing'
+
+cat > "$TMP_DIR/bundled-native.yaml" <<'VALUES'
+auth:
+  mode: native
+  csrf:
+    existingSecret: vaultsmith-auth
+    key: csrf-secret
+  oidc:
+    issuerURL: https://idp.example.test/realms/vaultsmith
+    clientID: vaultsmith
+    clientSecret:
+      existingSecret: vaultsmith-auth
+      key: oidc-client-secret
+    redirectURL: https://vault.example.test/auth/callback
+    publicBaseURL: https://vault.example.test
+  policy:
+    key: policy.csv
+    data: |-
+      p, role:operator, profiles, profiles:list, allow
+      p, role:operator, profile:dev, encrypt, allow
+networkPolicy:
+  enabled: true
+  allowedEgress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - protocol: TCP
+          port: 443
+VALUES
+helm lint "$CHART_DIR" -f "$TMP_DIR/bundled-native.yaml" >/dev/null
+render -f "$TMP_DIR/bundled-native.yaml" > "$TMP_DIR/bundled-native-render.yaml"
+grep -Fq 'name: vaultsmith-valkey-auth' "$TMP_DIR/bundled-native-render.yaml" || fail 'bundled Valkey auth Secret is missing'
+assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'- name: REDIS_ADDR\n              value: "vaultsmith-valkey:6379"' 'bundled Valkey address was not wired into Vaultsmith'
+assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'- name: REDIS_USERNAME\n              value: "default"' 'bundled Valkey username was not wired into Vaultsmith'
+assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'- name: REDIS_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  name: "vaultsmith-valkey-auth"\n                  key: "default"\n                  optional: false' 'bundled Valkey password Secret was not wired into Vaultsmith'
+assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'app.kubernetes.io/name: "valkey"\n              app.kubernetes.io/instance: "vaultsmith"\n      ports:\n        - protocol: TCP\n          port: 6379' 'bundled Valkey NetworkPolicy egress is missing'
+
+external_valkey_error='auth.redis.address must be empty when the bundled Valkey chart is enabled'
+assert_render_fails_with "$external_valkey_error" -f "$TMP_DIR/bundled-native.yaml" --set auth.redis.address=redis.example.test:6379
+
+external_address_error='auth.redis.address is required when valkey.enabled is false'
+assert_render_fails_with 'auth/redis/address' -f "$TMP_DIR/bundled-native.yaml" --set valkey.enabled=false
+assert_render_fails_with "$external_address_error" -f "$TMP_DIR/bundled-native.yaml" --set valkey.enabled=false --skip-schema-validation
+assert_render_fails_with 'valkey.auth.enabled must remain true when the bundled Valkey chart is enabled' -f "$TMP_DIR/valid.yaml" --set valkey.auth.enabled=false
+assert_render_fails_with 'valkey.auth.usersExistingSecret is managed by the parent chart' -f "$TMP_DIR/valid.yaml" --set valkey.auth.usersExistingSecret=other
+assert_render_fails_with 'valkey.auth.aclUsers.default.passwordKey must be default for the bundled Valkey chart' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.default.passwordKey=other
 
 egress_error='networkPolicy.allowedEgress must allow OIDC and Redis egress in native mode, or disable networkPolicy explicitly'
 assert_render_fails_with "$egress_error" -f "$TMP_DIR/native.yaml" --set-json 'networkPolicy.allowedEgress=[]'

@@ -15,6 +15,41 @@
 {{- end }}
 {{- end }}
 
+{{- define "vaultsmith.valkeyFullname" -}}
+{{- $name := default "valkey" .Values.valkey.nameOverride }}
+{{- if .Values.valkey.fullnameOverride }}
+{{- .Values.valkey.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else if contains $name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+
+{{- define "vaultsmith.valkeyAuthSecretName" -}}
+{{- printf "%s-auth" (include "vaultsmith.valkeyFullname" .) -}}
+{{- end }}
+
+{{- define "vaultsmith.redisAddress" -}}
+{{- if .Values.valkey.enabled }}
+{{- printf "%s:%d" (include "vaultsmith.valkeyFullname" .) (int .Values.valkey.service.port) -}}
+{{- else }}
+{{- .Values.auth.redis.address -}}
+{{- end }}
+{{- end }}
+
+{{- define "vaultsmith.redisUsername" -}}
+{{- if .Values.valkey.enabled }}default{{ else }}{{ .Values.auth.redis.username }}{{ end }}
+{{- end }}
+
+{{- define "vaultsmith.redisPasswordSecretName" -}}
+{{- if .Values.valkey.enabled }}{{ include "vaultsmith.valkeyAuthSecretName" . }}{{ else }}{{ .Values.auth.redis.password.existingSecret }}{{ end }}
+{{- end }}
+
+{{- define "vaultsmith.redisPasswordKey" -}}
+{{- if .Values.valkey.enabled }}default{{ else }}{{ .Values.auth.redis.password.key }}{{ end }}
+{{- end }}
+
 {{- define "vaultsmith.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
@@ -66,6 +101,13 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $mode := required "auth.mode must be explicitly set to native or off" .Values.auth.mode -}}
 {{- if not (has $mode (list "off" "native")) }}{{ fail (printf "auth.mode must be off or native, got %q" $mode) }}{{ end }}
 {{- if and .Values.auth.policy.data .Values.auth.policy.existingConfigMap }}{{ fail "auth.policy.data and auth.policy.existingConfigMap are mutually exclusive" }}{{ end }}
+{{- if .Values.valkey.enabled }}
+{{- if not .Values.valkey.auth.enabled }}{{ fail "valkey.auth.enabled must remain true when the bundled Valkey chart is enabled" }}{{ end }}
+{{- if ne .Values.valkey.auth.usersExistingSecret `{{ include "valkey.fullname" . }}-auth` }}{{ fail "valkey.auth.usersExistingSecret is managed by the parent chart" }}{{ end }}
+{{- if not (hasKey .Values.valkey.auth.aclUsers "default") }}{{ fail "valkey.auth.aclUsers.default is required for the bundled Valkey chart" }}{{ end }}
+{{- if ne .Values.valkey.auth.aclUsers.default.passwordKey "default" }}{{ fail "valkey.auth.aclUsers.default.passwordKey must be default for the bundled Valkey chart" }}{{ end }}
+{{- if .Values.valkey.auth.aclConfig }}{{ fail "valkey.auth.aclConfig cannot be set when the parent chart manages Valkey authentication" }}{{ end }}
+{{- end }}
 {{- if eq $mode "native" }}
 {{- $_ := required "auth.csrf.existingSecret is required in native mode" .Values.auth.csrf.existingSecret }}
 {{- $_ := required "auth.oidc.issuerURL is required in native mode" .Values.auth.oidc.issuerURL }}
@@ -73,10 +115,16 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $_ := required "auth.oidc.clientSecret.existingSecret is required in native mode" .Values.auth.oidc.clientSecret.existingSecret }}
 {{- $_ := required "auth.oidc.redirectURL is required in native mode" .Values.auth.oidc.redirectURL }}
 {{- $_ := required "auth.oidc.publicBaseURL is required in native mode" .Values.auth.oidc.publicBaseURL }}
-{{- $_ := required "auth.redis.address is required in native mode" .Values.auth.redis.address }}
 {{- $_ := required "auth.policy.data or auth.policy.existingConfigMap is required in native mode" (default .Values.auth.policy.existingConfigMap .Values.auth.policy.data) }}
 {{- if not .Values.auth.session.secure }}{{ fail "auth.session.secure must be true in native mode" }}{{ end }}
+{{- if .Values.valkey.enabled }}
+{{- if .Values.auth.redis.address }}{{ fail "auth.redis.address must be empty when the bundled Valkey chart is enabled" }}{{ end }}
+{{- if and .Values.auth.redis.username (ne .Values.auth.redis.username "default") }}{{ fail "auth.redis.username must be default when the bundled Valkey chart is enabled" }}{{ end }}
+{{- if .Values.auth.redis.password.existingSecret }}{{ fail "auth.redis.password.existingSecret must be empty when the bundled Valkey chart is enabled" }}{{ end }}
+{{- else }}
+{{- $_ := required "auth.redis.address is required when valkey.enabled is false" .Values.auth.redis.address }}
 {{- if and .Values.auth.redis.username (not .Values.auth.redis.password.existingSecret) }}{{ fail "auth.redis.password.existingSecret is required when auth.redis.username is configured" }}{{ end }}
+{{- end }}
 {{- if and .Values.networkPolicy.enabled (not .Values.networkPolicy.allowedEgress) }}{{ fail "networkPolicy.allowedEgress must allow OIDC and Redis egress in native mode, or disable networkPolicy explicitly" }}{{ end }}
 {{- end }}
 {{- if and .Values.networkPolicy.enabled .Values.networkPolicy.denyAllIngress .Values.networkPolicy.allowedIngress }}{{ fail "networkPolicy.denyAllIngress cannot be combined with allowedIngress" }}{{ end }}

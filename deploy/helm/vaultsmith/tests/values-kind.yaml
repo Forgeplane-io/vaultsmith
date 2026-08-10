@@ -14,3 +14,7 @@ profiles:
 
 secret:
   existingSecret: vaultsmith-passwords
+
+valkey:
+  dataStorage:
+    enabled: false
