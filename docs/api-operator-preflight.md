@@ -134,19 +134,19 @@ Run these checks in order:
 
 1. Test the released UI against a mix of old and bridge replicas. Profile listing and one legacy operation must succeed, and the operation must run once.
 2. Test a Bearer client against one bridge canary. Verify audience, scopes, Casbin policy, and rejection of mixed credentials.
-3. Verify that `/mcp` returns `404` for every method, including `OPTIONS`, while MCP is disabled.
-4. Roll out the bridge to every serving replica before starting Bearer clients.
+3. On every serving replica, verify that `/mcp` returns `404` for every method, including `OPTIONS`, while MCP is disabled.
+4. Roll out the bridge to every serving replica before starting external clients on canonical REST.
 5. Set `mcp.enabled=true` in a separate rollout. Start MCP callers only after every serving replica has MCP enabled.
 6. Run `server/discover`, `tools/list`, and one call for each tool with protocol revision `2026-07-28`. Confirm that responses stay within the protocol limits.
 7. Check `/healthz`, `/readyz`, issuer readiness, and JWKS readiness against their documented statuses.
 8. Inspect logs and traces for plaintext, Vault text, cookies, Bearer tokens, claims, and cryptographic errors.
 
-Rollback notes:
+Rollback is ordered:
 
-- Bridge image or traffic rollback:
-- Bearer-client stop procedure:
-- MCP disable rollout (`mcp.enabled=false`):
-- Owner for each action:
+1. Stop all canonical external REST clients before rolling any replica below the bridge release.
+2. Stop MCP callers before setting `mcp.enabled=false`.
+3. Record the restart owner and get separate restart approval before the MCP-disable or bridge-image rollout.
+4. Roll back the bridge image or route traffic to the previous replicas.
 
 A rollback must not require profile password or policy changes.
 
