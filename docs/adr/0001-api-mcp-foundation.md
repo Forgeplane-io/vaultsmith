@@ -45,7 +45,7 @@ Health, readiness, login, callback, logout, and browser-session bootstrap routes
 - In `native` mode, the legacy route accepts browser sessions only and rejects an `Authorization` header before reading the body.
 - In `off` mode, REST and enabled MCP are anonymous. Any caller that can reach them can run every operation. Vaultsmith rejects supplied `Authorization` headers because it cannot validate them in this mode.
 - Browser-session mutations require CSRF. Bearer and anonymous requests do not.
-- Bearer requests never fall back to a session or read session state from Redis.
+- Bearer requests never fall back to a session or read or write Redis session state.
 - Vaultsmith ignores client-supplied identity headers.
 
 The shared caller record contains the authentication kind, verified issuer and subject, verified groups, and verified OAuth scopes.
@@ -75,13 +75,13 @@ Before binding the listener, native mode requires:
 - an RFC 9068 JWT access token signed with `RS256`, `PS256`, `ES256`, or `EdDSA`; and
 - matching issuer and audience claims, the required token-profile and time claims, and at most 60 seconds of clock skew.
 
-Vaultsmith serves protected-resource metadata at the root in native mode. REST and MCP challenges on other paths omit `resource_metadata`.
+Vaultsmith serves one public root protected-resource metadata document in native mode. REST and MCP challenges on other paths omit `resource_metadata`.
 
 ### Shared operation service
 
 A shared caller package and `backend/internal/vaultservice` own profile projection, validation, authorization, limits, operation dispatch, cancellation, and safe domain errors.
 
-Every mutation passes through `Prepare` once. `Prepare` requires the active admission lease, validates the command, and returns a request-bound operation. `Run` can execute only that prepared operation.
+Every mutation passes through `Prepare` once. `Prepare` is the single full authorization point: it requires the active admission lease, validates and authorizes the command, and returns a request-bound prepared operation. `Run` can execute only that operation.
 
 One non-blocking admission controller covers body decoding and Vault work for canonical REST, the legacy route, and MCP. Its capacity is fixed in code from a checked-in benchmark. Helm does not configure it.
 
@@ -120,9 +120,9 @@ Vaultsmith does not retry encrypt or rotate operations and does not add an idemp
 
 ### MCP
 
-The Helm value `mcp.enabled` maps to `MCP_ENABLED` and defaults to `false`. It changes no Service, port, or route configuration.
+The only new Helm value is `mcp.enabled`. It maps to `MCP_ENABLED`, defaults to `false`, and changes no Service, port, or route configuration.
 
-The MCP endpoint uses stateless Streamable HTTP revision `2026-07-28`. It accepts `POST /mcp` and valid CORS preflight requests. It implements:
+The MCP endpoint supports only stateless Streamable HTTP revision `2026-07-28`. It accepts `POST /mcp` and valid CORS preflight requests. It implements:
 
 - `server/discover`
 - `tools/list`
@@ -148,7 +148,7 @@ Generated files are committed. CI regenerates and compiles them, validates OpenA
 
 Clients must ignore unknown response properties. New routes and optional response properties remain compatible with v1. Removing or renaming a field or route, or changing a status meaning, requires v2.
 
-The v0.4.0 decoder accepted omitted or null strings, empty or null fields from the wrong operation variant, non-canonical profile IDs, case-insensitive field names, duplicate keys, malformed UTF-8, unsupported content encodings, ambiguous credentials, oversized decrypted output, and legacy middleware error codes that the new bridge rejects. `oasdiff` findings are accepted one occurrence at a time. Changes that OpenAPI cannot describe need tests, an ADR entry, and release-note coverage. The bridge does not claim byte-for-byte compatibility with the old decoder.
+The v0.4.0 decoder accepted omitted or null strings, empty or null fields from the wrong operation variant, non-canonical profile IDs, case-insensitive field names, duplicate keys, malformed UTF-8, unsupported content encodings, ambiguous credentials, oversized decrypted output, and legacy middleware error codes that the new bridge rejects. `oasdiff` findings are accepted one occurrence at a time. Release notes list every hardening in this paragraph, whether or not OpenAPI or `oasdiff` can describe it. Changes that OpenAPI cannot describe also need tests and an ADR entry. The bridge does not claim byte-for-byte compatibility with the old decoder.
 
 ### Data and telemetry
 
@@ -159,7 +159,7 @@ Logs, metrics, traces, errors, and new state must not contain request or respons
 ## Consequences
 
 - Old UI assets can keep using `/api/v1/operations` during the bridge rollout.
-- Bearer clients start only after every serving pod runs the bridge release.
+- External clients do not use canonical REST until every serving pod runs the bridge release.
 - MCP starts in a separate rollout after every serving pod has it enabled.
 - Operators complete [`api-operator-preflight.md`](../api-operator-preflight.md) before enabling Bearer or MCP access.
 - A later release can move the bundled UI to the canonical routes.
