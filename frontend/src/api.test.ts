@@ -40,6 +40,22 @@ describe('API client', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/profiles', expect.objectContaining({ headers: { Accept: 'application/json' } }))
   })
 
+  it('accepts additive profile capability fields from newer servers', async () => {
+    const profiles = [{
+      id: 'dev',
+      label: 'Development',
+      capabilities: {
+        encrypt: true,
+        decrypt: false,
+        rotateSource: true,
+        rotateDestination: false,
+      },
+    }]
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ profiles }))
+
+    await expect(api.fetchProfiles()).resolves.toEqual(profiles)
+  })
+
   it('rejects a profile response without boolean capabilities', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({ profiles: [{ id: 'dev', label: 'Development' }] }),

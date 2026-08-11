@@ -1,0 +1,470 @@
+openapi: 3.1.0
+info:
+  title: Vaultsmith REST API v0.4.0 baseline
+  version: 0.4.0
+  description: |
+    Frozen reconstruction of the machine-facing REST surface released in
+    Vaultsmith v0.4.0 at commit 881a42a248c71d740b8896d86e63b808bdf9bfa2.
+
+    This file is an immutable compatibility base. It contains only the released
+    profile catalog and tagged legacy operation routes. In native mode these
+    routes use the browser session and unsafe requests require CSRF. In off mode
+    the same routes are anonymous at runtime.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://vaultsmith.example.test
+    description: Synthetic native-mode deployment
+paths:
+  /api/v1/profiles:
+    get:
+      operationId: listProfiles
+      summary: List visible Vault profiles
+      description: |
+        Returns safe profile metadata in configured order. Native-mode policy
+        filtering can return a successful empty catalog. Response clients must
+        ignore properties that they do not understand.
+      security:
+        - SessionCookie: []
+      responses:
+        "200":
+          description: Visible profiles and their effective released capabilities.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilesResponse"
+              examples:
+                oneProfile:
+                  value:
+                    profiles:
+                      - id: development
+                        label: Development
+                        capabilities:
+                          encrypt: true
+                          decrypt: false
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedGet"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/operations:
+    post:
+      operationId: legacyOperation
+      summary: Run a tagged Vault operation
+      description: |
+        Runs encrypt, decrypt, or rotate through the released tagged request.
+        This route is session-only in native mode and anonymous in off mode.
+        Encrypt input is limited to 1 MiB of UTF-8 bytes. Decrypt and rotate
+        input is limited to 5 MiB of UTF-8 bytes. The complete JSON body is
+        limited to 8 MiB.
+      security:
+        - SessionCookie: []
+          CsrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LegacyOperationRequest"
+            examples:
+              encrypt:
+                value:
+                  profileId: development
+                  mode: encrypt
+                  value: synthetic value
+              decrypt:
+                value:
+                  profileId: development
+                  mode: decrypt
+                  value: "$ANSIBLE_VAULT;1.2;AES256;development\n31323334"
+              rotate:
+                value:
+                  mode: rotate
+                  sourceProfileId: development
+                  destinationProfileId: production
+                  value: "$ANSIBLE_VAULT;1.2;AES256;development\n31323334"
+      responses:
+        "200":
+          description: The encrypted Vault text, decrypted plaintext, or rotated Vault text.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegacyValueResponse"
+              examples:
+                value:
+                  value:
+                    value: "$ANSIBLE_VAULT;1.2;AES256;development\n31323334"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedPost"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/OperationFailed"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-vaultsmith_session
+      description: Opaque native-mode browser session cookie.
+    CsrfHeader:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: Native-mode CSRF token required with the session on unsafe requests.
+  headers:
+    NoStore:
+      description: Released API responses and errors are never stored.
+      required: true
+      schema:
+        type: string
+        const: no-store
+    AllowGet:
+      description: The only accepted method for the resource.
+      required: true
+      schema:
+        type: string
+        const: GET
+    AllowPost:
+      description: The only accepted method for the resource.
+      required: true
+      schema:
+        type: string
+        const: POST
+  responses:
+    InvalidRequest:
+      description: The request is malformed or violates the tagged operation contract.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: invalid_request
+              message: request is invalid
+    Unauthorized:
+      description: Native-mode browser authentication is required or invalid.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: unauthorized
+              message: request could not be authenticated
+    Forbidden:
+      description: CORS, CSRF verification, or native-mode profile policy denied the request.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: forbidden
+              message: operation is not permitted
+    NotFound:
+      description: A route or off-mode profile was not found.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: not_found
+              message: profile was not found
+    MethodNotAllowedGet:
+      description: The resource does not accept this method.
+      headers:
+        Allow:
+          $ref: "#/components/headers/AllowGet"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: method_not_allowed
+              message: method is not allowed
+    MethodNotAllowedPost:
+      description: The resource does not accept this method.
+      headers:
+        Allow:
+          $ref: "#/components/headers/AllowPost"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: method_not_allowed
+              message: method is not allowed
+    RequestTooLarge:
+      description: The JSON body or submitted value exceeds its byte limit.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: invalid_request
+              message: request is too large
+    UnsupportedMediaType:
+      description: The request content type is not application/json.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: invalid_request
+              message: content type must be application/json
+    OperationFailed:
+      description: The Vault operation failed without exposing the underlying cause.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: operation_failed
+              message: vault operation failed
+    ServiceUnavailable:
+      description: A required service dependency is not ready or available.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: not_ready
+              message: service is not ready
+  schemas:
+    ProfileId:
+      type: string
+      pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"
+      minLength: 1
+      maxLength: 64
+      examples:
+        - development
+    ProfileCapabilities:
+      type: object
+      description: Released effective capabilities. Clients ignore unknown properties.
+      required:
+        - encrypt
+        - decrypt
+      properties:
+        encrypt:
+          type: boolean
+        decrypt:
+          type: boolean
+    Profile:
+      type: object
+      description: Safe public profile metadata. Clients ignore unknown properties.
+      required:
+        - id
+        - label
+        - capabilities
+      properties:
+        id:
+          $ref: "#/components/schemas/ProfileId"
+        label:
+          type: string
+        capabilities:
+          $ref: "#/components/schemas/ProfileCapabilities"
+    ProfilesResponse:
+      type: object
+      description: Ordered visible profile catalog. Clients ignore unknown properties.
+      required:
+        - profiles
+      properties:
+        profiles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Profile"
+    LegacyOperationRequest:
+      oneOf:
+        - $ref: "#/components/schemas/LegacyEncryptRequest"
+        - $ref: "#/components/schemas/LegacyDecryptRequest"
+        - $ref: "#/components/schemas/LegacyRotateRequest"
+      discriminator:
+        propertyName: mode
+        mapping:
+          encrypt: "#/components/schemas/LegacyEncryptRequest"
+          decrypt: "#/components/schemas/LegacyDecryptRequest"
+          rotate: "#/components/schemas/LegacyRotateRequest"
+    LegacyEncryptRequest:
+      type: object
+      description: |
+        Released decoder behavior. profileId and value could be omitted or null;
+        sourceProfileId and destinationProfileId could be omitted, null, or empty.
+      additionalProperties: false
+      required:
+        - mode
+      properties:
+        profileId:
+          type: [string, "null"]
+          description: Any string reached profile lookup; omission and null decoded as empty.
+        sourceProfileId:
+          type: [string, "null"]
+          maxLength: 0
+          description: Variant-irrelevant field tolerated only when omitted, null, or empty.
+        destinationProfileId:
+          type: [string, "null"]
+          maxLength: 0
+          description: Variant-irrelevant field tolerated only when omitted, null, or empty.
+        mode:
+          type: string
+          enum:
+            - encrypt
+        value:
+          type: [string, "null"]
+          description: UTF-8 plaintext, limited to 1 MiB by encoded bytes. Omission and null decoded as empty.
+          x-max-bytes: 1048576
+    LegacyDecryptRequest:
+      type: object
+      description: |
+        Released decoder behavior. profileId and value could be omitted or null;
+        sourceProfileId and destinationProfileId could be omitted, null, or empty.
+      additionalProperties: false
+      required:
+        - mode
+      properties:
+        profileId:
+          type: [string, "null"]
+          description: Any string reached profile lookup; omission and null decoded as empty.
+        sourceProfileId:
+          type: [string, "null"]
+          maxLength: 0
+          description: Variant-irrelevant field tolerated only when omitted, null, or empty.
+        destinationProfileId:
+          type: [string, "null"]
+          maxLength: 0
+          description: Variant-irrelevant field tolerated only when omitted, null, or empty.
+        mode:
+          type: string
+          enum:
+            - decrypt
+        value:
+          type: [string, "null"]
+          description: UTF-8 Ansible Vault text, limited to 5 MiB by encoded bytes. Omission and null decoded as empty.
+          x-max-bytes: 5242880
+    LegacyRotateRequest:
+      type: object
+      description: |
+        Released decoder behavior. value could be omitted or null; profileId could
+        be omitted, null, or empty. Non-empty source and destination strings reached lookup.
+      additionalProperties: false
+      required:
+        - sourceProfileId
+        - destinationProfileId
+        - mode
+      properties:
+        profileId:
+          type: [string, "null"]
+          maxLength: 0
+          description: Variant-irrelevant field tolerated only when omitted, null, or empty.
+        sourceProfileId:
+          type: string
+          minLength: 1
+          description: Any non-empty string reached profile lookup.
+        destinationProfileId:
+          type: string
+          minLength: 1
+          description: Any non-empty string reached profile lookup.
+        mode:
+          type: string
+          enum:
+            - rotate
+        value:
+          type: [string, "null"]
+          description: UTF-8 Ansible Vault text, limited to 5 MiB by encoded bytes. Omission and null decoded as empty.
+          x-max-bytes: 5242880
+    LegacyValueResponse:
+      type: object
+      description: Released generic success response. Clients ignore unknown properties.
+      required:
+        - value
+      properties:
+        value:
+          type: string
+    ErrorResponse:
+      type: object
+      description: Safe API error envelope. Clients ignore unknown properties.
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ApiError"
+    ApiError:
+      type: object
+      description: Safe error code and human text. Clients ignore unknown properties.
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          enum:
+            - invalid_request
+            - unauthorized
+            - forbidden
+            - cors_forbidden
+            - csrf_failed
+            - csrf_unavailable
+            - not_found
+            - method_not_allowed
+            - operation_failed
+            - not_ready
+            - temporarily_unavailable
+        message:
+          type: string

@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "fingerprint": "6705e3ab4a64",
+      "ruleId": "request-property-became-not-nullable",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyDecryptRequest.profileId: the released value-typed decoder accepted JSON null as an empty profile ID and reached hidden-profile lookup; the bridge requires a non-null profile ID before lookup."
+    },
+    {
+      "fingerprint": "a09d23f78358",
+      "ruleId": "request-property-became-not-nullable",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyDecryptRequest.value: the released value-typed decoder accepted JSON null as empty input and reached execution; the bridge requires this value to be non-null."
+    },
+    {
+      "fingerprint": "ccc67d3e0899",
+      "ruleId": "request-property-became-not-nullable",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyEncryptRequest.profileId: the released value-typed decoder accepted JSON null as an empty profile ID and reached hidden-profile lookup; the bridge requires a non-null profile ID before lookup."
+    },
+    {
+      "fingerprint": "3115864f1c91",
+      "ruleId": "request-property-became-not-nullable",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyEncryptRequest.value: the released value-typed decoder accepted JSON null as empty input and reached execution; the bridge requires this value to be non-null."
+    },
+    {
+      "fingerprint": "17cc02f261ae",
+      "ruleId": "request-property-became-not-nullable",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyRotateRequest.value: the released value-typed decoder accepted JSON null as empty input and reached execution; the bridge requires this value to be non-null."
+    },
+    {
+      "fingerprint": "4f4a0fffad5c",
+      "ruleId": "request-property-became-required",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyDecryptRequest.profileId: the released value-typed decoder treated an omitted profile ID as empty and reached hidden-profile lookup; the bridge requires this member to be present."
+    },
+    {
+      "fingerprint": "aa074e5e6c95",
+      "ruleId": "request-property-became-required",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyDecryptRequest.value: the released value-typed decoder treated an omitted value as empty input and reached execution; the bridge requires this member to be present."
+    },
+    {
+      "fingerprint": "3c150609eb1f",
+      "ruleId": "request-property-became-required",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyEncryptRequest.profileId: the released value-typed decoder treated an omitted profile ID as empty and reached hidden-profile lookup; the bridge requires this member to be present."
+    },
+    {
+      "fingerprint": "0de54eb7900e",
+      "ruleId": "request-property-became-required",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyEncryptRequest.value: the released value-typed decoder treated an omitted value as empty input and reached execution; the bridge requires this member to be present."
+    },
+    {
+      "fingerprint": "b47c8873238e",
+      "ruleId": "request-property-became-required",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyRotateRequest.value: the released value-typed decoder treated an omitted value as empty input and reached execution; the bridge requires this member to be present."
+    },
+    {
+      "fingerprint": "d43b658f82c1",
+      "ruleId": "request-property-min-length-increased",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyDecryptRequest.profileId: the released decoder let an empty profile ID reach hidden-profile lookup; the bridge rejects it before lookup with canonical profile-ID validation."
+    },
+    {
+      "fingerprint": "efc5c00efd6b",
+      "ruleId": "request-property-min-length-increased",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyEncryptRequest.profileId: the released decoder let an empty profile ID reach hidden-profile lookup; the bridge rejects it before lookup with canonical profile-ID validation."
+    },
+    {
+      "fingerprint": "d97b76b25f7b",
+      "ruleId": "request-property-pattern-added",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyDecryptRequest.profileId: the released decoder let arbitrary non-empty profile ID strings reach lookup; the bridge applies the canonical profile-ID grammar before lookup."
+    },
+    {
+      "fingerprint": "bfa56178c88d",
+      "ruleId": "request-property-pattern-added",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyEncryptRequest.profileId: the released decoder let arbitrary non-empty profile ID strings reach lookup; the bridge applies the canonical profile-ID grammar before lookup."
+    },
+    {
+      "fingerprint": "92989e31e092",
+      "ruleId": "request-property-pattern-added",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyRotateRequest.destinationProfileId: the released decoder let arbitrary non-empty profile ID strings reach lookup; the bridge applies the canonical profile-ID grammar before lookup."
+    },
+    {
+      "fingerprint": "16e1db35ae9a",
+      "ruleId": "request-property-pattern-added",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyRotateRequest.sourceProfileId: the released decoder let arbitrary non-empty profile ID strings reach lookup; the bridge applies the canonical profile-ID grammar before lookup."
+    },
+    {
+      "fingerprint": "920a260481d7",
+      "ruleId": "request-property-max-length-set",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyDecryptRequest.profileId: the released decoder let profile IDs longer than 64 characters reach lookup within the body budget; the bridge applies the canonical 64-character limit before lookup."
+    },
+    {
+      "fingerprint": "ad4868f7a8b6",
+      "ruleId": "request-property-max-length-set",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyEncryptRequest.profileId: the released decoder let profile IDs longer than 64 characters reach lookup within the body budget; the bridge applies the canonical 64-character limit before lookup."
+    },
+    {
+      "fingerprint": "ee64bbd1b8c5",
+      "ruleId": "request-property-max-length-set",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyRotateRequest.destinationProfileId: the released decoder let profile IDs longer than 64 characters reach lookup within the body budget; the bridge applies the canonical 64-character limit before lookup."
+    },
+    {
+      "fingerprint": "b9b4867a0780",
+      "ruleId": "request-property-max-length-set",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyRotateRequest.sourceProfileId: the released decoder let profile IDs longer than 64 characters reach lookup within the body budget; the bridge applies the canonical 64-character limit before lookup."
+    },
+    {
+      "fingerprint": "a5f777170c0e",
+      "ruleId": "request-property-removed",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyDecryptRequest.destinationProfileId: the released shared request struct tolerated this variant-irrelevant member when it was null or empty; the bridge's variant DTO rejects the member's presence."
+    },
+    {
+      "fingerprint": "d59504a38cc3",
+      "ruleId": "request-property-removed",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyDecryptRequest.sourceProfileId: the released shared request struct tolerated this variant-irrelevant member when it was null or empty; the bridge's variant DTO rejects the member's presence."
+    },
+    {
+      "fingerprint": "e80e8c5b23be",
+      "ruleId": "request-property-removed",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyEncryptRequest.destinationProfileId: the released shared request struct tolerated this variant-irrelevant member when it was null or empty; the bridge's variant DTO rejects the member's presence."
+    },
+    {
+      "fingerprint": "7ac3b84e4691",
+      "ruleId": "request-property-removed",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyEncryptRequest.sourceProfileId: the released shared request struct tolerated this variant-irrelevant member when it was null or empty; the bridge's variant DTO rejects the member's presence."
+    },
+    {
+      "fingerprint": "42c5dd262aca",
+      "ruleId": "request-property-removed",
+      "operation": "POST",
+      "operationId": "legacyOperation",
+      "path": "/api/v1/operations",
+      "section": "paths",
+      "reason": "LegacyRotateRequest.profileId: the released shared request struct tolerated this variant-irrelevant member when it was null or empty; the bridge's variant DTO rejects the member's presence."
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: test typecheck build smoke compatibility helm-lint chart-test docker release-check release-snapshot
+.PHONY: test typecheck build smoke compatibility helm-lint chart-test docker release-check release-snapshot generate-api api-compat api-contract-test api-check
 
 test:
 	go test ./...
@@ -14,6 +14,21 @@ typecheck:
 build:
 	npm run build --prefix frontend
 	go build ./...
+
+generate-api:
+	cd api && go tool oapi-codegen --config oapi-codegen.yaml openapi.yaml
+	npm run generate --prefix api/typescript-generator
+
+api-compat:
+	./api/scripts/check-api-compatibility.sh
+
+api-contract-test:
+	python3 -m unittest discover -s api/scripts -p '*_test.py'
+
+api-check: api-contract-test api-compat
+	./api/scripts/check-generated.sh
+	npm run typecheck --prefix api/typescript-generator
+	go test ./backend/internal/apimodels
 
 smoke:
 	./scripts/smoke.sh

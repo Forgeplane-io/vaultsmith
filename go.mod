@@ -16,8 +16,10 @@ require (
 )
 
 require (
+	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.6.1 // indirect
 	github.com/casbin/govaluate v1.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/oapi-codegen/runtime v1.6.0
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 )

@@ -26,6 +26,19 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: gomod
+    directory: /api
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+    groups:
+      api-go-tools:
+        patterns:
+          - "*"
+
   - package-ecosystem: npm
     directory: /frontend
     schedule:
@@ -42,6 +55,21 @@ updates:
           - "react"
           - "react-dom"
       frontend-development:
+        dependency-type: development
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /api/typescript-generator
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    groups:
+      api-typescript-tools:
         dependency-type: development
         patterns:
           - "*"
