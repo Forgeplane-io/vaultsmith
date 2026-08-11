@@ -1,172 +1,172 @@
-# Machine API operator preflight
+# Machine API rollout checklist
 
-Complete this record for each environment before the bridge upgrade. The bridge is not implemented in the contract-foundation phase. Keep this repository file as the template. Store completed records in the approved private operations system; do not commit identity subjects, internal URLs, or environment topology. Do not replace unknown values with assumptions. Keep tokens, credentials, private keys, real Vault values, password-environment names, and private file paths out of every record.
+The bridge release is not implemented yet. Use this checklist when a release contains the Bearer API and MCP bridge.
+
+Copy the checklist to the private operations system for each environment. Do not commit a completed copy: it can contain identity subjects, internal URLs, and network details. Do not record tokens, credentials, private keys, Vault values, password environment names, or private file paths. An unanswered item blocks the rollout.
 
 - Environment:
 - Owner:
 - Review date:
 - Rollout ticket:
-- Planned bridge version:
-- Status: blocked until each protocol and rollout gate has an exact answer
+- Bridge version:
+- Status:
 
-## 1. Authentication mode and public URLs
+## Authentication and URLs
 
-| Setting | Deployed value | Required result | Evidence |
+| Setting | Deployed value | Check | Evidence |
 | --- | --- | --- | --- |
-| `auth.mode` | _required_ | exactly `native` or `off` | rendered configuration |
-| `PUBLIC_BASE_URL` | _required in native mode_ | client-visible HTTPS origin; no user information, query, fragment, or application path | parsed-value check |
-| `OIDC_ISSUER_URL` | _required in native mode_ | absolute HTTPS URL; no user information, query, or fragment | parsed-value check |
-| OIDC discovery `issuer` | _required in native mode_ | exact match with `OIDC_ISSUER_URL` | redacted discovery check |
-| OIDC discovery `jwks_uri` | _required in native mode_ | absolute HTTPS URL | redacted discovery check |
-| OIDC discovery `authorization_endpoint` | _required in native mode_ | absolute HTTPS URL | redacted discovery check |
-| OIDC discovery `token_endpoint` | _required in native mode_ | absolute HTTPS URL | redacted discovery check |
-| OIDC private CA | yes/no | mounted and trusted when required; no TLS bypass | certificate-chain check |
+| `auth.mode` |  | `native` or `off` | rendered configuration |
+| `PUBLIC_BASE_URL` |  | HTTPS origin without user information, query, fragment, or path | parsed value |
+| `OIDC_ISSUER_URL` |  | HTTPS URL without user information, query, or fragment | parsed value |
+| Discovery `issuer` |  | matches `OIDC_ISSUER_URL` | redacted discovery output |
+| Discovery `jwks_uri` |  | absolute HTTPS URL | redacted discovery output |
+| Discovery `authorization_endpoint` |  | absolute HTTPS URL | redacted discovery output |
+| Discovery `token_endpoint` |  | absolute HTTPS URL | redacted discovery output |
+| Private OIDC CA |  | mounted and trusted when needed; TLS verification stays enabled | certificate check |
 
-Checks:
+Complete the issuer rows only in `native` mode.
 
-- [ ] Native mode uses the `PUBLIC_BASE_URL` origin as the one REST and MCP resource identifier and access-token audience.
-- [ ] Native discovery returns the exact configured issuer and all required HTTPS endpoints before the listener binds.
-- [ ] The private CA path, if used, is a deployment reference. It is not recorded as a private host path.
-- [ ] Off mode does not claim bearer authentication or forwarded-user identity.
+- [ ] In `native` mode, the `PUBLIC_BASE_URL` origin is the REST and MCP resource identifier and token audience.
+- [ ] OIDC discovery passes before Vaultsmith binds the listener.
+- [ ] In `off` mode, the deployment does not claim Bearer authentication or forwarded identity.
 
-## 2. Browser origins
+### Browser origins
 
-Record exact origins only. Wildcards and `Origin: null` are not valid.
+List every browser origin. Wildcards and `Origin: null` are invalid.
 
-| Auth mode | Browser client | Exact origin | Present in `auth.cors.allowedOrigins` | Required action |
-| --- | --- | --- | --- | --- |
-| `native` | bundled UI or approved client | _required_ | yes/no | the `PUBLIC_BASE_URL` origin is accepted; list each additional approved origin |
-| `off` | bundled UI or approved client | _required_ | must be yes | add the exact origin before rollout |
-
-Checks:
-
-- [ ] Missing `Origin` remains available to native CI, agents, and other non-browser clients.
-- [ ] Off-mode browser use has an exact allowed origin. Vaultsmith does not derive it from `Host` or forwarding headers.
-- [ ] CORS is not treated as authorization, especially in off mode. Every caller that can reach off mode has full operation access.
-
-## 3. Reserved environment-name preflight
-
-Older releases allowed names that the bridge reserves. Check every deployed source before rollout.
-
-| Check | Observed value | Required result | Remediation owner |
+| Mode | Client | Origin | In `auth.cors.allowedOrigins` |
 | --- | --- | --- | --- |
-| Existing `MCP_ENABLED` process value | _required_ | unset, `true`, or `false` only | _required if invalid_ |
-| Existing `MCPGODEBUG` process value | _required_ | unset or empty | _required if non-empty_ |
-| Profile `passwordEnv` equal to `MCP_ENABLED` | _required_ | none | _required if found_ |
-| Profile `passwordEnv` equal to `MCPGODEBUG` | _required_ | none | _required if found_ |
+| `native` |  |  | yes/no |
+| `off` |  |  | must be yes |
 
-Do not record password values or other profile secret-environment names here. The bridge intentionally fails startup for either reserved-name collision and for any non-empty `MCPGODEBUG` value.
+- [ ] `native` mode accepts the `PUBLIC_BASE_URL` origin.
+- [ ] `off` mode has an allow-list entry for every browser origin.
+- [ ] Non-browser clients can omit `Origin`.
+- [ ] Vaultsmith does not derive allowed origins from `Host` or forwarding headers.
+- [ ] CORS is not used as authorization. Every caller that can reach `off` mode can run every operation.
 
-## 4. Edge and backend posture
+## Reserved environment names
 
-Client-visible bearer traffic requires HTTPS. The operator owns the edge-to-backend transport and Service reachability. Vaultsmith reports this posture but cannot observe or enforce it; an imperfect backend topology is not presented as an application security control or hidden as an application rollout gate.
+Older releases allowed profile password environment names that the bridge reserves.
 
-| Control | Exact deployed state | Required protocol result | Owner action or accepted exception |
+| Check | Result | Owner if it fails |
+| --- | --- | --- |
+| `MCP_ENABLED` is unset, `true`, or `false` |  |  |
+| `MCPGODEBUG` is unset or empty |  |  |
+| No profile uses `MCP_ENABLED` as `passwordEnv` |  |  |
+| No profile uses `MCPGODEBUG` as `passwordEnv` |  |  |
+
+Do not record other password environment names in this checklist. A collision or a non-empty `MCPGODEBUG` value prevents startup.
+
+## Edge and backend
+
+Client-to-edge Bearer traffic uses HTTPS. Record the backend transport and reachability as deployed; Vaultsmith cannot enforce either one.
+
+| Control | Deployed state | Expected result | Owner or exception |
 | --- | --- | --- | --- |
-| Client-to-edge transport | _required_ | HTTPS for native bearer clients | _required_ |
-| Edge-to-backend transport | _required: authenticated TLS, private plaintext, or other_ | reported accurately | _required_ |
-| Service reachability | _required_ | report edge-only or other reachable networks | _required_ |
-| `Authorization` forwarding | _required_ | preserved unmodified on bearer `/api/v1` and `/mcp` requests | _required_ |
-| Spoofable identity headers | _required_ | stripped; never used by Vaultsmith | _required_ |
-| Request body logging | _required_ | disabled for API and MCP routes | _required_ |
-| Response compression | _required_ | disabled for secret-bearing responses | _required_ |
-| Edge request-body limit | _required_ | at least the documented 8 MiB JSON ceiling plus framing overhead; exact value justified | _required_ |
-| Edge operation timeout | _required_ | at least 50 seconds | _required_ |
-| Health and readiness exposure | _required_ | private or explicitly accepted | _required_ |
+| Client-to-edge transport |  | HTTPS |  |
+| Edge-to-backend transport |  | recorded accurately |  |
+| Service reachability |  | reachable networks recorded |  |
+| `Authorization` forwarding |  | unchanged on Bearer `/api/v1` and `/mcp` requests |  |
+| Client identity headers |  | stripped and ignored |  |
+| Request-body logging |  | disabled |  |
+| Secret-response compression |  | disabled |  |
+| Edge body limit |  | accepts the 8 MiB application limit plus framing overhead |  |
+| Edge timeout |  | at least 50 seconds |  |
+| Health and readiness routes |  | private or accepted as exposed |  |
 
-Timeout receipt:
+Record the timeout used for the rollout:
 
-| Measured path | Observed value | Configured value | Why the threshold exists | What happens when exceeded | Revision owner |
-| --- | --- | --- | --- | --- | --- |
-| Client through edge to Vaultsmith and back | _required_ | _required; minimum 50 seconds_ | exceeds the planned 45-second server write budget | request fails at the edge; no automatic operation retry | _required_ |
+| Measured path | Observed | Configured | Reason | Failure behavior | Owner |
+| --- | ---: | ---: | --- | --- | --- |
+| Client through edge to Vaultsmith and back |  |  | exceed the 45-second server write limit | edge fails the request; client does not retry automatically |  |
 
-## 5. Machine callers and policy
+## Machine callers
 
-Record one row per planned native-mode machine identity. Use the verified `(iss, sub)` pair. Do not use `client_id` alone as an authorization identity.
+Use the verified `(iss, sub)` pair as the identity. `client_id` alone is not an authorization identity.
 
-| Caller | OAuth grant | Verified issuer and subject | Required Vaultsmith scopes | Groups claim values | Profiles and actions | Token owner and rotation process |
+| Caller | OAuth grant | `(iss, sub)` | Scopes | Groups | Profiles and actions | Token owner and rotation |
 | --- | --- | --- | --- | --- | --- | --- |
-| _required_ | `client_credentials` or other approved grant | _exact `(iss, sub)`_ | _exact set_ | _exact values_ | _exact profile/action matrix_ | _owner and procedure_ |
+|  |  |  |  |  |  |  |
 
-Scopes are exact and case-sensitive:
+Service accounts normally use `client_credentials`. Record any other grant explicitly.
+
+Available scopes are case-sensitive:
 
 - `vaultsmith.profile.read`
 - `vaultsmith.encrypt`
 - `vaultsmith.decrypt`
 - `vaultsmith.rotate`
 
-Checks:
+- [ ] Each token uses the `PUBLIC_BASE_URL` origin as its resource or audience.
+- [ ] A rotation-only caller gets `vaultsmith.rotate`. It gets decrypt scope only if it also needs direct decryption.
+- [ ] Each token contains the groups needed by the same Casbin policy as browser sessions.
+- [ ] Issuance and revocation were tested without logging a token.
 
-- [ ] Each token requests the `PUBLIC_BASE_URL` origin as its resource or audience.
-- [ ] Rotate-only callers get `vaultsmith.rotate`; they do not get decrypt scope unless they also need direct plaintext decryption.
-- [ ] Each service token carries the configured groups claim needed by the same Casbin policy used for sessions.
-- [ ] Token issuance and revocation were tested without logging a token.
+## Profiles and replicas
 
-## 6. Profile policy and replica parity
-
-| Profile ID | Safe public label | Session groups and actions | Service groups and actions | Present on every serving replica |
+| Profile ID | Public label | Session policy | Service policy | Present on every replica |
 | --- | --- | --- | --- | --- |
-| _required_ | _required_ | _exact policy rows_ | _exact policy rows_ | yes/no |
-
-Checks:
+|  |  |  |  | yes/no |
 
 - [ ] Every profile ID matches `^[a-z0-9][a-z0-9._-]{0,63}$`.
-- [ ] The configured profile order is intentional.
-- [ ] Every serving replica has the same profile IDs and policy source before machine callers start.
-- [ ] Password values and password-environment names are not recorded here.
+- [ ] Profile order is reviewed and consistent across replicas.
+- [ ] Every serving replica has the same profile IDs and policy before machine callers start.
+- [ ] The checklist contains no passwords or password environment names.
 
-## 7. Release artifacts and capacity receipt
+## Build and capacity
 
-The operation-admission capacity is compiled into the bridge from a checked-in benchmark receipt. It is not an environment variable, flag, or chart value.
+The bridge compiles its operation limit from a checked-in benchmark. Helm does not configure it.
 
-| Artifact or budget | Checked-in value | Observed deployment value | Required result | Revision path |
+| Check | Source | Evidence | Pass condition | Fix |
 | --- | --- | --- | --- | --- |
-| OpenAPI compatibility | exact release source | `make api-check` result | zero unexpected and zero stale fingerprints | stop release; correct contract or reviewed allow-list entry |
-| Generated Go and TypeScript contracts | exact release source | generated-drift result | no drift | run `make generate-api`, review output |
-| Compiled admission capacity | benchmark receipt | runtime configured-capacity metric | exact match | lower compiled cap or revise receipt and rerun benchmark |
-| Minimum pod memory | benchmark receipt | pod request/limit and measured peak | meets documented minimum | increase memory or lower compiled cap and rerun benchmark |
-| Active operation leases | runtime metric | load-test peak | no execution above configured capacity | stop rollout and inspect admission wiring |
+| OpenAPI compatibility | release source | `make api-check` output | no new or stale findings | fix the contract or review one finding |
+| Generated contracts | release source | drift-check output | no drift | run `make generate-api` and review the result |
+| Admission capacity | benchmark | runtime configured-capacity metric | values match | lower the compiled limit or rerun the benchmark |
+| Pod memory | benchmark minimum | request, limit, and measured peak | deployment meets the minimum | add memory or lower the operation limit |
+| Active leases | runtime limit | load-test peak | never exceeds the limit | stop rollout and inspect admission wiring |
 
-Do not enable machine callers until the bridge release contains the benchmark receipt, compiled capacity, minimum-memory requirement, and saturation test. Saturation must return `503 temporarily_unavailable` with `Retry-After: 1` before body decoding or execution.
+Do not start machine callers until the release includes the benchmark, compiled limit, minimum memory, and saturation test. At capacity, Vaultsmith must return `503 temporarily_unavailable` with `Retry-After: 1` before body decoding or Vault work.
 
-## 8. Rollout and rollback
+## Rollout and rollback
 
-| Gate | Exact check | Required result | Rollback action |
-| --- | --- | --- | --- |
-| Existing UI | released frontend against mixed old/new replicas | profiles load and one legacy operation completes exactly once | route traffic to old replicas or roll back the bridge image |
-| Native bearer API | synthetic service account against a bridge canary | exact audience, scopes, Casbin decisions, and ambiguous-credential rejection | stop machine callers and roll back the bridge image |
-| MCP disabled bridge | every serving replica | `/mcp` returns `404` for every method, including `OPTIONS` | keep MCP callers stopped |
-| MCP enablement | separate rollout with `mcp.enabled=true` | all replicas enabled before callers start | stop MCP callers; roll out `mcp.enabled=false` with separate restart approval |
-| MCP protocol | `server/discover`, `tools/list`, and one call per tool | revision `2026-07-28`; bounded JSON responses; no secret-bearing logs | disable MCP as above |
-| Health and readiness | `/healthz`, `/readyz`, and native issuer/JWKS readiness | exact documented status | remove canary or failing replica from service |
+Run these checks in order:
 
-Checks:
+1. Test the released UI against a mix of old and bridge replicas. Profile listing and one legacy operation must succeed, and the operation must run once.
+2. Test a Bearer client against one bridge canary. Verify audience, scopes, Casbin policy, and rejection of mixed credentials.
+3. Verify that `/mcp` returns `404` for every method, including `OPTIONS`, while MCP is disabled.
+4. Roll out the bridge to every serving replica before starting Bearer clients.
+5. Set `mcp.enabled=true` in a separate rollout. Start MCP callers only after every serving replica has MCP enabled.
+6. Run `server/discover`, `tools/list`, and one call for each tool with protocol revision `2026-07-28`. Confirm that responses stay within the protocol limits.
+7. Check `/healthz`, `/readyz`, issuer readiness, and JWKS readiness against their documented statuses.
+8. Inspect logs and traces for plaintext, Vault text, cookies, Bearer tokens, claims, and cryptographic errors.
 
-- [ ] Bearer clients do not start until every serving replica runs the bridge release.
-- [ ] MCP callers remain stopped during both the bridge rollout and any later MCP-enable rollout.
-- [ ] Mixed-version browser behavior is tested before wider rollout.
-- [ ] A rollback does not require profile-password or policy changes.
-- [ ] Restart ownership and approval are explicit.
-- [ ] Logs and traces were inspected for plaintext, Vault text, cookies, bearer tokens, claims, and crypto errors.
+Rollback notes:
 
-## 9. Legacy route removal criteria
+- Bridge image or traffic rollback:
+- Bearer-client stop procedure:
+- MCP disable rollout (`mcp.enabled=false`):
+- Owner for each action:
 
-Deprecated `POST /api/v1/operations` remains through v1. Removal requires v2 and every criterion below.
+A rollback must not require profile password or policy changes.
+
+## Legacy route removal
+
+`POST /api/v1/operations` remains available throughout v1. Removal requires v2 and all of these conditions:
 
 - [ ] The bundled UI uses only canonical routes.
-- [ ] Known external callers migrated and their owners confirmed the cutover.
-- [ ] Route-specific telemetry shows no expected legacy traffic for the approved observation window.
-- [ ] The observation window, measured request count, threshold, exceed behavior, and revision owner are recorded.
-- [ ] Removal is announced in release notes and receives compatibility review.
+- [ ] Known external callers have moved and their owners confirmed the change.
+- [ ] Route metrics show no expected traffic during the agreed observation window.
+- [ ] Release notes announce the removal and the change passes compatibility review.
 
-| Signal | Observed value | Observation window and method | Removal threshold | What happens if exceeded | Revision owner |
-| --- | --- | --- | --- | --- | --- |
-| Legacy requests | _required_ | _required_ | _required_ | keep the route and identify callers | _required_ |
+| Signal | Observed | Window and method | Removal threshold | If exceeded | Owner |
+| --- | ---: | --- | ---: | --- | --- |
+| Legacy requests |  |  |  | keep the route and identify callers |  |
 
 ## Approval
 
 - Application owner:
 - Security reviewer:
 - Operator:
-- Rollout approved at:
-- Remaining exceptions and expiry dates:
+- Approved at:
+- Exceptions and expiry dates:
