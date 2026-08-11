@@ -19,7 +19,7 @@ COPY backend/ ./backend/
 COPY --from=frontend /src/backend/web/dist ./backend/web/dist
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" go build -trimpath -ldflags="-s -w -X github.com/forgeplane-io/vaultsmith/backend/internal/version.Version=${VERSION} -X github.com/forgeplane-io/vaultsmith/backend/internal/version.Commit=${COMMIT} -X github.com/forgeplane-io/vaultsmith/backend/internal/version.BuildDate=${BUILD_DATE}" -o /out/vaultsmith ./backend/cmd/server
 
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:1b7b9f0f0e0a1d2155f531db587cc48ec26aaf97ab64364225f5bf18a054e66a
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
