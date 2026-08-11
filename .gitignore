@@ -8,8 +8,9 @@
 *.test
 coverage.out
 
-# Frontend dependencies and generated assets
-frontend/node_modules/
+# Frontend and API generation dependencies and generated assets
+/frontend/node_modules
+/api/typescript-generator/node_modules
 *.tsbuildinfo
 backend/web/dist/assets/
 !backend/
@@ -18,6 +19,7 @@ backend/web/dist/assets/
 !backend/web/dist/index.html
 
 # Local scratch files
+/api/scripts/__pycache__/
 .tmp/
 dist/
 .hermes/

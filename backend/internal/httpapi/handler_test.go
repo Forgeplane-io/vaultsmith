@@ -213,6 +213,95 @@ func TestRotateValidation(t *testing.T) {
 	}
 }
 
+func TestLegacyOperationRetainsReleasedZeroValueDecoding(t *testing.T) {
+	profiles := []Profile{
+		{ID: "dev", Label: "Development"},
+		{ID: "source", Label: "Source"},
+		{ID: "destination", Label: "Destination"},
+	}
+	rotateCall := operationCall{
+		sourceProfileID:      "source",
+		destinationProfileID: "destination",
+		mode:                 "rotate",
+		value:                "",
+	}
+	tests := []struct {
+		name string
+		body string
+		call operationCall
+	}{
+		{
+			name: "encrypt omitted value",
+			body: `{"profileId":"dev","mode":"encrypt"}`,
+			call: operationCall{profileID: "dev", mode: "encrypt", value: ""},
+		},
+		{
+			name: "encrypt null value",
+			body: `{"profileId":"dev","mode":"encrypt","value":null}`,
+			call: operationCall{profileID: "dev", mode: "encrypt", value: ""},
+		},
+		{
+			name: "decrypt omitted value",
+			body: `{"profileId":"dev","mode":"decrypt"}`,
+			call: operationCall{profileID: "dev", mode: "decrypt", value: ""},
+		},
+		{
+			name: "decrypt null value",
+			body: `{"profileId":"dev","mode":"decrypt","value":null}`,
+			call: operationCall{profileID: "dev", mode: "decrypt", value: ""},
+		},
+		{
+			name: "rotate omitted value",
+			body: `{"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination"}`,
+			call: rotateCall,
+		},
+		{
+			name: "rotate null value",
+			body: `{"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":null}`,
+			call: rotateCall,
+		},
+		{
+			name: "encrypt empty and null rotate fields",
+			body: `{"profileId":"dev","sourceProfileId":"","destinationProfileId":null,"mode":"encrypt","value":"value"}`,
+			call: operationCall{profileID: "dev", mode: "encrypt", value: "value"},
+		},
+		{
+			name: "decrypt null and empty rotate fields",
+			body: `{"profileId":"dev","sourceProfileId":null,"destinationProfileId":"","mode":"decrypt","value":"value"}`,
+			call: operationCall{profileID: "dev", mode: "decrypt", value: "value"},
+		},
+		{
+			name: "rotate empty profile field",
+			body: `{"profileId":"","mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":"value"}`,
+			call: operationCall{sourceProfileID: "source", destinationProfileID: "destination", mode: "rotate", value: "value"},
+		},
+		{
+			name: "rotate null profile field",
+			body: `{"profileId":null,"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":"value"}`,
+			call: operationCall{sourceProfileID: "source", destinationProfileID: "destination", mode: "rotate", value: "value"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &fakeExecutor{value: "synthetic-output"}
+			handler := newHandler(profiles, executor)
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+			}
+			if len(executor.calls) != 1 || executor.calls[0] != test.call {
+				t.Fatalf("calls = %#v, want %#v", executor.calls, []operationCall{test.call})
+			}
+		})
+	}
+}
+
 func TestLimitValidation(t *testing.T) {
 	cases := []struct {
 		name  string

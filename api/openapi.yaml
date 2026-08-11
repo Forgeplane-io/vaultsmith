@@ -1,0 +1,820 @@
+openapi: 3.1.0
+info:
+  title: Vaultsmith REST API
+  version: 1.0.0
+  description: |
+    Canonical v1 machine API for profile discovery and in-memory Ansible Vault
+    operations.
+
+    Native mode accepts either the opaque browser session or an RFC 9068 Bearer
+    access token on canonical REST routes. Session mutations also require the
+    CSRF header. The deprecated legacy operation route remains session-only.
+    At runtime, auth.mode=off removes these security requirements and grants
+    every reachable caller full anonymous operation access. The static contract
+    does not advertise an anonymous security alternative because that would be
+    unsafe for native deployments.
+
+    Submitted plaintext and Vault text are processed in memory. Vaultsmith does
+    not persist operation records, request values, results, idempotency data, or
+    Bearer access tokens. Secret-bearing responses and API errors use
+    Cache-Control: no-store and are not compressed.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://vaultsmith.example.test
+    description: Synthetic native-mode resource origin
+security: []
+tags:
+  - name: Profiles
+    description: Safe profile discovery.
+  - name: Operations
+    description: Synchronous in-memory Vault operations. Do not retry automatically.
+paths:
+  /api/v1/profiles:
+    get:
+      operationId: listProfiles
+      tags:
+        - Profiles
+      summary: List visible Vault profiles
+      description: |
+        Returns safe profile metadata in configured order. A native session or
+        Bearer caller without catalog policy access receives a successful empty
+        list. Bearer callers also need vaultsmith.profile.read, and each returned
+        capability is the intersection of an operation scope and Casbin policy.
+        Off mode returns every configured profile with all capabilities true.
+        Response clients must ignore unknown properties.
+      security:
+        - SessionCookie: []
+        - BearerAuth: []
+      x-required-bearer-scope: vaultsmith.profile.read
+      responses:
+        "200":
+          description: Ordered visible profiles and effective capabilities.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilesResponse"
+              examples:
+                oneProfile:
+                  value:
+                    profiles:
+                      - id: production
+                        label: Production
+                        capabilities:
+                          encrypt: true
+                          decrypt: false
+                          rotateSource: false
+                          rotateDestination: true
+                empty:
+                  value:
+                    profiles: []
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedGet"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/profiles/{profileId}/encrypt:
+    parameters:
+      - $ref: "#/components/parameters/ProfileId"
+    post:
+      operationId: encryptValue
+      tags:
+        - Operations
+      summary: Encrypt UTF-8 plaintext
+      description: |
+        Encrypts plaintext with the selected server-owned profile and emits
+        Ansible Vault 1.2/AES256 text labeled with that profile. Empty plaintext
+        is valid. The server does not retry this randomized operation.
+      security:
+        - SessionCookie: []
+          CsrfHeader: []
+        - BearerAuth: []
+      x-required-bearer-scope: vaultsmith.encrypt
+      x-request-deadline-seconds: 30
+      x-max-body-bytes: 8388608
+      x-no-automatic-retry: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EncryptRequest"
+            example:
+              plaintext: synthetic value
+      responses:
+        "200":
+          description: Newly randomized Ansible Vault text.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EncryptResponse"
+              example:
+                vaultText: "$ANSIBLE_VAULT;1.2;AES256;production\n31323334"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedPost"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/OperationFailed"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/profiles/{profileId}/decrypt:
+    parameters:
+      - $ref: "#/components/parameters/ProfileId"
+    post:
+      operationId: decryptValue
+      tags:
+        - Operations
+      summary: Decrypt Ansible Vault text
+      description: |
+        Decrypts Vault 1.1 or 1.2/AES256 text with the selected server-owned
+        profile. The returned plaintext must be valid UTF-8 and no larger than
+        1 MiB. The server does not retry the operation.
+      security:
+        - SessionCookie: []
+          CsrfHeader: []
+        - BearerAuth: []
+      x-required-bearer-scope: vaultsmith.decrypt
+      x-request-deadline-seconds: 30
+      x-max-body-bytes: 8388608
+      x-no-automatic-retry: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecryptRequest"
+            example:
+              vaultText: "$ANSIBLE_VAULT;1.2;AES256;production\n31323334"
+      responses:
+        "200":
+          description: UTF-8 plaintext.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecryptResponse"
+              example:
+                plaintext: synthetic value
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedPost"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/OperationFailed"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/rotations:
+    post:
+      operationId: rotateValue
+      tags:
+        - Operations
+      summary: Rotate Vault text between profiles
+      description: |
+        Decrypts with the source profile and re-encrypts with the destination
+        profile. Plaintext is never returned. The decrypted intermediate value
+        must be no larger than 1 MiB. Bearer callers need vaultsmith.rotate plus
+        decrypt policy on the source and encrypt policy on the destination. The
+        server does not retry this randomized operation.
+      security:
+        - SessionCookie: []
+          CsrfHeader: []
+        - BearerAuth: []
+      x-required-bearer-scope: vaultsmith.rotate
+      x-request-deadline-seconds: 30
+      x-max-body-bytes: 8388608
+      x-no-automatic-retry: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RotateRequest"
+            example:
+              sourceProfileId: development
+              destinationProfileId: production
+              vaultText: "$ANSIBLE_VAULT;1.2;AES256;development\n31323334"
+      responses:
+        "200":
+          description: Newly randomized Vault text labeled for the destination profile.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotateResponse"
+              example:
+                vaultText: "$ANSIBLE_VAULT;1.2;AES256;production\n31323334"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedPost"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/OperationFailed"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /api/v1/operations:
+    post:
+      operationId: legacyOperation
+      deprecated: true
+      tags:
+        - Operations
+      summary: Run a deprecated tagged Vault operation
+      description: |
+        Compatibility adapter retained for v1 and used by the bridge-release UI.
+        It accepts browser sessions only in native mode and is anonymous in off
+        mode. It keeps the released tagged variants and generic value response,
+        while also requiring present non-null values and canonical profile IDs,
+        rejecting every variant-irrelevant member, non-canonical field casing,
+        duplicate JSON keys, malformed raw UTF-8, unsupported Content-Encoding,
+        oversized decrypted plaintext, and ambiguous credentials. Legacy CORS
+        and CSRF failures use the stable error-code table. The adapter executes
+        through the shared service once.
+      security:
+        - SessionCookie: []
+          CsrfHeader: []
+      x-request-deadline-seconds: 30
+      x-max-body-bytes: 8388608
+      x-no-automatic-retry: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LegacyOperationRequest"
+            examples:
+              encrypt:
+                value:
+                  profileId: development
+                  mode: encrypt
+                  value: synthetic value
+              decrypt:
+                value:
+                  profileId: development
+                  mode: decrypt
+                  value: "$ANSIBLE_VAULT;1.2;AES256;development\n31323334"
+              rotate:
+                value:
+                  mode: rotate
+                  sourceProfileId: development
+                  destinationProfileId: production
+                  value: "$ANSIBLE_VAULT;1.2;AES256;development\n31323334"
+      responses:
+        "200":
+          description: Released generic operation result.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LegacyValueResponse"
+              example:
+                value: "$ANSIBLE_VAULT;1.2;AES256;development\n31323334"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/UnauthorizedLegacy"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedPost"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/OperationFailed"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-vaultsmith_session
+      description: Opaque native-mode browser session cookie.
+    CsrfHeader:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: Native-mode CSRF token required with the session on unsafe requests.
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: RFC 9068 JWT access token
+      description: |
+        Signed access token for the exact Vaultsmith resource origin. Required
+        scopes are fixed per operation and shown with x-required-bearer-scope.
+  parameters:
+    ProfileId:
+      name: profileId
+      in: path
+      required: true
+      description: URL-decoded configured profile ID. Encoded path separators are rejected.
+      schema:
+        $ref: "#/components/schemas/ProfileId"
+  headers:
+    NoStore:
+      description: Secret-bearing API responses and errors are never stored.
+      required: true
+      schema:
+        type: string
+        const: no-store
+    RequestId:
+      description: Server-generated request identifier. Caller values are not trusted.
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    AllowGet:
+      description: The only accepted application method.
+      required: true
+      schema:
+        type: string
+        const: GET
+    AllowPost:
+      description: The only accepted application method.
+      required: true
+      schema:
+        type: string
+        const: POST
+    WwwAuthenticate:
+      description: RFC 6750 Bearer challenge on bearer-capable native routes.
+      required: true
+      schema:
+        type: string
+    WwwAuthenticateOptional:
+      description: RFC 6750 Bearer challenge when a Bearer token lacks the required scope.
+      schema:
+        type: string
+    RetryAfter:
+      description: Present as `1` only when immediate admission saturation is safe to retry.
+      schema:
+        type: string
+        const: "1"
+  responses:
+    InvalidRequest:
+      description: Invalid path value, JSON, UTF-8, fields, Origin, or credential combination.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: invalid_request
+              message: request is invalid
+    Unauthorized:
+      description: Native-mode credentials are missing or invalid.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+        WWW-Authenticate:
+          $ref: "#/components/headers/WwwAuthenticate"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: unauthorized
+              message: authentication is required
+    UnauthorizedLegacy:
+      description: A browser session is missing or an Authorization header was supplied.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: unauthorized
+              message: authentication is required
+    Forbidden:
+      description: CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+        WWW-Authenticate:
+          $ref: "#/components/headers/WwwAuthenticateOptional"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: forbidden
+              message: operation is not permitted
+    NotFound:
+      description: The route or an off-mode profile was not found.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: not_found
+              message: resource was not found
+    MethodNotAllowedGet:
+      description: The resource accepts GET only.
+      headers:
+        Allow:
+          $ref: "#/components/headers/AllowGet"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: method_not_allowed
+              message: method is not allowed
+    MethodNotAllowedPost:
+      description: The resource accepts POST only.
+      headers:
+        Allow:
+          $ref: "#/components/headers/AllowPost"
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: method_not_allowed
+              message: method is not allowed
+    RequestTooLarge:
+      description: The JSON body or submitted value exceeds its documented byte limit.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: invalid_request
+              message: request is too large
+    UnsupportedMediaType:
+      description: Content-Type is not application/json or Content-Encoding is unsupported.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: invalid_request
+              message: media type is not supported
+    OperationFailed:
+      description: |
+        The Vault operation failed. Wrong passwords, malformed Vault text, MAC
+        failures, invalid or oversized decrypted plaintext, and other Vault
+        failures are intentionally indistinguishable.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: operation_failed
+              message: vault operation failed
+    ServiceUnavailable:
+      description: |
+        Startup state, a runtime authentication dependency, operation admission,
+        or the 30-second application request deadline prevented completion.
+        Retry-After is present only for immediate admission saturation.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            notReady:
+              value:
+                error:
+                  code: not_ready
+                  message: service is not ready
+            temporarilyUnavailable:
+              value:
+                error:
+                  code: temporarily_unavailable
+                  message: service is temporarily unavailable
+  schemas:
+    ProfileId:
+      type: string
+      pattern: "^[a-z0-9][a-z0-9._-]{0,63}$"
+      minLength: 1
+      maxLength: 64
+      examples:
+        - production
+    ProfileCapabilities:
+      type: object
+      description: Effective caller capabilities. Clients ignore unknown properties.
+      required:
+        - encrypt
+        - decrypt
+        - rotateSource
+        - rotateDestination
+      properties:
+        encrypt:
+          type: boolean
+        decrypt:
+          type: boolean
+        rotateSource:
+          type: boolean
+        rotateDestination:
+          type: boolean
+    Profile:
+      type: object
+      description: Safe public profile metadata. Clients ignore unknown properties.
+      required:
+        - id
+        - label
+        - capabilities
+      properties:
+        id:
+          $ref: "#/components/schemas/ProfileId"
+        label:
+          type: string
+        capabilities:
+          $ref: "#/components/schemas/ProfileCapabilities"
+    ProfilesResponse:
+      type: object
+      description: Ordered visible profile catalog. Clients ignore unknown properties.
+      required:
+        - profiles
+      properties:
+        profiles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Profile"
+    EncryptRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - plaintext
+      properties:
+        plaintext:
+          type: string
+          description: UTF-8 plaintext limited to 1 MiB by encoded bytes. Empty is valid.
+          x-max-bytes: 1048576
+    EncryptResponse:
+      type: object
+      description: Secret-bearing response. Clients ignore unknown properties.
+      required:
+        - vaultText
+      properties:
+        vaultText:
+          type: string
+          description: Ansible Vault 1.2/AES256 text labeled with the selected profile.
+    DecryptRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - vaultText
+      properties:
+        vaultText:
+          type: string
+          description: UTF-8 Ansible Vault 1.1 or 1.2 text limited to 5 MiB by encoded bytes.
+          x-max-bytes: 5242880
+    DecryptResponse:
+      type: object
+      description: Secret-bearing response. Clients ignore unknown properties.
+      required:
+        - plaintext
+      properties:
+        plaintext:
+          type: string
+          description: Valid UTF-8 plaintext limited to 1 MiB by encoded bytes.
+          x-max-bytes: 1048576
+    RotateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - sourceProfileId
+        - destinationProfileId
+        - vaultText
+      properties:
+        sourceProfileId:
+          $ref: "#/components/schemas/ProfileId"
+        destinationProfileId:
+          $ref: "#/components/schemas/ProfileId"
+        vaultText:
+          type: string
+          description: UTF-8 Ansible Vault 1.1 or 1.2 text limited to 5 MiB by encoded bytes.
+          x-max-bytes: 5242880
+    RotateResponse:
+      type: object
+      description: Secret-bearing response. Clients ignore unknown properties.
+      required:
+        - vaultText
+      properties:
+        vaultText:
+          type: string
+          description: Ansible Vault 1.2/AES256 text labeled with the destination profile.
+    LegacyOperationRequest:
+      oneOf:
+        - $ref: "#/components/schemas/LegacyEncryptRequest"
+        - $ref: "#/components/schemas/LegacyDecryptRequest"
+        - $ref: "#/components/schemas/LegacyRotateRequest"
+      discriminator:
+        propertyName: mode
+        mapping:
+          encrypt: "#/components/schemas/LegacyEncryptRequest"
+          decrypt: "#/components/schemas/LegacyDecryptRequest"
+          rotate: "#/components/schemas/LegacyRotateRequest"
+    LegacyEncryptRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - profileId
+        - mode
+        - value
+      properties:
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        mode:
+          type: string
+          enum:
+            - encrypt
+        value:
+          type: string
+          description: UTF-8 plaintext limited to 1 MiB by encoded bytes. Empty is valid.
+          x-max-bytes: 1048576
+    LegacyDecryptRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - profileId
+        - mode
+        - value
+      properties:
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        mode:
+          type: string
+          enum:
+            - decrypt
+        value:
+          type: string
+          description: UTF-8 Ansible Vault text limited to 5 MiB by encoded bytes.
+          x-max-bytes: 5242880
+    LegacyRotateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - sourceProfileId
+        - destinationProfileId
+        - mode
+        - value
+      properties:
+        sourceProfileId:
+          $ref: "#/components/schemas/ProfileId"
+        destinationProfileId:
+          $ref: "#/components/schemas/ProfileId"
+        mode:
+          type: string
+          enum:
+            - rotate
+        value:
+          type: string
+          description: UTF-8 Ansible Vault text limited to 5 MiB by encoded bytes.
+          x-max-bytes: 5242880
+    LegacyValueResponse:
+      type: object
+      description: Deprecated generic success response. Clients ignore unknown properties.
+      required:
+        - value
+      properties:
+        value:
+          type: string
+    ErrorResponse:
+      type: object
+      description: Safe API error envelope. Clients ignore unknown properties.
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ApiError"
+    ApiError:
+      type: object
+      description: Safe stable code and human text. Clients ignore unknown properties.
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error code.
+          enum:
+            - invalid_request
+            - unauthorized
+            - forbidden
+            - not_found
+            - method_not_allowed
+            - operation_failed
+            - not_ready
+            - temporarily_unavailable
+        message:
+          type: string
+          description: Safe human text with no submitted values or underlying failure details.

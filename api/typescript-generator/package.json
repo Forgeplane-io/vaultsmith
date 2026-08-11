@@ -1,0 +1,17 @@
+{
+  "name": "vaultsmith-api-typescript-generator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "openapi-typescript ../openapi.yaml -o ../../frontend/src/generated/api.ts",
+    "typecheck": "tsc --noEmit --skipLibCheck --moduleResolution bundler --module esnext --target es2022 ../../frontend/src/generated/api.ts"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "js-yaml": "4.3.1"
+  }
+}

@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 frontend/node_modules
+api/typescript-generator/node_modules
 backend/web/dist/assets
 .hermes
 .tmp
