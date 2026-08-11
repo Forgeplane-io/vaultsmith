@@ -91,7 +91,7 @@ A single non-blocking admission controller bounds concurrent body decoding and c
 
 ### Wire rules and limits
 
-Requests use strict JSON. Required fields must be present and non-null. Unknown fields, duplicate keys, trailing values, malformed raw UTF-8, unsupported content encoding, and invalid decoded path profile IDs are rejected.
+REST request DTOs, known JSON-RPC fields, and tool arguments use strict JSON. Required fields in those closed objects must be present and non-null, and unknown fields are rejected. MCP protocol-defined extension points, including `_meta`, accept extension keys wherever the pinned `2026-07-28` schema permits them. Duplicate keys, trailing values, and malformed raw UTF-8 are rejected throughout the request. Unsupported content encoding and invalid decoded path profile IDs are also rejected.
 
 The stable byte budgets are:
 
@@ -147,7 +147,7 @@ Generation is intentionally small:
 
 Generated files are committed. CI regenerates them, compiles the Go and TypeScript outputs, validates OpenAPI, checks for generated drift, and rejects unexpected or stale per-occurrence breaking-change fingerprints.
 
-Response clients must ignore unknown properties. Requests remain strict. Additive routes and optional response properties remain v1. A removal, rename, or changed status meaning requires v2. The reconstructed baseline records the released value-typed decoder's omitted/null strings, empty or null variant-irrelevant members, and unvalidated profile-ID strings. The bridge intentionally rejects those forms. Each representable change has an exact reviewed `oasdiff` occurrence; case-insensitive Go field-name matching, duplicate-key, malformed raw UTF-8, content-encoding, credential-precedence, decrypted-output, and legacy middleware error-code hardening stays in prose and tests. Release notes must list all legacy hardening rather than claim byte-for-byte compatibility.
+Response clients must ignore unknown properties. REST request DTOs and MCP's known JSON-RPC and tool-argument objects remain strict outside protocol-defined extension points. Additive routes and optional response properties remain v1. A removal, rename, or changed status meaning requires v2. The reconstructed baseline records the released value-typed decoder's omitted/null strings, empty or null variant-irrelevant members, and unvalidated profile-ID strings. The bridge intentionally rejects those forms. Each representable change has an exact reviewed `oasdiff` occurrence; case-insensitive Go field-name matching, duplicate-key, malformed raw UTF-8, content-encoding, credential-precedence, decrypted-output, and legacy middleware error-code hardening stays in prose and tests. Release notes must list all legacy hardening rather than claim byte-for-byte compatibility.
 
 ### Data and telemetry boundary
 
