@@ -74,7 +74,7 @@ The bundled UI uses same-origin requests. Configured CORS origins are explicit. 
 
 Operation modes are `encrypt`, `decrypt`, and `rotate` (the API name for re-key). A re-key request names `sourceProfileId` and `destinationProfileId`. In native mode, mutations require the CSRF token returned by `/api/v1/session`.
 
-The approved machine-API target is [`api/openapi.yaml`](api/openapi.yaml). It is a forward contract, not a claim that its new routes are already served. [`api/baselines/v0.4.0.yaml`](api/baselines/v0.4.0.yaml) freezes the released profile and legacy-operation surface for compatibility checks. The design decisions are in [`docs/adr/0001-api-mcp-foundation.md`](docs/adr/0001-api-mcp-foundation.md). Operators must complete [`docs/api-operator-preflight.md`](docs/api-operator-preflight.md) before enabling bearer access or MCP.
+Bearer authentication and MCP are planned but not implemented. See the [API contract](api/README.md) and [design record](docs/adr/0001-api-mcp-foundation.md).
 
 Keep plaintext, ciphertext, passwords, cookies, and tokens out of shell history, logs, screenshots, tickets, and pull requests.
 
@@ -86,8 +86,9 @@ Requirements:
 
 - Go 1.25 or newer
 - Node.js 22 and npm
-- Bash
-- For API contract checks: Python 3.9 or newer, `curl`, `tar`, and either `sha256sum` or `shasum`
+- Bash, `curl`, and `tar`
+- Python 3.9 or newer
+- `sha256sum` or `shasum`
 
 `ansible-vault` is not required at runtime. The `make compatibility` target requires the CLI to be installed.
 

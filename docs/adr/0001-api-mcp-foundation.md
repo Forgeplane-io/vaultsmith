@@ -1,30 +1,28 @@
-# ADR 0001: Establish the REST and MCP API foundation
+# ADR 0001: REST and MCP API contract
 
 - Status: Accepted
 - Date: 2026-08-11
-- Baseline release: Vaultsmith v0.4.0 (`881a42a248c71d740b8896d86e63b808bdf9bfa2`)
+- Baseline: Vaultsmith v0.4.0 (`881a42a248c71d740b8896d86e63b808bdf9bfa2`)
 
 ## Context
 
-Vaultsmith v0.4.0 has a browser-oriented REST surface. `GET /api/v1/profiles` and `POST /api/v1/operations` combine HTTP decoding, credential handling, profile lookup, policy checks, limits, and Vault execution.
+Vaultsmith v0.4.0 exposes `GET /api/v1/profiles` and `POST /api/v1/operations` to the bundled browser UI. The handlers decode HTTP requests, select credentials and profiles, enforce policy and limits, and run Vault operations.
 
-Vaultsmith must also support CI/CD service accounts, human OAuth clients, and MCP agents without weakening its current secret boundary. Profile passwords stay on the server. Submitted plaintext and Vault text stay in memory and are never retained as operation history.
+The new API must also support OAuth clients and MCP agents. These callers must use the same profiles, policy, limits, and operation code as the UI. Profile passwords stay on the server. Vaultsmith does not store submitted plaintext, Vault text, or operation results.
 
-A rolling deployment can serve old browser assets from one pod and API requests from another pod. The migration therefore needs a server bridge before the bundled UI moves to canonical routes.
+During a rolling deployment, one pod can serve old UI assets while another handles the request. The legacy route must therefore keep working until every pod and the bundled UI have moved to the new routes.
 
 ## Decision
 
-### One service and one network surface
+### Process and network
 
-Vaultsmith will keep one process, listener, container port, Kubernetes Service, and edge route. REST is always present because the bundled UI uses it. `/mcp` uses the same listener and is disabled by default.
+Vaultsmith keeps one process, listener, container port, Kubernetes Service, and edge route. REST stays available because the UI uses it. MCP uses `POST /mcp` on the same listener and is disabled by default.
 
-The application will not infer or enforce deployment exposure, edge-to-backend TLS, or Service reachability. Operators own those controls. Deployment guidance will separate protocol-required client-visible HTTPS from operator-owned backend transport and network policy.
+Vaultsmith validates protocol-facing URLs. It does not decide whether the Service is public, require edge-to-backend TLS, or control network reachability. Those remain deployment concerns.
 
-### Versioned REST contract
+### REST routes
 
-OpenAPI 3.1 at `api/openapi.yaml` is the source of truth for the v1 machine API.
-
-Canonical routes are:
+`api/openapi.yaml` defines the v1 machine API.
 
 | Method | Path | Operation ID |
 | --- | --- | --- |
@@ -34,68 +32,68 @@ Canonical routes are:
 | `POST` | `/api/v1/rotations` | `rotateValue` |
 | `POST` | `/api/v1/operations` | `legacyOperation` |
 
-The legacy operation route remains for the lifetime of v1. It keeps its tagged request variants, `{ "value": ... }` success response, and ordinary error meanings. It will translate once into the shared service. It will not contain separate operation logic.
+`POST /api/v1/operations` remains available throughout v1. It keeps the released request variants, `{ "value": ... }` response, and status meanings, but translates each request into the shared service instead of maintaining separate operation code.
 
-Health, readiness, login, callback, logout, and browser-session bootstrap routes are not part of the machine API contract.
+Health, readiness, login, callback, logout, and browser-session bootstrap routes are outside this contract.
 
-### Caller and credential model
+### Authentication and authorization
 
 `auth.mode` remains the only authentication mode switch.
 
-- In `native` mode, canonical REST accepts exactly one browser session or one OAuth Bearer access token.
-- In `native` mode, MCP accepts Bearer access tokens only.
-- In `native` mode, the legacy operation route accepts browser sessions only and rejects every `Authorization` header before reading the body.
-- In `off` mode, REST and enabled MCP are anonymous. Every reachable caller has full operation access. Any supplied `Authorization` header is rejected because Vaultsmith did not validate it.
-- Browser-session mutations require CSRF. Bearer and anonymous mutations do not.
-- Bearer requests never fall back to session state and never touch Redis session state.
-- Client-provided identity headers are ignored.
+- In `native` mode, canonical REST accepts exactly one browser session or one OAuth Bearer token.
+- In `native` mode, MCP accepts Bearer tokens only.
+- In `native` mode, the legacy route accepts browser sessions only and rejects an `Authorization` header before reading the body.
+- In `off` mode, REST and enabled MCP are anonymous. Any caller that can reach them can run every operation. Vaultsmith rejects supplied `Authorization` headers because it cannot validate them in this mode.
+- Browser-session mutations require CSRF. Bearer and anonymous requests do not.
+- Bearer requests never fall back to a session or read session state from Redis.
+- Vaultsmith ignores client-supplied identity headers.
 
-The transport-neutral caller contains only authentication kind, verified issuer and subject, verified groups, and verified OAuth scopes.
+The shared caller record contains the authentication kind, verified issuer and subject, verified groups, and verified OAuth scopes.
 
-### OAuth scopes and policy
-
-REST and MCP use the same exact, case-sensitive scopes:
+REST and MCP use these case-sensitive scopes:
 
 - `vaultsmith.profile.read`
 - `vaultsmith.encrypt`
 - `vaultsmith.decrypt`
 - `vaultsmith.rotate`
 
-Bearer authorization is the intersection of the required scope and the existing Casbin policy. Session callers use Casbin only. Anonymous callers in off mode bypass both.
+A Bearer caller needs both the OAuth scope for the operation and permission from the existing Casbin policy. Session callers use Casbin only. Anonymous callers in `off` mode bypass both checks.
 
-Rotate requires `vaultsmith.rotate`, decrypt policy on the source profile, and encrypt policy on the destination profile. It does not require the direct encrypt or decrypt OAuth scopes.
+Rotation needs `vaultsmith.rotate`, decrypt permission on the source profile, and encrypt permission on the destination profile. It does not also need the direct encrypt and decrypt scopes.
 
-Profile discovery keeps successful-empty behavior for a caller without catalog policy access. A returned profile is visible only when at least one effective capability is true. The capability object contains `encrypt`, `decrypt`, `rotateSource`, and `rotateDestination`.
+Profile listing returns an empty result when the caller cannot view the catalog. It returns a profile only when at least one of `encrypt`, `decrypt`, `rotateSource`, or `rotateDestination` is allowed.
 
-### OAuth resource
+### OAuth resource and tokens
 
-REST and MCP are one protected resource. In native mode, the canonical `PUBLIC_BASE_URL` origin is both the resource identifier and required access-token audience.
+REST and MCP are one protected resource. In `native` mode, the `PUBLIC_BASE_URL` origin is the resource identifier and the required token audience.
 
-Native mode requires:
+Before binding the listener, native mode requires:
 
-- An HTTPS `PUBLIC_BASE_URL` origin with no user information, query, fragment, or application path.
-- An absolute HTTPS `OIDC_ISSUER_URL` with no user information, query, or fragment.
-- Exact issuer metadata and absolute HTTPS JWKS, authorization, and token endpoints before the listener binds.
-- Signed RFC 9068 JWT access tokens with the fixed algorithm allowlist `RS256`, `PS256`, `ES256`, and `EdDSA`.
-- Exact issuer and audience matching, required time and token-profile claims, and a 60-second clock skew.
+- an HTTPS `PUBLIC_BASE_URL` origin without user information, query, fragment, or application path;
+- an HTTPS `OIDC_ISSUER_URL` without user information, query, or fragment;
+- matching issuer metadata and HTTPS JWKS, authorization, and token endpoints;
+- an RFC 9068 JWT access token signed with `RS256`, `PS256`, `ES256`, or `EdDSA`; and
+- matching issuer and audience claims, the required token-profile and time claims, and at most 60 seconds of clock skew.
 
-Vaultsmith serves one public root protected-resource metadata document in native mode. Pathful REST and MCP challenges deliberately omit `resource_metadata`.
+Vaultsmith serves protected-resource metadata at the root in native mode. REST and MCP challenges on other paths omit `resource_metadata`.
 
-### Shared service and admission
+### Shared operation service
 
-A transport-neutral caller package and `backend/internal/vaultservice` will own profile projection, validation, authorization, limits, operation dispatch, cancellation, and generic domain errors.
+A shared caller package and `backend/internal/vaultservice` own profile projection, validation, authorization, limits, operation dispatch, cancellation, and safe domain errors.
 
-Every mutation has one full authorization point: service-owned `Prepare`. It requires the live request admission lease and returns a request-bound prepared operation. `Run` can execute only the already validated command.
+Every mutation passes through `Prepare` once. `Prepare` requires the active admission lease, validates the command, and returns a request-bound operation. `Run` can execute only that prepared operation.
 
-A single non-blocking admission controller bounds concurrent body decoding and cryptographic work across canonical REST, legacy REST, and MCP. Capacity is fixed in code from a checked-in benchmark receipt. It is not a chart value.
+One non-blocking admission controller covers body decoding and Vault work for canonical REST, the legacy route, and MCP. Its capacity is fixed in code from a checked-in benchmark. Helm does not configure it.
 
-### Wire rules and limits
+### JSON and HTTP limits
 
-REST request DTOs, known JSON-RPC fields, and tool arguments use strict JSON. Required fields in those closed objects must be present and non-null, and unknown fields are rejected. MCP protocol-defined extension points, including `_meta`, accept extension keys wherever the pinned `2026-07-28` schema permits them. Duplicate keys, trailing values, and malformed raw UTF-8 are rejected throughout the request. Unsupported content encoding and invalid decoded path profile IDs are also rejected.
+REST request DTOs, known JSON-RPC fields, and tool arguments use strict JSON. Required fields in these objects must be present and non-null. Unknown fields are rejected.
 
-The stable byte budgets are:
+MCP protocol-defined extension points, including `_meta`, accept extension keys wherever the pinned `2026-07-28` schema permits them.
 
-| Boundary | Budget |
+All request paths reject duplicate JSON keys, trailing JSON values, and malformed UTF-8. Vaultsmith also rejects unsupported content encodings and invalid decoded profile IDs in the URL path.
+
+| Boundary | Limit |
 | --- | ---: |
 | Encrypt plaintext | 1 MiB |
 | Decrypt or rotate Vault text | 5 MiB |
@@ -103,9 +101,9 @@ The stable byte budgets are:
 | JSON request body | 8 MiB |
 | HTTP headers | 16 KiB |
 
-Canonical REST, legacy REST, and enabled MCP application requests receive a server-owned 30-second deadline before credential dispatch. The derived server budgets are 40-second read, 45-second write, and at least 50-second edge timeouts.
+Canonical REST, the legacy route, and enabled MCP use a 30-second operation deadline that starts before credential dispatch. The server read and write limits are 40 and 45 seconds. The edge timeout must be at least 50 seconds.
 
-Every API error keeps the existing envelope:
+API errors keep the existing shape:
 
 ```json
 {
@@ -116,62 +114,64 @@ Every API error keeps the existing envelope:
 }
 ```
 
-Stable status/code pairs are documented in OpenAPI. Messages remain safe human text. They never contain submitted values, profile configuration, token claims, or underlying Vault and token errors.
+OpenAPI defines the stable status and error-code pairs. Error messages never include submitted values, profile configuration, token claims, or underlying Vault and token errors.
 
-Encrypt and rotate are not automatically retried. No idempotency cache is added.
+Vaultsmith does not retry encrypt or rotate operations and does not add an idempotency cache.
 
-### MCP boundary
+### MCP
 
-The only new Helm value is `mcp.enabled`, mapped to `MCP_ENABLED`; it defaults to false. Vaultsmith adds no second port or Service.
+The Helm value `mcp.enabled` maps to `MCP_ENABLED` and defaults to `false`. It changes no Service, port, or route configuration.
 
-The MCP adapter supports only stateless Streamable HTTP protocol revision `2026-07-28` on `POST /mcp`, plus valid CORS preflight. It provides `server/discover`, `tools/list`, and `tools/call` for these tools:
+The MCP endpoint uses stateless Streamable HTTP revision `2026-07-28`. It accepts `POST /mcp` and valid CORS preflight requests. It implements:
 
-- `list_profiles`
-- `encrypt`
-- `decrypt`
-- `rotate`
+- `server/discover`
+- `tools/list`
+- `tools/call`
 
-Vaultsmith will use exported `github.com/modelcontextprotocol/go-sdk` v1.7.0 request, content, tool, and schema types as a library. Vaultsmith owns the one-pass HTTP/JSON-RPC facade and complete-result wire structs. It will not install the SDK stock HTTP handler, use reflection to mutate private fields, or reread request bodies.
+The first tool set is `list_profiles`, `encrypt`, `decrypt`, and `rotate`.
 
-Every non-empty `MCPGODEBUG` value is a startup error before listener binding. `MCP_ENABLED` and `MCPGODEBUG` are reserved profile password-environment names.
+Vaultsmith uses the exported request, content, tool, and schema types from `github.com/modelcontextprotocol/go-sdk` 1.7.0. Vaultsmith owns the one-pass HTTP and JSON-RPC adapter and the complete-result wire types. It does not use the SDK HTTP handler, use reflection to mutate private SDK fields, or read a request body twice.
 
-### Contract generation and compatibility
+Any non-empty `MCPGODEBUG` value stops startup before the listener binds. Profiles cannot use `MCP_ENABLED` or `MCPGODEBUG` as password environment names.
 
-The v0.4.0 released REST surface is frozen at `api/baselines/v0.4.0.yaml`. The bridge contract is compared to this baseline. Later releases compare to the previous tagged `api/openapi.yaml` artifact.
+### Generation and compatibility
 
-Generation is intentionally small:
+`api/baselines/v0.4.0.yaml` records the REST API from v0.4.0. The bridge compares against this file. Later releases compare against the previous tagged `api/openapi.yaml`.
 
-- `oapi-codegen` v2.8.0 generates Go DTO models only.
-- `openapi-typescript` 7.13.0 generates TypeScript contract types from an isolated npm package pinned to TypeScript 5.9.3.
-- `oasdiff` 1.28.0 is downloaded as a prebuilt archive and verified by checksum.
+The toolchain is limited to:
 
-Generated files are committed. CI regenerates them, compiles the Go and TypeScript outputs, validates OpenAPI, checks for generated drift, and rejects unexpected or stale per-occurrence breaking-change fingerprints.
+- `oapi-codegen` 2.8.0 for Go models;
+- `openapi-typescript` 7.13.0 and TypeScript 5.9.3 for TypeScript types; and
+- checksum-verified `oasdiff` 1.28.0 archives for compatibility checks.
 
-Response clients must ignore unknown properties. REST request DTOs and MCP's known JSON-RPC and tool-argument objects remain strict outside protocol-defined extension points. Additive routes and optional response properties remain v1. A removal, rename, or changed status meaning requires v2. The reconstructed baseline records the released value-typed decoder's omitted/null strings, empty or null variant-irrelevant members, and unvalidated profile-ID strings. The bridge intentionally rejects those forms. Each representable change has an exact reviewed `oasdiff` occurrence; case-insensitive Go field-name matching, duplicate-key, malformed raw UTF-8, content-encoding, credential-precedence, decrypted-output, and legacy middleware error-code hardening stays in prose and tests. Release notes must list all legacy hardening rather than claim byte-for-byte compatibility.
+Generated files are committed. CI regenerates and compiles them, validates OpenAPI, checks for drift, and rejects new or stale compatibility findings.
 
-### Data and telemetry boundary
+Clients must ignore unknown response properties. New routes and optional response properties remain compatible with v1. Removing or renaming a field or route, or changing a status meaning, requires v2.
 
-Vaultsmith will not persist operation records, submitted values, results, idempotency keys, or Bearer access tokens. Existing Redis browser sessions, including OIDC refresh tokens, remain the explicit persistence exception.
+The v0.4.0 decoder accepted omitted or null strings, empty or null fields from the wrong operation variant, non-canonical profile IDs, case-insensitive field names, duplicate keys, malformed UTF-8, unsupported content encodings, ambiguous credentials, oversized decrypted output, and legacy middleware error codes that the new bridge rejects. `oasdiff` findings are accepted one occurrence at a time. Changes that OpenAPI cannot describe need tests, an ADR entry, and release-note coverage. The bridge does not claim byte-for-byte compatibility with the old decoder.
 
-Logs, metrics, traces, errors, and new state must not contain request or response bodies, plaintext, Vault text, passwords, password-environment names, authentication values, tokens, claims, or underlying crypto errors.
+### Data and telemetry
+
+Vaultsmith does not store operations, submitted values, results, idempotency keys, or Bearer tokens. Existing Redis browser sessions and their OIDC refresh tokens remain the only persistence exception.
+
+Logs, metrics, traces, errors, and new state must not contain request or response bodies, plaintext, Vault text, passwords, password environment names, authentication values, tokens, claims, or underlying cryptographic errors.
 
 ## Consequences
 
-- The bundled UI can remain on `/api/v1/operations` for the bridge release.
-- Canonical external clients can start only after every serving replica runs the bridge release.
-- MCP callers can start only after a separate enablement rollout completes on every replica.
-- The next release can migrate the bundled UI to canonical routes without breaking old assets.
-- The implementation gains explicit compatibility gates and generated DTOs without adopting a generated router or SDK.
-- Native deployments must complete the [machine API operator preflight](../api-operator-preflight.md), including stricter HTTPS issuer, discovery, resource-origin, capacity, rollout, and rollback answers, before upgrade.
-- Off mode remains intentionally dangerous when exposed. It does not gain forwarded-user identity or token validation.
+- Old UI assets can keep using `/api/v1/operations` during the bridge rollout.
+- Bearer clients start only after every serving pod runs the bridge release.
+- MCP starts in a separate rollout after every serving pod has it enabled.
+- Operators complete [`api-operator-preflight.md`](../api-operator-preflight.md) before enabling Bearer or MCP access.
+- A later release can move the bundled UI to the canonical routes.
+- `off` mode remains unsafe on an exposed network.
 
 ## Rejected alternatives
 
-- **A separate API listener or Service:** duplicates network and deployment policy without adding an authorization boundary.
-- **A new exposure or trusted-edge mode:** cannot reliably describe operator-owned topology and would create false assurance.
-- **Bearer support on the legacy route:** expands a compatibility surface and makes operation-specific scope selection ambiguous before strict body decoding.
-- **An empty OpenAPI security alternative for off mode:** falsely advertises anonymous access for native deployments.
-- **A generated server/router:** adds framework coupling where only shared DTOs are required.
-- **Operation history or idempotency storage:** conflicts with Vaultsmith's no-retention boundary and cannot make randomized encryption deterministic.
-- **MCP SDK stock HTTP handler:** does not satisfy the fixed protocol, one-read body, header, cache metadata, or Vaultsmith-owned error requirements.
-- **Rotation attestations in this foundation:** signing-key lifecycle and verification semantics require a separate additive v1 decision.
+- Separate API listener or Service: duplicates deployment policy without adding an authorization boundary.
+- Trusted-edge authentication mode: depends on topology that Vaultsmith cannot verify.
+- Bearer support on the legacy route: expands the compatibility surface and makes scope selection depend on a legacy body.
+- Empty OpenAPI security alternative for `off` mode: would advertise anonymous access for native deployments.
+- Generated server or router: adds framework coupling when only shared types are needed.
+- Operation history or idempotency storage: conflicts with the no-retention policy and cannot make randomized encryption deterministic.
+- MCP SDK HTTP handler: does not meet the request-body, protocol, header, cache, and error contracts.
+- Rotation attestations: need a separate design for signing keys and verification.
