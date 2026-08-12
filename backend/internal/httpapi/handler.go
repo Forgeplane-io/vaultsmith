@@ -3,15 +3,21 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/forgeplane-io/vaultsmith/backend/internal/apimodels"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/caller"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
 )
@@ -29,8 +35,10 @@ type Profile struct {
 }
 
 type ProfileCapabilities struct {
-	Encrypt bool `json:"encrypt"`
-	Decrypt bool `json:"decrypt"`
+	Encrypt           bool `json:"encrypt"`
+	Decrypt           bool `json:"decrypt"`
+	RotateSource      bool `json:"rotateSource"`
+	RotateDestination bool `json:"rotateDestination"`
 }
 
 type Executor = vaultservice.Executor
@@ -50,13 +58,11 @@ type operationRequest struct {
 	present              map[string]bool
 }
 
-type profilesResponse struct {
-	Profiles []Profile `json:"profiles"`
-}
-
-type valueResponse struct {
-	Value string `json:"value"`
-}
+type profilesResponse = apimodels.ProfilesResponse
+type valueResponse = apimodels.LegacyValueResponse
+type encryptResponse = apimodels.EncryptResponse
+type decryptResponse = apimodels.DecryptResponse
+type rotateResponse = apimodels.RotateResponse
 
 type statusResponse struct {
 	Status string `json:"status"`
@@ -69,23 +75,23 @@ type sessionResponse struct {
 	CSRFToken     string `json:"csrfToken"`
 }
 
-type errorResponse struct {
-	Error apiError `json:"error"`
-}
-
-type apiError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ensureRequestID(w)
 	switch r.URL.Path {
 	case "/api/v1/profiles":
 		h.serveProfiles(w, r)
 	case "/api/v1/operations":
 		h.serveOperation(w, r)
+	case "/api/v1/rotations":
+		h.serveCanonicalRotate(w, r)
 	case "/api/v1/session":
 		h.serveSession(w, r)
+	case "/.well-known/oauth-protected-resource":
+		h.serveProtectedResourceMetadata(w, r)
+	case "/metrics":
+		h.serveMetrics(w, r)
+	case "/mcp":
+		h.serveMCP(w, r)
 	case "/auth/login":
 		h.serveLogin(w, r)
 	case "/auth/callback":
@@ -97,8 +103,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/readyz":
 		h.serveReady(w, r)
 	default:
+		if profileID, operation, ok, invalid := canonicalProfileOperation(r.URL); ok || invalid {
+			if invalid {
+				writeError(w, http.StatusBadRequest, "invalid_request", "profile ID is invalid")
+				return
+			}
+			switch operation {
+			case vaultservice.OperationEncrypt:
+				h.serveCanonicalEncrypt(w, r, profileID)
+			case vaultservice.OperationDecrypt:
+				h.serveCanonicalDecrypt(w, r, profileID)
+			default:
+				writeError(w, http.StatusNotFound, "not_found", "resource was not found")
+			}
+			return
+		}
 		writeError(w, http.StatusNotFound, "not_found", "resource was not found")
 	}
+}
+
+func (h *Handler) preflightProfiles(ctx context.Context, actor caller.Caller) error {
+	return h.service.PreflightProfiles(ctx, actor)
+}
+
+func (h *Handler) preflightOperation(ctx context.Context, actor caller.Caller, operation vaultservice.Operation) error {
+	return h.service.Preflight(ctx, actor, operation)
 }
 
 func (h *Handler) serveProfiles(w http.ResponseWriter, r *http.Request) {
@@ -106,12 +135,17 @@ func (h *Handler) serveProfiles(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, http.MethodGet)
 		return
 	}
-	if h.rejectUnsupportedAuthorization(w, r) {
-		return
-	}
 	actor, ok, status, code := h.requestCaller(r)
 	if !ok {
 		writeAuthError(w, status, code)
+		return
+	}
+	if err := h.preflightProfiles(r.Context(), actor); err != nil {
+		if actor.Kind() == caller.KindBearer && vaultservice.HasCode(err, vaultservice.CodeForbidden) {
+			writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", vaultservice.ScopeProfileRead)
+		} else {
+			writeServiceError(w, err)
+		}
 		return
 	}
 	profiles, err := h.service.ListProfiles(r.Context(), actor)
@@ -119,18 +153,134 @@ func (h *Handler) serveProfiles(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	public := make([]Profile, 0, len(profiles))
+	public := make([]apimodels.Profile, 0, len(profiles))
 	for _, profile := range profiles {
-		public = append(public, Profile{
-			ID:    profile.ID,
+		public = append(public, apimodels.Profile{
+			Id:    profile.ID,
 			Label: profile.Label,
-			Capabilities: ProfileCapabilities{
-				Encrypt: profile.Capabilities.Encrypt,
-				Decrypt: profile.Capabilities.Decrypt,
+			Capabilities: apimodels.ProfileCapabilities{
+				Encrypt:           profile.Capabilities.Encrypt,
+				Decrypt:           profile.Capabilities.Decrypt,
+				RotateSource:      profile.Capabilities.RotateSource,
+				RotateDestination: profile.Capabilities.RotateDestination,
 			},
 		})
 	}
 	writeJSON(w, http.StatusOK, profilesResponse{Profiles: public})
+}
+
+func (h *Handler) serveCanonicalEncrypt(w http.ResponseWriter, r *http.Request, profileID string) {
+	h.serveCanonicalOperation(w, r, vaultservice.OperationEncrypt, func(fields map[string]string) (vaultservice.Command, error) {
+		plaintext, ok := fields["plaintext"]
+		if !ok {
+			return vaultservice.Command{}, errors.New("required request field is missing")
+		}
+		request := apimodels.EncryptRequest{Plaintext: plaintext}
+		return vaultservice.Command{Operation: vaultservice.OperationEncrypt, ProfileID: profileID, Value: request.Plaintext}, nil
+	}, func(output string) any {
+		return encryptResponse{VaultText: output}
+	})
+}
+
+func (h *Handler) serveCanonicalDecrypt(w http.ResponseWriter, r *http.Request, profileID string) {
+	h.serveCanonicalOperation(w, r, vaultservice.OperationDecrypt, func(fields map[string]string) (vaultservice.Command, error) {
+		vaultText, ok := fields["vaultText"]
+		if !ok {
+			return vaultservice.Command{}, errors.New("required request field is missing")
+		}
+		request := apimodels.DecryptRequest{VaultText: vaultText}
+		return vaultservice.Command{Operation: vaultservice.OperationDecrypt, ProfileID: profileID, Value: request.VaultText}, nil
+	}, func(output string) any {
+		return decryptResponse{Plaintext: output}
+	})
+}
+
+func (h *Handler) serveCanonicalRotate(w http.ResponseWriter, r *http.Request) {
+	h.serveCanonicalOperation(w, r, vaultservice.OperationRotate, func(fields map[string]string) (vaultservice.Command, error) {
+		source, sourceOK := fields["sourceProfileId"]
+		destination, destinationOK := fields["destinationProfileId"]
+		vaultText, vaultOK := fields["vaultText"]
+		if !sourceOK || !destinationOK || !vaultOK {
+			return vaultservice.Command{}, errors.New("required request field is missing")
+		}
+		request := apimodels.RotateRequest{SourceProfileId: source, DestinationProfileId: destination, VaultText: vaultText}
+		return vaultservice.Command{Operation: vaultservice.OperationRotate, SourceProfileID: request.SourceProfileId, DestinationProfileID: request.DestinationProfileId, Value: request.VaultText}, nil
+	}, func(output string) any {
+		return rotateResponse{VaultText: output}
+	})
+}
+
+type canonicalCommandDecoder func(map[string]string) (vaultservice.Command, error)
+type canonicalResponseBuilder func(string) any
+
+func (h *Handler) serveCanonicalOperation(w http.ResponseWriter, r *http.Request, operation vaultservice.Operation, decodeCommand canonicalCommandDecoder, response canonicalResponseBuilder) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if !isJSONContentType(r.Header.Get("Content-Type")) {
+		writeError(w, http.StatusUnsupportedMediaType, "invalid_request", "content type must be application/json")
+		return
+	}
+	if !supportsIdentityContentEncoding(r.Header) {
+		writeError(w, http.StatusUnsupportedMediaType, "invalid_request", "media type is not supported")
+		return
+	}
+	actor, ok, status, code := h.requestCaller(r)
+	if !ok {
+		writeAuthError(w, status, code)
+		return
+	}
+	if err := h.preflightOperation(r.Context(), actor, operation); err != nil {
+		if actor.Kind() == caller.KindBearer && vaultservice.HasCode(err, vaultservice.CodeForbidden) {
+			scope, _ := requiredBearerScope(operation)
+			writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope)
+		} else {
+			writeServiceError(w, err)
+		}
+		return
+	}
+	lease, err := h.service.Admission().TryAcquire(r.Context())
+	if err != nil {
+		if errors.Is(err, vaultservice.ErrAdmissionSaturated) {
+			writeAdmissionSaturated(w, h.service.Admission())
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
+		} else {
+			writeServiceError(w, err)
+		}
+		return
+	}
+	defer lease.Release()
+	leaseContext := lease.Context(r.Context())
+
+	fields, err := decodeStrictStringFields(w, r, canonicalAllowedFields(operation))
+	if err != nil {
+		if errors.Is(err, errBodyTooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "invalid_request", "request is too large")
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid_request", "request is invalid")
+		}
+		return
+	}
+	command, err := decodeCommand(fields)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "request is invalid")
+		return
+	}
+	prepared, err := h.service.Prepare(leaseContext, actor, command, lease)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	output, err := prepared.Run(leaseContext)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response(output))
 }
 
 func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
@@ -157,8 +307,7 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
 	lease, err := h.service.Admission().TryAcquire(r.Context())
 	if err != nil {
 		if errors.Is(err, vaultservice.ErrAdmissionSaturated) {
-			w.Header().Set("Retry-After", "1")
-			writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
+			writeAdmissionSaturated(w, h.service.Admission())
 		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
 		} else {
@@ -193,6 +342,54 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, valueResponse{Value: output})
 }
 
+func canonicalAllowedFields(operation vaultservice.Operation) map[string]struct{} {
+	switch operation {
+	case vaultservice.OperationEncrypt:
+		return map[string]struct{}{"plaintext": {}}
+	case vaultservice.OperationDecrypt:
+		return map[string]struct{}{"vaultText": {}}
+	case vaultservice.OperationRotate:
+		return map[string]struct{}{"sourceProfileId": {}, "destinationProfileId": {}, "vaultText": {}}
+	default:
+		return nil
+	}
+}
+
+func canonicalProfileOperation(u *url.URL) (string, vaultservice.Operation, bool, bool) {
+	escaped := u.EscapedPath()
+	const prefix = "/api/v1/profiles/"
+	if !strings.HasPrefix(escaped, prefix) {
+		return "", "", false, false
+	}
+	rest := strings.TrimPrefix(escaped, prefix)
+	var suffix string
+	var operation vaultservice.Operation
+	switch {
+	case strings.HasSuffix(rest, "/encrypt"):
+		suffix = "/encrypt"
+		operation = vaultservice.OperationEncrypt
+	case strings.HasSuffix(rest, "/decrypt"):
+		suffix = "/decrypt"
+		operation = vaultservice.OperationDecrypt
+	default:
+		return "", "", false, false
+	}
+	escapedProfileID := strings.TrimSuffix(rest, suffix)
+	if escapedProfileID == "" || containsEscapedPathSeparator(escapedProfileID) {
+		return "", "", false, true
+	}
+	profileID, err := url.PathUnescape(escapedProfileID)
+	if err != nil || strings.Contains(profileID, "/") || !config.IsValidProfileID(profileID) {
+		return "", "", false, true
+	}
+	return profileID, operation, true, false
+}
+
+func containsEscapedPathSeparator(value string) bool {
+	lowered := strings.ToLower(value)
+	return strings.Contains(lowered, "%2f") || strings.Contains(lowered, "%5c")
+}
+
 func (r operationRequest) command() vaultservice.Command {
 	return vaultservice.Command{
 		Operation:            vaultservice.Operation(r.Mode),
@@ -221,6 +418,50 @@ func (h *Handler) serveReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, statusResponse{Status: "ready"})
+}
+
+type protectedResourceMetadataResponse struct {
+	Resource                 string   `json:"resource"`
+	AuthorizationServers     []string `json:"authorization_servers"`
+	ScopesSupported          []string `json:"scopes_supported"`
+	BearerMethodsSupported   []string `json:"bearer_methods_supported"`
+	ResourceSigningAlgValues []string `json:"resource_signing_alg_values_supported,omitempty"`
+}
+
+func (h *Handler) serveProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if h.authConfig.Mode != config.AuthModeNative {
+		writeError(w, http.StatusNotFound, "not_found", "resource was not found")
+		return
+	}
+	ensureRequestID(w)
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(protectedResourceMetadataResponse{
+		Resource:               h.authConfig.OIDC.PublicBaseURL,
+		AuthorizationServers:   []string{h.authConfig.OIDC.IssuerURL},
+		ScopesSupported:        []string{vaultservice.ScopeProfileRead, vaultservice.ScopeEncrypt, vaultservice.ScopeDecrypt, vaultservice.ScopeRotate},
+		BearerMethodsSupported: []string{"header"},
+	})
+}
+
+func (h *Handler) serveMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	admission := h.service.Admission()
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	ensureRequestID(w)
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w, "vaultsmith_operation_admission_capacity %d\n", admission.Capacity())
+	_, _ = fmt.Fprintf(w, "vaultsmith_operation_admission_in_use %d\n", admission.InUse())
+	_, _ = fmt.Fprintf(w, "vaultsmith_operation_admission_rejections_total %d\n", admission.Rejections())
 }
 
 var errBodyTooLarge = errors.New("request body too large")
@@ -304,7 +545,46 @@ func readRequestBody(ctx context.Context, body io.ReadCloser) ([]byte, error) {
 	return raw, err
 }
 
-func decodeStrictOperationObject(raw []byte) (map[string]json.RawMessage, error) {
+func decodeStrictStringFields(w http.ResponseWriter, r *http.Request, allowed map[string]struct{}) (map[string]string, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes)
+	defer r.Body.Close()
+	raw, err := readRequestBody(r.Context(), r.Body)
+	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			return nil, errBodyTooLarge
+		}
+		return nil, err
+	}
+	validUTF8 := utf8.Valid(raw)
+	if contextErr := r.Context().Err(); contextErr != nil {
+		return nil, contextErr
+	}
+	if !validUTF8 {
+		return nil, errors.New("request is not valid UTF-8")
+	}
+	fields, decodeErr := decodeStrictObject(raw, allowed)
+	if contextErr := r.Context().Err(); contextErr != nil {
+		return nil, contextErr
+	}
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+	values := make(map[string]string, len(fields))
+	for key, value := range fields {
+		decoded, decodeErr := decodeOperationString(value)
+		if contextErr := r.Context().Err(); contextErr != nil {
+			return nil, contextErr
+		}
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		values[key] = decoded
+	}
+	return values, nil
+}
+
+func decodeStrictObject(raw []byte, allowed map[string]struct{}) (map[string]json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	first, err := decoder.Token()
 	if err != nil {
@@ -313,8 +593,8 @@ func decodeStrictOperationObject(raw []byte) (map[string]json.RawMessage, error)
 	if delimiter, ok := first.(json.Delim); !ok || delimiter != '{' {
 		return nil, errors.New("request must be a JSON object")
 	}
-	fields := make(map[string]json.RawMessage, 5)
-	seen := make(map[string]struct{}, 5)
+	fields := make(map[string]json.RawMessage, len(allowed))
+	seen := make(map[string]struct{}, len(allowed))
 	for decoder.More() {
 		token, err := decoder.Token()
 		if err != nil {
@@ -329,9 +609,7 @@ func decodeStrictOperationObject(raw []byte) (map[string]json.RawMessage, error)
 			return nil, errors.New("duplicate request field")
 		}
 		seen[folded] = struct{}{}
-		switch key {
-		case "profileId", "sourceProfileId", "destinationProfileId", "mode", "value":
-		default:
+		if _, ok := allowed[key]; !ok {
 			return nil, errors.New("unknown request field")
 		}
 		var value json.RawMessage
@@ -352,6 +630,16 @@ func decodeStrictOperationObject(raw []byte) (map[string]json.RawMessage, error)
 		return nil, errors.New("trailing JSON")
 	}
 	return fields, nil
+}
+
+func decodeStrictOperationObject(raw []byte) (map[string]json.RawMessage, error) {
+	return decodeStrictObject(raw, map[string]struct{}{
+		"profileId":            {},
+		"sourceProfileId":      {},
+		"destinationProfileId": {},
+		"mode":                 {},
+		"value":                {},
+	})
 }
 
 func decodeOperationString(raw json.RawMessage) (string, error) {
@@ -485,12 +773,35 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	writeError(w, status, code, domain.SafeMessage())
 }
 
+func requiredBearerScope(operation vaultservice.Operation) (string, bool) {
+	return vaultservice.RequiredScope(operation)
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
+	if w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	ensureRequestID(w)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, errorResponse{Error: apiError{Code: code, Message: message}})
+	writeJSON(w, status, apimodels.ErrorResponse{Error: apimodels.ApiError{Code: apimodels.ApiErrorCode(code), Message: message}})
+}
+
+func ensureRequestID(w http.ResponseWriter) {
+	if w.Header().Get("X-Request-ID") != "" {
+		return
+	}
+	w.Header().Set("X-Request-ID", newRequestID())
+}
+
+func newRequestID() string {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "00000000000000000000000000000000"
+	}
+	return hex.EncodeToString(value[:])
 }

@@ -39,6 +39,9 @@ jobs:
         run: npm run typecheck
       - name: Build frontend
         run: npm run build
+      - name: Verify tracked embedded frontend entrypoint
+        working-directory: ..
+        run: git diff --exit-code -- backend/web/dist/index.html
 
   backend:
     name: Backend
@@ -58,6 +61,8 @@ jobs:
         run: go test -race ./...
       - name: Build server
         run: go build ./...
+      - name: Validate admission benchmark receipt
+        run: make admission-receipt-check
 
   api-contract:
     name: API contract
@@ -172,6 +177,56 @@ jobs:
             --timeout 120s
           default_policies="$(kubectl get networkpolicy --namespace "$NAMESPACE" -o json | jq '.items | length')"
           test "$default_policies" -eq 0
+      - name: Verify MCP rollout activation fence
+        env:
+          RELEASE_NAME: vaultsmith
+          NAMESPACE: vaultsmith
+        run: |
+          set -euo pipefail
+          # Enabling MCP changes the pod template and must complete the rolling
+          # replacement before callers are allowed to activate the protocol.
+          old_revision="$(kubectl get deployment "$RELEASE_NAME" --namespace "$NAMESPACE" -o jsonpath='{.metadata.generation}')"
+          helm upgrade "$RELEASE_NAME" deploy/helm/vaultsmith \
+            --namespace "$NAMESPACE" \
+            --reuse-values \
+            --set replicaCount=2 \
+            --set mcp.enabled=true \
+            --wait \
+            --timeout 180s
+          kubectl rollout status deployment/"$RELEASE_NAME" --namespace "$NAMESPACE" --timeout=120s
+          new_revision="$(kubectl get deployment "$RELEASE_NAME" --namespace "$NAMESPACE" -o jsonpath='{.metadata.generation}')"
+          test "$new_revision" -gt "$old_revision"
+          pod_ips="$(kubectl get pods --namespace "$NAMESPACE" -l app.kubernetes.io/name=vaultsmith,app.kubernetes.io/instance="$RELEASE_NAME" -o json | jq -r '.items[] | select(.status.phase == "Running") | .status.podIP')"
+          pod_count="$(printf '%s\n' "$pod_ips" | sed '/^$/d' | wc -l | tr -d ' ')"
+          test "$pod_count" -eq 2
+          kubectl run mcp-probe \
+            --namespace "$NAMESPACE" \
+            --image=curlimages/curl:8.12.1 \
+            --restart=Never \
+            --command -- sleep 300
+          trap 'kubectl delete pod mcp-probe --namespace "$NAMESPACE" --ignore-not-found --wait=false >/dev/null' EXIT
+          kubectl wait pod/mcp-probe --namespace "$NAMESPACE" --for=condition=Ready --timeout=60s
+          index=0
+          while IFS= read -r pod_ip; do
+            test -n "$pod_ip"
+            # The application image is distroless. Probe each pod IP from a
+            # disposable client instead of assuming shell tools exist inside it.
+            kubectl exec mcp-probe --namespace "$NAMESPACE" -- curl \
+              --fail-with-body \
+              --silent \
+              --show-error \
+              --request POST \
+              --header 'Content-Type: application/json' \
+              --header 'Accept: application/json, text/event-stream' \
+              --header 'MCP-Protocol-Version: 2026-07-28' \
+              --header 'Mcp-Method: server/discover' \
+              --data-binary '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' \
+              "http://${pod_ip}:8080/mcp" \
+              | jq -e '.result.supportedVersions == ["2026-07-28"] and .result.resultType == "complete"' >/dev/null
+            index=$((index + 1))
+          done <<< "$pod_ips"
+          kubectl delete pod mcp-probe --namespace "$NAMESPACE" --wait=true
+          trap - EXIT
       - name: Exercise deny-all NetworkPolicy toggle
         env:
           RELEASE_NAME: vaultsmith
@@ -289,6 +344,21 @@ jobs:
           distribution: goreleaser
           version: v2.14.2
           args: release --snapshot --clean
+      - name: Verify static API reference in every release archive
+        run: |
+          set -euo pipefail
+          archive_count=0
+          for archive in dist/*.tar.gz; do
+            test -f "$archive"
+            tar -tzf "$archive" | grep -Fxq 'docs/api-reference.md'
+            archive_count=$((archive_count + 1))
+          done
+          for archive in dist/*.zip; do
+            test -f "$archive"
+            unzip -Z1 "$archive" | grep -Fxq 'docs/api-reference.md'
+            archive_count=$((archive_count + 1))
+          done
+          test "$archive_count" -eq 6
 
   dependency-review:
     name: Dependency review

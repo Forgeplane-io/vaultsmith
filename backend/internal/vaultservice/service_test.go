@@ -213,6 +213,48 @@ func TestListProfilesUsesCallerScopeAndPolicyIntersection(t *testing.T) {
 	}
 }
 
+func TestPreflightProfilesOwnsFixedScopeDecision(t *testing.T) {
+	service := New(testProfiles(), &fakeExecutor{}, &fakeAuthorizer{}, testAdmission(t))
+	if err := service.PreflightProfiles(context.Background(), bearerCaller(t, ScopeEncrypt)); !HasCode(err, CodeForbidden) {
+		t.Fatalf("PreflightProfiles() error = %v, want forbidden", err)
+	}
+	if err := service.PreflightProfiles(context.Background(), bearerCaller(t, ScopeProfileRead)); err != nil {
+		t.Fatalf("PreflightProfiles(profile scope) error = %v", err)
+	}
+	if err := service.PreflightProfiles(context.Background(), caller.Anonymous()); err != nil {
+		t.Fatalf("PreflightProfiles(anonymous) error = %v", err)
+	}
+}
+
+func TestPrepareMarksOnlyPolicyDenial(t *testing.T) {
+	deniedPolicy := &fakeAuthorizer{decisions: map[string]error{
+		authz.ActionEncrypt + "\x00" + authz.ProfileResource("dev"): authz.ErrForbidden,
+	}}
+	deniedService := New(testProfiles(), &fakeExecutor{}, deniedPolicy, testAdmission(t))
+	deniedLease := acquireLease(t, deniedService.Admission())
+	deniedContext := deniedLease.Context(context.Background())
+	_, err := deniedService.Prepare(deniedContext, bearerCaller(t, ScopeEncrypt), Command{
+		Operation: OperationEncrypt,
+		ProfileID: "dev",
+		Value:     "synthetic",
+	}, deniedLease)
+	if !IsPolicyDenied(err) || !HasCode(err, CodeForbidden) {
+		t.Fatalf("Prepare(policy denied) error = %v, want typed forbidden policy denial", err)
+	}
+
+	scopeService := New(testProfiles(), &fakeExecutor{}, &fakeAuthorizer{}, testAdmission(t))
+	scopeLease := acquireLease(t, scopeService.Admission())
+	scopeContext := scopeLease.Context(context.Background())
+	_, err = scopeService.Prepare(scopeContext, bearerCaller(t, ScopeProfileRead), Command{
+		Operation: OperationEncrypt,
+		ProfileID: "dev",
+		Value:     "synthetic",
+	}, scopeLease)
+	if IsPolicyDenied(err) || !HasCode(err, CodeForbidden) {
+		t.Fatalf("Prepare(scope denied) error = %v, want untyped forbidden scope denial", err)
+	}
+}
+
 func TestListProfilesPolicyDenialIsSuccessfulEmptyCatalog(t *testing.T) {
 	policy := &fakeAuthorizer{decisions: map[string]error{
 		authz.ActionListProfiles + "\x00" + authz.ResourceProfiles: authz.ErrForbidden,

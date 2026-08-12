@@ -1,6 +1,6 @@
 # API contract
 
-`openapi.yaml` defines the planned v1 REST API. The new routes are not served yet.
+`openapi.yaml` defines the v1 REST wire contract served by Vaultsmith. The bridge keeps legacy `POST /api/v1/operations` compatibility while adding canonical REST routes for profiles, encrypt, decrypt, and rotate.
 
 ## Requirements
 
@@ -17,7 +17,7 @@ Install the TypeScript generator:
 npm ci --prefix api/typescript-generator --ignore-scripts --no-audit --no-fund
 ```
 
-Generate the Go models and TypeScript types:
+Generate the Go models, TypeScript types, and static API reference:
 
 ```sh
 make generate-api
@@ -27,8 +27,9 @@ The generated files are committed:
 
 - `backend/internal/apimodels/openapi.gen.go`
 - `frontend/src/generated/api.ts`
+- `docs/api-reference.md`
 
-The router and clients are still hand-written. Generated code only supplies request, response, and contract types.
+The runtime router is still hand-written. Generated code supplies request, response, and contract types. The Markdown reference is a release artifact, not a runtime route. Both generator lockfiles must remain unchanged unless a reviewed contract change requires regeneration.
 
 `api/go.mod` isolates `oapi-codegen` 2.8.0 from the application module. `typescript-generator/package.json` pins `openapi-typescript` 7.13.0 and TypeScript 5.9.3. It also pins `js-yaml` 4.3.1 because 4.3.0 is affected by GHSA-5p4m-2wfm-xmqj.
 
@@ -43,7 +44,7 @@ This command:
 - runs the API script tests;
 - validates the baseline and current OpenAPI files;
 - compares the current contract with the v0.4.0 baseline;
-- checks generated files for drift; and
+- checks generated Go, TypeScript, and static-reference files for drift; and
 - compiles the generated Go and TypeScript types.
 
 The compatibility check downloads `oasdiff` 1.28.0 to `.tmp/oasdiff`. The launcher supports macOS and Linux on arm64 and x86-64, verifies the archive checksum, and rejects downloads that exceed its size or time limits. The limits and checksums are kept in `scripts/oasdiff.sh`.
@@ -55,3 +56,7 @@ The compatibility check downloads `oasdiff` 1.28.0 to `.tmp/oasdiff`. The launch
 `compatibility-allowlist.json` accepts individual `oasdiff` findings, not whole rules. Each entry contains the finding fingerprint, rule ID, operation metadata, and the reason for accepting it. The checker fails on new findings, duplicate fingerprints, stale entries, or metadata that no longer matches.
 
 Some decoder changes cannot be expressed by OpenAPI or `oasdiff`. Duplicate JSON keys and malformed UTF-8 are examples. Cover these changes with tests, record the decision in the ADR, and include them in the release notes.
+
+## Runtime notes
+
+Canonical REST and the legacy operation route share the same service authorization, byte limits, no-store responses, request IDs, and 30-second application deadline. Native Bearer access tokens use the `PUBLIC_BASE_URL` HTTPS origin as the audience and require exact scopes: `vaultsmith.profile.read`, `vaultsmith.encrypt`, `vaultsmith.decrypt`, and `vaultsmith.rotate`. The MCP endpoint is outside OpenAPI, is disabled by default, and uses `POST /mcp` only when `MCP_ENABLED=true`.

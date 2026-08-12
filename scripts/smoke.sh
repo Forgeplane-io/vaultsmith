@@ -34,6 +34,7 @@ VAULT_PROFILES_JSON='[{"id":"dev","label":"Development","passwordEnv":"VAULT_PAS
 VAULT_PASSWORD_DEV='smoke-password' \
 VAULT_PASSWORD_PROD='smoke-destination-password' \
 AUTH_MODE='off' \
+MCP_ENABLED='true' \
 COOKIE_SECURE='false' \
 HTTP_ADDR="127.0.0.1:${PORT}" \
   "$TMP_DIR/vaultsmith" >"$TMP_DIR/server.log" 2>&1 &
@@ -52,7 +53,7 @@ profiles="$(curl -fsS http://127.0.0.1:${PORT}/api/v1/profiles)"
 if [[ "$profiles" == *'VAULT_PASSWORD_DEV'* || "$profiles" == *'VAULT_PASSWORD_PROD'* || "$profiles" == *'smoke-password'* || "$profiles" == *'smoke-destination-password'* ]]; then
   fail 'profile response exposed secret configuration'
 fi
-printf '%s' "$profiles" | python3 -c 'import json, sys; profiles=json.load(sys.stdin)["profiles"]; assert len(profiles) == 2 and all(profile["capabilities"] == {"encrypt": True, "decrypt": True} for profile in profiles), profiles'
+printf '%s' "$profiles" | python3 -c 'import json, sys; profiles=json.load(sys.stdin)["profiles"]; expected={"encrypt": True, "decrypt": True, "rotateSource": True, "rotateDestination": True}; assert len(profiles) == 2 and all(profile["capabilities"] == expected for profile in profiles), profiles'
 
 session_headers="$TMP_DIR/session.headers"
 session_body="$TMP_DIR/session.json"
@@ -99,4 +100,46 @@ rotated_decrypted_response="$(curl -fsS "${post_args[@]}" \
 rotated_round_trip="$(printf '%s' "$rotated_decrypted_response" | python3 -c 'import json, sys; print(json.load(sys.stdin)["value"], end="")')"
 [[ "$rotated_round_trip" == 'smoke-value' ]] || fail 'rotate/decrypt round trip did not match'
 
-printf 'smoke: ok (port=%s, profiles=2, round-trip=verified, rotate=verified)\n' "$PORT"
+canonical_encrypted_response="$(curl -fsS "${post_args[@]}" \
+  --data '{"plaintext":"canonical-smoke-value"}' \
+  http://127.0.0.1:${PORT}/api/v1/profiles/dev/encrypt)"
+canonical_vault_text="$(printf '%s' "$canonical_encrypted_response" | python3 -c 'import json, sys; value=json.load(sys.stdin)["vaultText"]; assert value.startswith("$ANSIBLE_VAULT;1.2;AES256;dev"); print(value, end="")')"
+canonical_decrypt_request="$(printf '%s' "$canonical_vault_text" | python3 -c 'import json, sys; print(json.dumps({"vaultText":sys.stdin.read()}))')"
+canonical_decrypted_response="$(curl -fsS "${post_args[@]}" \
+  --data "$canonical_decrypt_request" \
+  http://127.0.0.1:${PORT}/api/v1/profiles/dev/decrypt)"
+canonical_round_trip="$(printf '%s' "$canonical_decrypted_response" | python3 -c 'import json, sys; print(json.load(sys.stdin)["plaintext"], end="")')"
+[[ "$canonical_round_trip" == 'canonical-smoke-value' ]] || fail 'canonical encrypt/decrypt round trip did not match'
+
+canonical_rotate_request="$(printf '%s' "$canonical_vault_text" | python3 -c 'import json, sys; print(json.dumps({"sourceProfileId":"dev","destinationProfileId":"prod","vaultText":sys.stdin.read()}))')"
+canonical_rotated_response="$(curl -fsS "${post_args[@]}" \
+  --data "$canonical_rotate_request" \
+  http://127.0.0.1:${PORT}/api/v1/rotations)"
+canonical_rotated_vault="$(printf '%s' "$canonical_rotated_response" | python3 -c 'import json, sys; value=json.load(sys.stdin)["vaultText"]; assert value.startswith("$ANSIBLE_VAULT;1.2;AES256;prod"); print(value, end="")')"
+canonical_rotated_decrypt_request="$(printf '%s' "$canonical_rotated_vault" | python3 -c 'import json, sys; print(json.dumps({"vaultText":sys.stdin.read()}))')"
+canonical_rotated_decrypted_response="$(curl -fsS "${post_args[@]}" \
+  --data "$canonical_rotated_decrypt_request" \
+  http://127.0.0.1:${PORT}/api/v1/profiles/prod/decrypt)"
+canonical_rotated_round_trip="$(printf '%s' "$canonical_rotated_decrypted_response" | python3 -c 'import json, sys; print(json.load(sys.stdin)["plaintext"], end="")')"
+[[ "$canonical_rotated_round_trip" == 'canonical-smoke-value' ]] || fail 'canonical rotate/decrypt round trip did not match'
+
+mcp_args=(
+  -H 'Content-Type: application/json'
+  -H 'Accept: application/json, text/event-stream'
+  -H 'MCP-Protocol-Version: 2026-07-28'
+)
+mcp_meta='"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}'
+mcp_discover="$(curl -fsS "${mcp_args[@]}" \
+  -H 'Mcp-Method: server/discover' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{'"$mcp_meta"'}}' \
+  http://127.0.0.1:${PORT}/mcp)"
+printf '%s' "$mcp_discover" | python3 -c 'import json, sys; result=json.load(sys.stdin)["result"]; assert result["supportedVersions"] == ["2026-07-28"] and result["resultType"] == "complete" and result["cacheScope"] == "private" and result["ttlMs"] == 0, result'
+
+mcp_profiles="$(curl -fsS "${mcp_args[@]}" \
+  -H 'Mcp-Method: tools/call' \
+  -H 'Mcp-Name: list_profiles' \
+  --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_profiles","arguments":{},'"$mcp_meta"'}}' \
+  http://127.0.0.1:${PORT}/mcp)"
+printf '%s' "$mcp_profiles" | python3 -c 'import json, sys; result=json.load(sys.stdin)["result"]; profiles=result["structuredContent"]["profiles"]; assert result["resultType"] == "complete" and result["isError"] is False and len(profiles) == 2, result'
+
+printf 'smoke: ok (port=%s, profiles=2, legacy=verified, canonical=verified, mcp=verified)\n' "$PORT"

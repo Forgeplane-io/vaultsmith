@@ -55,11 +55,16 @@ Set `AUTH_MODE` explicitly:
 
 An unset or blank mode is a startup error. Native mode does not fall back to `off` when OIDC, Redis, or policy loading fails. In Helm YAML, write the development value as `mode: "off"`; unquoted `off` may parse as Boolean `false` and is rejected.
 
-Native mode uses the verified `(iss, sub)` pair as identity. It does not accept bearer tokens or client-provided identity headers. If the issuer uses a private CA, mount a PEM bundle and set `OIDC_CA_FILE`. Do not disable TLS verification.
+Native mode uses the verified `(iss, sub)` pair as identity. Browser users authenticate with OIDC Authorization Code + PKCE and Redis-backed sessions. Machine clients can use RFC 9068 JWT Bearer access tokens whose audience is the `PUBLIC_BASE_URL` HTTPS origin. Client-provided identity headers are ignored. If the issuer uses a private CA, mount a PEM bundle and set `OIDC_CA_FILE`. Do not disable TLS verification.
 
 ### HTTP API
 
-The bundled UI uses same-origin requests. Configured CORS origins are explicit. The current API is browser-session based; a bearer-token API is being worked on and is not available yet.
+The bundled UI keeps using the legacy operation route for this bridge release. Canonical REST routes and the legacy route share the same service behavior, limits, no-store responses, request IDs, 30-second application deadline, and admission limit. Configured CORS origins are explicit.
+
+- [Static REST API reference](docs/api-reference.md)
+- [Authentication and authorization](docs/authentication.md)
+- [Safe REST and MCP client examples](docs/api-clients.md)
+- [Deployment and gateway controls](docs/deployment.md)
 
 | Method and path | Purpose |
 | --- | --- |
@@ -68,13 +73,17 @@ The bundled UI uses same-origin requests. Configured CORS origins are explicit. 
 | `GET /api/v1/session` | Session and CSRF bootstrap. |
 | `GET /api/v1/profiles` | Profiles allowed for the current user and their capabilities. |
 | `POST /api/v1/operations` | Encrypt, decrypt, or re-key a value. |
+| `POST /api/v1/profiles/{profileId}/encrypt` | Canonical encrypt route. |
+| `POST /api/v1/profiles/{profileId}/decrypt` | Canonical decrypt route. |
+| `POST /api/v1/rotations` | Canonical re-key route. |
+| `GET /.well-known/oauth-protected-resource` | Native-mode protected-resource metadata. |
+| `POST /mcp` | MCP Streamable HTTP endpoint when `MCP_ENABLED=true`. |
+| `GET /metrics` | Private admission capacity, current use, and rejection counters. |
 | `GET /auth/login` | Start native OIDC login. |
 | `GET /auth/callback` | Complete native OIDC login. |
 | `POST /auth/logout` | CSRF-protected logout. |
 
-Operation modes are `encrypt`, `decrypt`, and `rotate` (the API name for re-key). A re-key request names `sourceProfileId` and `destinationProfileId`. In native mode, mutations require the CSRF token returned by `/api/v1/session`.
-
-Bearer authentication and MCP are planned but not implemented. See the [API contract](api/README.md) and [design record](docs/adr/0001-api-mcp-foundation.md).
+Operation modes are `encrypt`, `decrypt`, and `rotate` (the API name for re-key). A re-key request names `sourceProfileId` and `destinationProfileId`. In native mode, session mutations require the CSRF token returned by `/api/v1/session`; Bearer requests do not use sessions or CSRF and require the exact operation scope. MCP is disabled by default with `mcp.enabled: false` / `MCP_ENABLED=false`.
 
 Keep plaintext, ciphertext, passwords, cookies, and tokens out of shell history, logs, screenshots, tickets, and pull requests.
 

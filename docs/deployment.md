@@ -33,9 +33,13 @@ Vaultsmith uses the verified OIDC `(iss, sub)` pair as identity. The default gro
 
 If the issuer uses a private CA, mount a PEM bundle and set `OIDC_CA_FILE`. Do not disable TLS verification.
 
+Machine clients use RFC 9068 JWT Bearer access tokens issued by the same configured issuer. The required audience is the `PUBLIC_BASE_URL` HTTPS origin, not the browser client ID. Bearer requests do not load or write Redis sessions, do not receive CSRF cookies, and require exact operation scopes: `vaultsmith.profile.read`, `vaultsmith.encrypt`, `vaultsmith.decrypt`, and `vaultsmith.rotate`.
+
 ## Helm chart
 
 The chart creates `ClusterIP` Services for Vaultsmith and the bundled official Valkey chart. Valkey is enabled by default, uses a generated password Secret, and does not require a separately provisioned Redis service. The bundled chart requests a 1 GiB PVC by default; set `valkey.dataStorage.className` for a specific storage class or disable it for ephemeral test deployments. The bundled standalone Valkey uses a `Recreate` rollout to avoid concurrent pods sharing a `ReadWriteOnce` claim; the strategy remains fixed for every standalone backing mode. The chart does not create the OIDC, CSRF, or profile-password Secrets. Ingress and NetworkPolicy are disabled by default.
+
+The only MCP chart value is `mcp.enabled`, which defaults to `false` and maps to `MCP_ENABLED`. It does not create another Service, listener, port, or TLS mode. `MCPGODEBUG` must be unset or empty; any non-empty value fails startup.
 
 ### Published chart
 
@@ -123,12 +127,45 @@ Put a maintained private edge or reverse proxy in front of the Service. At minim
 
 - Terminate TLS and enforce the deployment's authentication and access policy.
 - Preserve Vaultsmith's session and CSRF cookies in native mode.
-- Remove client-supplied `Authorization` and identity headers before forwarding. Do not forward `X-Auth-Request-*`, `X-Forwarded-User`, `X-Forwarded-Email`, or `X-Remote-User` from the client.
+- Preserve `Authorization` unchanged for canonical `/api/v1` Bearer routes and enabled `/mcp`; Vaultsmith must validate the original token. Strip client-supplied identity headers such as `X-Auth-Request-*`, `X-Forwarded-User`, `X-Forwarded-Email`, `X-Remote-User`, and `X-Groups`. Do not synthesize `Authorization` from a browser session or gateway identity.
 - Generate trusted forwarding headers instead of passing through a client-supplied forwarding chain.
-- Disable request-body logging and plaintext capture at the edge and in observability systems.
-- Keep `/healthz` and `/readyz` on an internal probe path, or otherwise prevent them from being public.
+- Disable request and response body logging, trace payload capture, and compression for secret-bearing operation, session, and MCP responses.
+- Keep `/healthz`, `/readyz`, and `/metrics` on internal probe paths, or otherwise prevent them from being public.
 
-The application limits encrypt plaintext to 1 MiB, Vault text for decrypt/re-key to 5 MiB, and JSON request bodies to 8 MiB. Configure the edge to enforce a deliberate request limit no higher than the application limit.
+Keep the authorization server and access-token flow aligned with [OAuth 2.0 Security Best Current Practice (RFC 9700)](https://www.rfc-editor.org/rfc/rfc9700). Do not use implicit grants, password grants, bearer tokens in URLs, or wildcard redirect URIs.
+
+Use this reference boundary:
+
+```text
+client
+  | HTTPS
+  v
+maintained edge
+  - TLS and host validation
+  - explicit Origin/CORS policy
+  - Authorization forwarded unchanged
+  - request and response body logging disabled
+  - secret response compression disabled
+  - 8 MiB body limit and measured rate limit
+  |
+  | authenticated and encrypted backend hop
+  v
+private ClusterIP / firewall allow-list
+  |
+  v
+Vaultsmith :8080
+  - native OIDC/session and Bearer validation
+  - Casbin policy
+  - private health, readiness, and metrics probes
+```
+
+The protocol boundary is the client-visible HTTPS origin in `PUBLIC_BASE_URL`. The backend hop is an operator boundary. Authenticate and encrypt it when the edge and Vaultsmith do not share one trusted host or pod network. Allow the edge and private probes only.
+
+The application limits encrypt plaintext to 1 MiB, Vault text for decrypt/re-key to 5 MiB, and JSON request bodies to 8 MiB. Configure the edge to enforce a deliberate request limit no higher than the application limit and return an explicit `413` when exceeded. Rate limits must preserve measured normal automation bursts and identify the configured rate in operator logs or alerts; do not add a silent arbitrary cap.
+
+Every canonical REST, legacy operation, and enabled MCP request has a server-owned 30-second application deadline after route/method/no-body header validation. The server timeouts are 5 seconds for headers, 40 seconds for reads, and 45 seconds for writes; configure edge timeouts to at least 50 seconds.
+
+Operation admission is non-blocking after authentication and before body decoding. Saturation returns `503 temporarily_unavailable` with `Retry-After: 1`. The compiled cap is selected from [`docs/benchmarks/admission-linux-amd64-2026-08-12.md`](benchmarks/admission-linux-amd64-2026-08-12.md); Helm does not configure it.
 
 A Gateway, HTTPRoute, Ingress annotation, or NetworkPolicy object is not proof that authentication is active. Test the selected edge implementation with unauthenticated, authenticated, denied, spoofed-header, oversized-body, and public-health-path requests.
 
@@ -161,7 +198,9 @@ A Gateway, HTTPRoute, Ingress annotation, or NetworkPolicy object is not proof t
 5. Run a live request matrix at the edge:
    - no authentication: rejected;
    - valid authentication: UI and permitted API operations succeed;
+   - valid Bearer token: permitted canonical REST operation succeeds without session or CSRF cookies;
    - authenticated but unauthorized group: login succeeds, profile access is empty, protected operations return `403`;
+   - MCP disabled: every `/mcp` method returns `404`; when enabled, valid preflight returns `204` and non-POST application methods return `405`;
    - spoofed identity and forwarding headers: ignored;
    - public `/healthz` and `/readyz`: unavailable or `404`;
    - request bodies: absent from logs.

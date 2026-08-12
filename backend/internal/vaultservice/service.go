@@ -30,6 +30,19 @@ const (
 	OperationRotate  Operation = "rotate"
 )
 
+func RequiredScope(operation Operation) (string, bool) {
+	switch operation {
+	case OperationEncrypt:
+		return ScopeEncrypt, true
+	case OperationDecrypt:
+		return ScopeDecrypt, true
+	case OperationRotate:
+		return ScopeRotate, true
+	default:
+		return "", false
+	}
+}
+
 type Profile struct {
 	ID           string
 	Label        string
@@ -141,12 +154,29 @@ func (s *Service) Admission() *Admission {
 	return s.admission
 }
 
-func (s *Service) ListProfiles(ctx context.Context, actor caller.Caller) ([]Profile, error) {
+func (s *Service) PreflightProfiles(ctx context.Context, actor caller.Caller) error {
 	if err := contextError(ctx); err != nil {
-		return nil, err
+		return err
 	}
 	if !s.Ready() {
-		return nil, notReady("service is not ready")
+		return notReady("service is not ready")
+	}
+	switch actor.Kind() {
+	case caller.KindAnonymous, caller.KindSession:
+		return nil
+	case caller.KindBearer:
+		if !actor.HasScope(ScopeProfileRead) {
+			return forbidden()
+		}
+		return nil
+	default:
+		return notReady("caller is not ready")
+	}
+}
+
+func (s *Service) ListProfiles(ctx context.Context, actor caller.Caller) ([]Profile, error) {
+	if err := s.PreflightProfiles(ctx, actor); err != nil {
+		return nil, err
 	}
 	switch actor.Kind() {
 	case caller.KindAnonymous:
@@ -161,9 +191,6 @@ func (s *Service) ListProfiles(ctx context.Context, actor caller.Caller) ([]Prof
 		}
 		return profiles, nil
 	case caller.KindBearer:
-		if !actor.HasScope(ScopeProfileRead) {
-			return nil, forbidden()
-		}
 	case caller.KindSession:
 	default:
 		return nil, notReady("caller is not ready")
@@ -434,7 +461,7 @@ func (s *Service) authorize(ctx context.Context, actor caller.Caller, command Co
 	}
 	for _, decision := range allowed {
 		if !decision {
-			return forbidden()
+			return policyDenied()
 		}
 	}
 	return nil

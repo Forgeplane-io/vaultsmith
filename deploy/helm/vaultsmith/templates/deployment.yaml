@@ -113,6 +113,8 @@ spec:
               value: {{ .Values.auth.redis.keyPrefix | quote }}
             - name: CORS_ALLOWED_ORIGINS
               value: {{ join "," .Values.auth.cors.allowedOrigins | quote }}
+            - name: MCP_ENABLED
+              value: {{ .Values.mcp.enabled | quote }}
             {{- if .Values.auth.csrf.existingSecret }}
             - name: CSRF_SECRET
               valueFrom:

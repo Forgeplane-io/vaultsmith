@@ -48,6 +48,7 @@ docker compose version >/dev/null
 random_secret() { openssl rand -hex 24; }
 KEYCLOAK_ADMIN_PASSWORD="$(random_secret)"
 OIDC_CLIENT_SECRET="$(random_secret)"
+MACHINE_CLIENT_SECRET="$(random_secret)"
 TEST_USER_PASSWORD="$(random_secret)"
 DENIED_USER_PASSWORD="$(random_secret)"
 CSRF_SECRET="$(random_secret)"
@@ -93,15 +94,50 @@ kc config credentials \
   --user integration-admin \
   --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null
 kc create realms -s realm=vaultsmith -s enabled=true >/dev/null
-CLIENT_ID="$(kc create clients -r vaultsmith \
-  -s clientId=vaultsmith-integration \
-  -s enabled=true \
-  -s protocol=openid-connect \
-  -s publicClient=false \
-  -s secret="$OIDC_CLIENT_SECRET" \
-  -s standardFlowEnabled=true \
-  -s 'redirectUris=["https://localhost:18443/auth/callback"]' \
-  -s 'webOrigins=["https://localhost:18443"]' -i)"
+BROWSER_CLIENT_JSON="$(OIDC_CLIENT_SECRET="$OIDC_CLIENT_SECRET" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({
+    "clientId": "vaultsmith-integration",
+    "enabled": True,
+    "protocol": "openid-connect",
+    "publicClient": False,
+    "secret": os.environ["OIDC_CLIENT_SECRET"],
+    "standardFlowEnabled": True,
+    "directAccessGrantsEnabled": False,
+    "serviceAccountsEnabled": False,
+    "attributes": {"access.token.header.type.rfc9068": "true"},
+    "redirectUris": [
+        "https://localhost:18443/auth/callback",
+        "https://localhost:18443/integration-callback",
+    ],
+    "webOrigins": ["https://localhost:18443"],
+}))
+PY
+)"
+CLIENT_ID="$(kc create clients -r vaultsmith -b "$BROWSER_CLIENT_JSON" -i)"
+unset BROWSER_CLIENT_JSON
+
+MACHINE_CLIENT_JSON="$(MACHINE_CLIENT_SECRET="$MACHINE_CLIENT_SECRET" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({
+    "clientId": "vaultsmith-integration-machine",
+    "enabled": True,
+    "protocol": "openid-connect",
+    "publicClient": False,
+    "secret": os.environ["MACHINE_CLIENT_SECRET"],
+    "standardFlowEnabled": False,
+    "directAccessGrantsEnabled": False,
+    "serviceAccountsEnabled": True,
+    "attributes": {"access.token.header.type.rfc9068": "true"},
+}))
+PY
+)"
+MACHINE_CLIENT_ID="$(kc create clients -r vaultsmith -b "$MACHINE_CLIENT_JSON" -i)"
+unset MACHINE_CLIENT_JSON
 GROUP_ID="$(kc create groups -r vaultsmith -s name=vaultsmith-operators -i)"
 USER_ID="$(kc create users -r vaultsmith \
   -s username=integration-user \
@@ -122,8 +158,28 @@ kc create users -r vaultsmith \
   -s 'requiredActions=[]' >/dev/null
 kc set-password -r vaultsmith --username integration-denied --new-password "$DENIED_USER_PASSWORD" >/dev/null
 kc update "users/$USER_ID/groups/$GROUP_ID" -r vaultsmith >/dev/null
-kc create "clients/$CLIENT_ID/protocol-mappers/models" -r vaultsmith \
-  -b '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"full.path":"false","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","claim.name":"groups"}}' >/dev/null
+
+for scope in vaultsmith.profile.read vaultsmith.encrypt vaultsmith.decrypt vaultsmith.rotate; do
+  scope_id="$(kc create client-scopes -r vaultsmith -i -b "{\"name\":\"$scope\",\"protocol\":\"openid-connect\",\"attributes\":{\"include.in.token.scope\":\"true\",\"display.on.consent.screen\":\"false\"}}")"
+  kc update "clients/$CLIENT_ID/optional-client-scopes/$scope_id" -r vaultsmith >/dev/null
+  kc update "clients/$MACHINE_CLIENT_ID/optional-client-scopes/$scope_id" -r vaultsmith >/dev/null
+done
+
+configure_token_mappers() {
+  local client_internal_id="$1"
+  local client_id_claim="$2"
+  kc create "clients/$client_internal_id/protocol-mappers/models" -r vaultsmith \
+    -b '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"full.path":"false","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","introspection.token.claim":"true","claim.name":"groups"}}' >/dev/null
+  kc create "clients/$client_internal_id/protocol-mappers/models" -r vaultsmith \
+    -b '{"name":"vaultsmith-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.custom.audience":"https://localhost:18443","id.token.claim":"false","access.token.claim":"true","introspection.token.claim":"true","lightweight.claim":"false"}}' >/dev/null
+  kc create "clients/$client_internal_id/protocol-mappers/models" -r vaultsmith \
+    -b "{\"name\":\"client-id\",\"protocol\":\"openid-connect\",\"protocolMapper\":\"oidc-hardcoded-claim-mapper\",\"config\":{\"claim.name\":\"client_id\",\"claim.value\":\"$client_id_claim\",\"jsonType.label\":\"String\",\"id.token.claim\":\"false\",\"access.token.claim\":\"true\",\"userinfo.token.claim\":\"false\",\"introspection.token.claim\":\"true\",\"lightweight.claim\":\"false\"}}" >/dev/null
+}
+configure_token_mappers "$CLIENT_ID" vaultsmith-integration
+configure_token_mappers "$MACHINE_CLIENT_ID" vaultsmith-integration-machine
+
+SERVICE_ACCOUNT_ID="$(kc get "clients/$MACHINE_CLIENT_ID/service-account-user" -r vaultsmith --fields id --format csv --noquotes)"
+kc update "users/$SERVICE_ACCOUNT_ID/groups/$GROUP_ID" -r vaultsmith >/dev/null
 
 if (( INTERACTIVE )); then
   cat > "$TMP_DIR/policy.csv" <<'POLICY'
@@ -159,6 +215,7 @@ go build -o "$TMP_DIR/vaultsmith" ./backend/cmd/server
   REDIS_KEY_PREFIX='vaultsmith:integration:' \
   AUTHZ_POLICY_FILE="$TMP_DIR/policy.csv" \
   COOKIE_SECURE=true \
+  MCP_ENABLED=true \
   VAULT_PROFILES_JSON="$PROFILES_JSON" \
   VAULT_PASSWORD_DEV="$VAULT_PASSWORD_DEV" \
   VAULT_PASSWORD_PROD="$VAULT_PASSWORD_PROD" \
@@ -212,10 +269,13 @@ INFO
   exit "$status"
 fi
 
-TEST_USER_PASSWORD="$TEST_USER_PASSWORD" DENIED_USER_PASSWORD="$DENIED_USER_PASSWORD" python3 - "$BASE_URL" <<'PY'
+TEST_USER_PASSWORD="$TEST_USER_PASSWORD" DENIED_USER_PASSWORD="$DENIED_USER_PASSWORD" OIDC_CLIENT_SECRET="$OIDC_CLIENT_SECRET" MACHINE_CLIENT_SECRET="$MACHINE_CLIENT_SECRET" TMP_DIR="$TMP_DIR" python3 - "$BASE_URL" <<'PY'
 import html.parser
+import base64
+import hashlib
 import json
 import os
+import secrets
 import ssl
 import sys
 import urllib.error
@@ -225,6 +285,9 @@ import urllib.request
 base = sys.argv[1]
 user_password = os.environ["TEST_USER_PASSWORD"]
 denied_password = os.environ["DENIED_USER_PASSWORD"]
+oidc_client_secret = os.environ["OIDC_CLIENT_SECRET"]
+machine_client_secret = os.environ["MACHINE_CLIENT_SECRET"]
+server_log = os.path.join(os.environ["TMP_DIR"], "server.log")
 
 class FormParser(html.parser.HTMLParser):
     def __init__(self):
@@ -252,6 +315,75 @@ def request(path, data=None, headers=None):
 
 def json_response(response):
     return json.loads(response.read().decode("utf-8"))
+
+def token_request(fields, client_id, client_secret):
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
+    request = urllib.request.Request(
+        "https://localhost:18081/realms/vaultsmith/protocol/openid-connect/token",
+        data=urllib.parse.urlencode(fields).encode("utf-8"),
+        headers={"Authorization": "Basic " + credentials, "Content-Type": "application/x-www-form-urlencoded"},
+    )
+    return json_response(urllib.request.urlopen(request, context=context))
+
+def bearer_request(path, token, data=None, headers=None):
+    merged = {"Authorization": "Bearer " + token}
+    merged.update(headers or {})
+    request = urllib.request.Request(base + path, data=data, headers=merged)
+    return urllib.request.urlopen(request, context=context)
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        return None
+
+def delegated_access_token(username, password, scope):
+    idp_opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(),
+        urllib.request.HTTPSHandler(context=context),
+        NoRedirect(),
+    )
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
+    state = secrets.token_urlsafe(16)
+    authorize = "https://localhost:18081/realms/vaultsmith/protocol/openid-connect/auth?" + urllib.parse.urlencode({
+        "response_type": "code",
+        "client_id": "vaultsmith-integration",
+        "redirect_uri": base + "/integration-callback",
+        "scope": "openid " + scope,
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+    })
+    login_response = idp_opener.open(authorize)
+    parser = FormParser()
+    parser.feed(login_response.read().decode("utf-8"))
+    parser.fields["username"] = username
+    parser.fields["password"] = password
+    login_request = urllib.request.Request(
+        urllib.parse.urljoin(login_response.geturl(), parser.action),
+        data=urllib.parse.urlencode(parser.fields).encode("utf-8"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
+        idp_opener.open(login_request)
+    except urllib.error.HTTPError as error:
+        redirect = error.headers.get("Location", "")
+        if error.code not in (302, 303) or not redirect.startswith(base + "/integration-callback?"):
+            raise
+    else:
+        raise AssertionError("authorization redirect was unexpectedly followed through the application edge")
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(redirect).query)
+    assert query.get("state") == [state] and len(query.get("code", [])) == 1, query
+    token = token_request({
+        "grant_type": "authorization_code",
+        "code": query["code"][0],
+        "redirect_uri": base + "/integration-callback",
+        "code_verifier": verifier,
+    }, "vaultsmith-integration", oidc_client_secret)
+    return token["access_token"]
+
+def client_credentials_access_token(scope):
+    token = token_request({"grant_type": "client_credentials", "scope": scope}, "vaultsmith-integration-machine", machine_client_secret)
+    return token["access_token"]
 
 session = json_response(request("/api/v1/session"))
 assert session["authRequired"] is True and session["authenticated"] is False
@@ -290,7 +422,12 @@ profiles = json_response(request("/api/v1/profiles"))["profiles"]
 assert profiles == [{
     "id": "dev",
     "label": "Development",
-    "capabilities": {"encrypt": True, "decrypt": True},
+    "capabilities": {
+        "encrypt": True,
+        "decrypt": True,
+        "rotateSource": True,
+        "rotateDestination": True,
+    },
 }], profiles
 
 body = json.dumps({"profileId": "dev", "mode": "encrypt", "value": "integration"}).encode("utf-8")
@@ -301,6 +438,95 @@ operation = json_response(request("/api/v1/operations", body, {
     "X-CSRF-Token": session["csrfToken"],
 }))
 assert isinstance(operation.get("value"), str) and operation["value"], operation
+
+delegated = delegated_access_token("integration-user", user_password, "vaultsmith.profile.read vaultsmith.encrypt")
+bearer_profiles = json_response(bearer_request("/api/v1/profiles", delegated, headers={"X-Forwarded-User": "spoofed", "X-Remote-Groups": "admins"}))["profiles"]
+scoped_profiles = [{
+    "id": "dev",
+    "label": "Development",
+    "capabilities": {
+        "encrypt": True,
+        "decrypt": False,
+        "rotateSource": False,
+        "rotateDestination": False,
+    },
+}]
+assert bearer_profiles == scoped_profiles, bearer_profiles
+bearer_encrypt = json_response(bearer_request(
+    "/api/v1/profiles/dev/encrypt",
+    delegated,
+    json.dumps({"plaintext": "delegated-integration"}).encode("utf-8"),
+    {"Content-Type": "application/json", "X-Forwarded-User": "spoofed"},
+))
+assert bearer_encrypt["vaultText"].startswith("$ANSIBLE_VAULT;1.2;AES256;dev"), bearer_encrypt
+
+machine = client_credentials_access_token("vaultsmith.profile.read vaultsmith.encrypt")
+machine_profiles = json_response(bearer_request("/api/v1/profiles", machine))["profiles"]
+assert machine_profiles == scoped_profiles, machine_profiles
+
+denied_scope = client_credentials_access_token("vaultsmith.profile.read")
+try:
+    bearer_request(
+        "/api/v1/profiles/dev/encrypt",
+        denied_scope,
+        b'{"plaintext":"scope-denied"}',
+        {"Content-Type": "application/json"},
+    )
+except urllib.error.HTTPError as error:
+    assert error.code == 403 and "insufficient_scope" in error.headers.get("WWW-Authenticate", ""), error.headers
+else:
+    raise AssertionError("insufficient-scope bearer operation unexpectedly succeeded")
+
+denied_group = delegated_access_token("integration-denied", denied_password, "vaultsmith.profile.read vaultsmith.encrypt")
+assert json_response(bearer_request("/api/v1/profiles", denied_group))["profiles"] == []
+try:
+    bearer_request(
+        "/api/v1/profiles/dev/encrypt",
+        denied_group,
+        b'{"plaintext":"group-denied"}',
+        {"Content-Type": "application/json"},
+    )
+except urllib.error.HTTPError as error:
+    assert error.code == 403 and "insufficient_scope" not in error.headers.get("WWW-Authenticate", ""), error.headers
+else:
+    raise AssertionError("policy-denied bearer operation unexpectedly succeeded")
+
+oversized_marker = "integration-oversized-marker"
+oversized = (json.dumps({"plaintext": oversized_marker})[:-2] + "x" * (8 * 1024 * 1024) + '"}').encode("utf-8")
+try:
+    bearer_request(
+        "/api/v1/profiles/dev/encrypt",
+        delegated,
+        oversized,
+        {"Content-Type": "application/json"},
+    )
+except urllib.error.HTTPError as error:
+    assert error.code == 413, error.code
+else:
+    raise AssertionError("oversized bearer body unexpectedly succeeded")
+
+mcp_meta = {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}}
+mcp_body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {"_meta": mcp_meta}}).encode("utf-8")
+mcp = json_response(bearer_request("/mcp", machine, mcp_body, {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+    "MCP-Protocol-Version": "2026-07-28",
+    "Mcp-Method": "server/discover",
+}))
+assert mcp["result"]["supportedVersions"] == ["2026-07-28"], mcp
+
+for private_path in ("/healthz", "/readyz"):
+    try:
+        urllib.request.urlopen(base + private_path, context=context)
+    except urllib.error.HTTPError as error:
+        assert error.code == 404, (private_path, error.code)
+    else:
+        raise AssertionError(f"public edge exposed private route {private_path}")
+
+with open(server_log, encoding="utf-8") as log_file:
+    log_text = log_file.read()
+for secret_value in (delegated, machine, denied_scope, denied_group, user_password, denied_password, oidc_client_secret, machine_client_secret, oversized_marker, "delegated-integration", "scope-denied", "group-denied"):
+    assert secret_value not in log_text, "server log exposed a token, secret, or submitted body marker"
 
 logout(session)
 session = json_response(request("/api/v1/session"))
@@ -329,5 +555,5 @@ else:
 logout(session)
 session = json_response(request("/api/v1/session"))
 assert session["authenticated"] is False, session
-print("native integration: ok (OIDC, Redis session, authorized/no-permission users, Casbin, CSRF, operation, logout)")
+print("native integration: ok (session, delegated-user bearer, client credentials, scopes, groups, MCP, edge, body/log safety)")
 PY

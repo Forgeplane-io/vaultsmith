@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: test typecheck build smoke compatibility helm-lint chart-test docker release-check release-snapshot generate-api api-compat api-contract-test api-check
+.PHONY: test typecheck build smoke compatibility helm-lint chart-test admission-benchmark admission-receipt-check docker release-check release-snapshot generate-api api-compat api-contract-test api-check
 
 test:
 	go test ./...
@@ -17,6 +17,7 @@ build:
 
 generate-api:
 	cd api && go tool oapi-codegen --config oapi-codegen.yaml openapi.yaml
+	cd api && go run ./cmd/reference -input openapi.yaml -output ../docs/api-reference.md
 	npm run generate --prefix api/typescript-generator
 
 api-compat:
@@ -38,6 +39,13 @@ helm-lint:
 
 chart-test:
 	bash deploy/helm/vaultsmith/tests/chart_test.sh
+
+admission-benchmark:
+	bash scripts/admission-benchmark.sh
+
+admission-receipt-check:
+	python3 -m unittest discover -s scripts -p 'check_admission_receipt_test.py'
+	python3 scripts/check_admission_receipt.py
 
 docker:
 	docker build -t vaultsmith:local .

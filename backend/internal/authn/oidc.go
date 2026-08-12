@@ -26,6 +26,7 @@ type Authenticator struct {
 	Redis    *RedisRuntime
 	Sessions *scs.SessionManager
 	Verifier *oidc.IDTokenVerifier
+	Access   *AccessTokenVerifier
 	OAuth2   oauth2.Config
 
 	oidcClient      *http.Client
@@ -33,7 +34,12 @@ type Authenticator struct {
 }
 
 func newOIDCHTTPClient(caFile string, timeout time.Duration) (*http.Client, error) {
-	client := &http.Client{Timeout: timeout}
+	client := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	if strings.TrimSpace(caFile) == "" {
 		return client, nil
 	}
@@ -95,10 +101,22 @@ func NewAuthenticator(ctx context.Context, cfg config.AuthConfig, runtime *Redis
 		return nil, fmt.Errorf("OIDC trust configuration failed")
 	}
 	service.oidcClient = oidcClient
-	provider, err := oidc.NewProvider(service.oidcContext(ctx), cfg.OIDC.IssuerURL)
+	accessClient, err := newOIDCHTTPClient(cfg.OIDC.CAFile, accessTokenHTTPTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("OIDC discovery failed")
+		return nil, fmt.Errorf("OIDC trust configuration failed")
 	}
+	accessVerifier, provider, err := loadOIDCComponents(
+		ctx,
+		cfg.OIDC.IssuerURL,
+		cfg.OIDC.PublicBaseURL,
+		cfg.OIDC.GroupsClaim,
+		accessClient,
+		oidcClient,
+	)
+	if err != nil {
+		return nil, err
+	}
+	service.Access = accessVerifier
 	service.Verifier = provider.Verifier(&oidc.Config{ClientID: cfg.OIDC.ClientID})
 	service.OAuth2 = oauth2.Config{
 		ClientID:     cfg.OIDC.ClientID,
@@ -110,6 +128,48 @@ func NewAuthenticator(ctx context.Context, cfg config.AuthConfig, runtime *Redis
 	service.refreshExchange = service.exchangeRefreshToken
 	service.Sessions = NewSessionManager(runtime.SessionStore(), cfg.Session)
 	return service, nil
+}
+
+func loadOIDCComponents(
+	ctx context.Context,
+	issuer string,
+	audience string,
+	groupsClaim string,
+	discoveryClient *http.Client,
+	oidcClient *http.Client,
+) (*AccessTokenVerifier, *oidc.Provider, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if discoveryClient == nil {
+		discoveryClient = http.DefaultClient
+	}
+	if oidcClient == nil {
+		oidcClient = http.DefaultClient
+	}
+	if err := validateStrictHTTPSURL("OIDC_ISSUER_URL", issuer, false); err != nil {
+		return nil, nil, err
+	}
+	if err := validateStrictResourceOrigin("PUBLIC_BASE_URL", audience); err != nil {
+		return nil, nil, err
+	}
+	document, err := fetchStrictDiscovery(ctx, discoveryClient, issuer)
+	if err != nil {
+		return nil, nil, err
+	}
+	accessVerifier, err := newAccessTokenVerifierFromDiscovery(issuer, audience, groupsClaim, discoveryClient, document)
+	if err != nil {
+		return nil, nil, err
+	}
+	providerConfig := oidc.ProviderConfig{
+		IssuerURL:  document.Issuer,
+		AuthURL:    document.AuthorizationEndpoint,
+		TokenURL:   document.TokenEndpoint,
+		JWKSURL:    document.JWKSURI,
+		Algorithms: append([]string(nil), document.IDTokenSigningAlgorithmsSupported...),
+	}
+	provider := providerConfig.NewProvider(oidc.ClientContext(ctx, oidcClient))
+	return accessVerifier, provider, nil
 }
 
 func (a *Authenticator) BeginLogin(ctx context.Context, returnTo string) (string, error) {

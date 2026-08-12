@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)"
 GO_OUTPUT="$ROOT/backend/internal/apimodels/openapi.gen.go"
 TS_OUTPUT="$ROOT/frontend/src/generated/api.ts"
+REFERENCE_OUTPUT="$ROOT/docs/api-reference.md"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -22,13 +23,16 @@ fail() {
 
 [[ -f "$GO_OUTPUT" ]] || fail "missing $GO_OUTPUT; run make generate-api"
 [[ -f "$TS_OUTPUT" ]] || fail "missing $TS_OUTPUT; run make generate-api"
+[[ -f "$REFERENCE_OUTPUT" ]] || fail "missing $REFERENCE_OUTPUT; run make generate-api"
 
 cp "$GO_OUTPUT" "$TMP_DIR/openapi.gen.go.before"
 cp "$TS_OUTPUT" "$TMP_DIR/api.ts.before"
+cp "$REFERENCE_OUTPUT" "$TMP_DIR/api-reference.md.before"
 
 (
   cd "$ROOT/api"
   go tool oapi-codegen --config oapi-codegen.yaml openapi.yaml
+  go run ./cmd/reference -input openapi.yaml -output ../docs/api-reference.md
 )
 npm run generate --prefix "$ROOT/api/typescript-generator"
 
@@ -43,9 +47,14 @@ if ! cmp -s "$TMP_DIR/api.ts.before" "$TS_OUTPUT"; then
   diff -u "$TMP_DIR/api.ts.before" "$TS_OUTPUT" >&2 || true
   DRIFT=1
 fi
+if ! cmp -s "$TMP_DIR/api-reference.md.before" "$REFERENCE_OUTPUT"; then
+  printf 'generated static API reference is stale: %s\n' "$REFERENCE_OUTPUT" >&2
+  diff -u "$TMP_DIR/api-reference.md.before" "$REFERENCE_OUTPUT" >&2 || true
+  DRIFT=1
+fi
 
 if (( DRIFT != 0 )); then
   fail "committed outputs differ from api/openapi.yaml; review and keep the regenerated files"
 fi
 
-printf 'API generation drift check: Go and TypeScript outputs match api/openapi.yaml.\n'
+printf 'API generation drift check: Go, TypeScript, and static reference outputs match api/openapi.yaml.\n'

@@ -207,3 +207,51 @@ func TestLoadAuthNativeRejectsMissingOIDCCAFile(t *testing.T) {
 		t.Fatalf("LoadAuth() error = %v, want OIDC_CA_FILE", err)
 	}
 }
+
+func TestLoadMCPEnabledDefaultsFalseAndRequiresBoolean(t *testing.T) {
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want bool
+	}{
+		"unset": {env: nil, want: false},
+		"true":  {env: map[string]string{"MCP_ENABLED": "true"}, want: true},
+		"false": {env: map[string]string{"MCP_ENABLED": "false"}, want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := LoadMCPEnabled(envLookup(tc.env))
+			if err != nil {
+				t.Fatalf("LoadMCPEnabled() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("LoadMCPEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	for name, env := range map[string]map[string]string{
+		"empty":       {"MCP_ENABLED": ""},
+		"non boolean": {"MCP_ENABLED": "enabled"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := LoadMCPEnabled(envLookup(env))
+			if err == nil || !strings.Contains(err.Error(), "MCP_ENABLED") {
+				t.Fatalf("LoadMCPEnabled() error = %v, want MCP_ENABLED validation", err)
+			}
+		})
+	}
+}
+
+func TestRejectMCPGoDebugWhenNonEmpty(t *testing.T) {
+	if err := RejectMCPGoDebug(envLookup(map[string]string{})); err != nil {
+		t.Fatalf("RejectMCPGoDebug(unset) error = %v", err)
+	}
+	if err := RejectMCPGoDebug(envLookup(map[string]string{"MCPGODEBUG": ""})); err != nil {
+		t.Fatalf("RejectMCPGoDebug(empty) error = %v", err)
+	}
+	for _, value := range []string{"allowsessionsinstateless=1", " "} {
+		err := RejectMCPGoDebug(envLookup(map[string]string{"MCPGODEBUG": value}))
+		if err == nil || !strings.Contains(err.Error(), "MCPGODEBUG") {
+			t.Fatalf("RejectMCPGoDebug(%q) error = %v, want MCPGODEBUG validation", value, err)
+		}
+	}
+}

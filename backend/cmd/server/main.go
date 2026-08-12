@@ -45,11 +45,15 @@ func main() {
 }
 
 func run() error {
+	if err := config.RejectMCPGoDebug(os.LookupEnv); err != nil {
+		return err
+	}
 	loaded, err := config.LoadApplicationFromEnv()
 	if err != nil {
 		return err
 	}
 	authConfig := loaded.Auth()
+	mcpConfig := loaded.MCP()
 	if authConfig.Mode == config.AuthModeOff {
 		log.Print("WARNING: Vaultsmith does not authenticate requests; run it only behind an authenticated private boundary.")
 	}
@@ -104,13 +108,13 @@ func run() error {
 		AuthConfig: authConfig,
 		Admission:  admission,
 	})
-	serverHandler := httpapi.WrapSecurity(authenticator.SessionMiddleware(api), authConfig)
+	serverHandler := httpapi.WrapSecurityWithOptions(api, authConfig, httpapi.SecurityOptions{Auth: authenticator, MCPEnabled: mcpConfig.Enabled})
 	server := &http.Server{
 		Addr:              address,
 		Handler:           web.New(web.Files(), serverHandler),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		ReadTimeout:       40 * time.Second,
+		WriteTimeout:      45 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    16 * 1024,
 	}

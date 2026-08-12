@@ -78,9 +78,33 @@ if grep -Fq 'kind: NetworkPolicy' "$TMP_DIR/off-default-render.yaml"; then
 fi
 grep -Fq 'automountServiceAccountToken: false' "$TMP_DIR/off-default-render.yaml" || fail 'service token automount is not disabled'
 grep -Fq 'containerPort: 8080' "$TMP_DIR/off-default-render.yaml" || fail 'container port is not canonical 8080'
+assert_contains_block "$TMP_DIR/off-default-render.yaml" $'- name: MCP_ENABLED\n              value: "false"' 'MCP_ENABLED default false env is missing'
 if grep -Fq 'name: CSRF_SECRET' "$TMP_DIR/off-default-render.yaml"; then
   fail 'explicit off render unexpectedly contains a CSRF Secret reference'
 fi
+render -f "$TMP_DIR/off-default.yaml" --set valkey.enabled=false > "$TMP_DIR/mcp-disabled-render.yaml"
+render -f "$TMP_DIR/off-default.yaml" --set valkey.enabled=false --set mcp.enabled=true > "$TMP_DIR/mcp-enabled-render.yaml"
+assert_contains_block "$TMP_DIR/mcp-enabled-render.yaml" $'- name: MCP_ENABLED\n              value: "true"' 'mcp.enabled=true was not wired into MCP_ENABLED'
+python3 - "$TMP_DIR/mcp-disabled-render.yaml" "$TMP_DIR/mcp-enabled-render.yaml" <<'PY'
+import difflib
+import re
+import sys
+
+pattern = re.compile(r'(?m)(- name: MCP_ENABLED\n\s+value: )"(?:true|false)"')
+
+def normalized(path: str) -> str:
+    text = open(path, encoding="utf-8").read()
+    normalized_text, replacements = pattern.subn(r'\1"<MCP_ENABLED>"', text)
+    if replacements != 1:
+        raise SystemExit(f"{path}: expected exactly one MCP_ENABLED environment value, found {replacements}")
+    return normalized_text
+
+off = normalized(sys.argv[1])
+enabled = normalized(sys.argv[2])
+if off != enabled:
+    sys.stderr.writelines(difflib.unified_diff(off.splitlines(True), enabled.splitlines(True), fromfile="mcp-off", tofile="mcp-enabled"))
+    raise SystemExit("mcp.enabled changed chart output beyond the MCP_ENABLED application environment value")
+PY
 
 cat > "$TMP_DIR/deny-all.yaml" <<'VALUES'
 auth:
@@ -380,6 +404,8 @@ secret:
   existingSecret: vaultsmith-passwords
 VALUES
 assert_render_fails_with 'profiles passwordEnv "VAULT_PROFILES_JSON" is reserved' --skip-schema-validation -f "$TMP_DIR/reserved-env.yaml"
+assert_render_fails_with 'profiles passwordEnv "MCP_ENABLED" is reserved' --skip-schema-validation -f "$TMP_DIR/valid.yaml" --set profiles[0].passwordEnv=MCP_ENABLED
+assert_render_fails_with 'profiles passwordEnv "MCPGODEBUG" is reserved' --skip-schema-validation -f "$TMP_DIR/valid.yaml" --set profiles[0].passwordEnv=MCPGODEBUG
 
 cat > "$TMP_DIR/broad-policy.yaml" <<'VALUES'
 auth:
