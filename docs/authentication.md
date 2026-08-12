@@ -58,7 +58,7 @@ It publishes the resource origin, configured authorization-server issuer, Bearer
 
 A client can fetch the root document proactively. An MCP client that first derives a path-specific location from `/mcp` must fall back to the root well-known document. Vaultsmith does not serve a path-specific metadata document.
 
-Bearer challenges on protected paths intentionally omit the `resource_metadata` parameter. They contain only the Bearer realm and, when applicable, a safe OAuth error and exact required scope. Clients must use the root well-known document rather than construct a pathful metadata URL from a challenge.
+Bearer challenges on protected paths include the canonical `resource_metadata` parameter for the root document. They also contain, when applicable, a safe OAuth error and exact required scope. Clients must use the advertised root document rather than construct a pathful metadata URL from a challenge.
 
 ## Exact scopes
 

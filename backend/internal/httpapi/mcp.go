@@ -121,7 +121,7 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 		if preflightErr != nil {
 			scope := mcpHeaderRequiredScope(headerMethod, headerToolName)
 			if vaultservice.HasCode(preflightErr, vaultservice.CodeForbidden) {
-				writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope)
+				writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope, protectedResourceMetadataURL(h.authConfig))
 			} else {
 				writeServiceError(w, preflightErr)
 			}
@@ -167,24 +167,35 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 		mcpWriteHTTPError(w, http.StatusBadRequest, &request.id, mcpErrorHeaderMismatch, "HeaderMismatch", nil)
 		return
 	}
-	if err := validateMCPMeta(request.sdk.Params, headerVersion); err != nil {
-		mcpWriteHTTPError(w, http.StatusBadRequest, &request.id, mcpErrorHeaderMismatch, "HeaderMismatch", nil)
-		return
-	}
-
 	switch request.sdk.Method {
 	case "server/discover":
-		h.serveMCPDiscover(w, request.id)
+		if err := validateMCPMeta(request.sdk.Params, headerVersion); err != nil {
+			mcpWriteHTTPError(w, http.StatusBadRequest, &request.id, mcpErrorHeaderMismatch, "HeaderMismatch", nil)
+			return
+		}
+		h.serveMCPDiscover(w, request.id, request.sdk.Params)
 	case "tools/list":
+		if err := validateMCPMeta(request.sdk.Params, headerVersion); err != nil {
+			mcpWriteHTTPError(w, http.StatusBadRequest, &request.id, mcpErrorHeaderMismatch, "HeaderMismatch", nil)
+			return
+		}
 		h.serveMCPListTools(w, request.id, request.sdk.Params)
 	case "tools/call":
+		if err := validateMCPMeta(request.sdk.Params, headerVersion); err != nil {
+			mcpWriteHTTPError(w, http.StatusBadRequest, &request.id, mcpErrorHeaderMismatch, "HeaderMismatch", nil)
+			return
+		}
 		h.serveMCPToolCall(w, r, request.id, request.sdk.Params, headerToolName, actor, lease, leaseContext)
 	default:
 		mcpWriteHTTPError(w, http.StatusNotFound, &request.id, mcpErrorMethodNotFound, "method not found", nil)
 	}
 }
 
-func (h *Handler) serveMCPDiscover(w http.ResponseWriter, id json.RawMessage) {
+func (h *Handler) serveMCPDiscover(w http.ResponseWriter, id json.RawMessage, params json.RawMessage) {
+	if _, err := decodeStrictObject(params, map[string]struct{}{"_meta": {}}); err != nil {
+		mcpWriteHTTPError(w, http.StatusBadRequest, &id, mcpErrorInvalidParams, "invalid params", nil)
+		return
+	}
 	mcpWriteResult(w, id, mcpDiscoverResult{
 		Meta:              mcpResultMeta(),
 		ResultType:        "complete",
@@ -239,6 +250,10 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 		}
 		profiles, err := h.service.ListProfiles(r.Context(), actor)
 		if err != nil {
+			if mcpServiceUnavailable(err) {
+				mcpWriteServiceUnavailable(w)
+				return
+			}
 			if vaultservice.HasCode(err, vaultservice.CodeForbidden) {
 				mcpWriteResult(w, id, mcpCallResult(profilesResponse{Profiles: []apimodels.Profile{}}, false))
 				return
@@ -268,6 +283,10 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 		}
 		prepared, err := h.service.Prepare(leaseContext, actor, command, lease)
 		if err != nil {
+			if mcpServiceUnavailable(err) {
+				mcpWriteServiceUnavailable(w)
+				return
+			}
 			if actor.Kind() != caller.KindAnonymous && vaultservice.IsPolicyDenied(err) {
 				writeError(w, http.StatusForbidden, "forbidden", "operation is not permitted")
 				return
@@ -277,6 +296,10 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 		}
 		output, err := prepared.Run(leaseContext)
 		if err != nil {
+			if mcpServiceUnavailable(err) {
+				mcpWriteServiceUnavailable(w)
+				return
+			}
 			mcpWriteToolError(w, id, mcpTextToolFailure)
 			return
 		}
@@ -320,8 +343,8 @@ func decodeMCPRequest(raw []byte) (mcpRequest, error) {
 	if !ok {
 		return mcpRequest{}, errors.New("missing params")
 	}
-	if _, err := decodeStrictObject(params, map[string]struct{}{"_meta": {}, "name": {}, "arguments": {}, "cursor": {}}); err != nil {
-		return mcpRequest{}, err
+	if !jsonObject(params) {
+		return mcpRequest{}, errors.New("params must be an object")
 	}
 	sdkID, err := sdkJSONRPCID(id)
 	if err != nil {
@@ -404,17 +427,68 @@ func validateMCPClientCapabilities(raw json.RawMessage) error {
 	if !jsonObject(raw) {
 		return errors.New("client capabilities must be an object")
 	}
-	fields, err := decodeStrictObject(raw, map[string]struct{}{"experimental": {}, "extensions": {}, "roots": {}, "sampling": {}, "elicitation": {}})
+	fields, err := decodeOpenJSONObject(raw)
 	if err != nil {
 		return err
 	}
-	for _, value := range fields {
-		if !jsonObject(value) {
+	known := map[string]struct{}{
+		"experimental": {},
+		"extensions":   {},
+		"roots":        {},
+		"sampling":     {},
+		"elicitation":  {},
+	}
+	for name, value := range fields {
+		if _, isKnown := known[name]; isKnown && !jsonObject(value) {
 			return errors.New("client capability must be an object")
 		}
 	}
 	var capabilities mcp.ClientCapabilities
 	return json.Unmarshal(raw, &capabilities)
+}
+
+func decodeOpenJSONObject(raw json.RawMessage) (map[string]json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	first, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delimiter, ok := first.(json.Delim); !ok || delimiter != '{' {
+		return nil, errors.New("object required")
+	}
+	fields := make(map[string]json.RawMessage)
+	seen := make(map[string]struct{})
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return nil, errors.New("object key is invalid")
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return nil, errors.New("duplicate object key")
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		fields[key] = value
+	}
+	last, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	if delimiter, ok := last.(json.Delim); !ok || delimiter != '}' {
+		return nil, errors.New("object is invalid")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, errors.New("trailing JSON")
+	}
+	return fields, nil
 }
 
 func decodeStrictJSON(raw json.RawMessage, target any) error {
@@ -597,6 +671,17 @@ func mcpWriteToolError(w http.ResponseWriter, id json.RawMessage, message string
 	})
 }
 
+func mcpServiceUnavailable(err error) bool {
+	return vaultservice.HasCode(err, vaultservice.CodeNotReady) ||
+		vaultservice.HasCode(err, vaultservice.CodeTemporarilyUnavailable) ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded)
+}
+
+func mcpWriteServiceUnavailable(w http.ResponseWriter) {
+	writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
+}
+
 func mcpTools() []*mcp.Tool {
 	return []*mcp.Tool{
 		{Name: "list_profiles", Description: "List visible Vault profiles.", InputSchema: mcpObjectSchema(nil, nil), OutputSchema: mcpObjectSchema([]string{"profiles"}, map[string]any{"profiles": map[string]any{"type": "array"}})},
@@ -682,7 +767,7 @@ func parseMCPRequestHeaders(w http.ResponseWriter, r *http.Request) (mcpHeaders,
 		return mcpHeaders{}, false
 	}
 	toolName := ""
-	if method == "tools/call" {
+	if method == "tools/call" || method == "resources/read" || method == "prompts/get" {
 		encodedName, nameOK := singletonHeader(r.Header, "Mcp-Name")
 		if !nameOK {
 			mcpWriteHTTPError(w, http.StatusBadRequest, nil, mcpErrorHeaderMismatch, "HeaderMismatch", nil)

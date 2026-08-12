@@ -75,7 +75,7 @@ Before binding the listener, native mode requires:
 - an RFC 9068 JWT access token signed with `RS256`, `PS256`, `ES256`, or `EdDSA`; and
 - matching issuer and audience claims, the required token-profile and time claims, and at most 60 seconds of clock skew.
 
-Vaultsmith serves one public root protected-resource metadata document in native mode. REST and MCP challenges on other paths omit `resource_metadata`.
+Vaultsmith serves one public root protected-resource metadata document in native mode. Every native REST and MCP Bearer challenge includes its canonical `resource_metadata` URL.
 
 ### Shared operation service
 
@@ -101,7 +101,7 @@ All request paths reject duplicate JSON keys, trailing JSON values, and malforme
 | JSON request body | 8 MiB |
 | HTTP headers | 16 KiB |
 
-Canonical REST, the legacy route, and enabled MCP use a 30-second operation deadline that starts before credential dispatch. The server read and write limits are 40 and 45 seconds. The edge timeout must be at least 50 seconds.
+Canonical REST, the legacy route, and enabled MCP use a 30-second operation deadline that starts after credential authentication. The server read and write limits are 40 and 45 seconds. The edge timeout must be at least 50 seconds.
 
 API errors keep the existing shape:
 

@@ -55,8 +55,8 @@ func WrapSecurityWithOptions(next http.Handler, cfg config.AuthConfig, options S
 			next.ServeHTTP(w, r)
 		})
 	}
-	next = credentialDispatchMiddleware(next, cfg, options)
 	next = applicationDeadlineMiddleware(next)
+	next = credentialDispatchMiddleware(next, cfg, options)
 	next = applicationPreflightMiddleware(next, options.MCPEnabled)
 	next = corsMiddleware(next, cfg, options.MCPEnabled)
 	next = mcpMethodMiddleware(next, options.MCPEnabled)
@@ -245,44 +245,44 @@ func credentialDispatchMiddleware(next http.Handler, cfg config.AuthConfig, opti
 			csrfSessionHandler.ServeHTTP(w, r)
 		case credentialRouteSessionOrBearer:
 			if authPresent {
-				actor, ok := verifyBearerCredential(w, r, options.Auth, authHeader, "")
+				actor, ok := verifyBearerCredential(w, r, options.Auth, authHeader, "", protectedResourceMetadataURL(cfg))
 				if !ok {
 					return
 				}
-				if !preflightBearerRoute(w, r, next, actor) {
+				if !preflightBearerRoute(w, r, next, actor, cfg) {
 					return
 				}
 				next.ServeHTTP(w, r.WithContext(contextWithCaller(r.Context(), actor)))
 				return
 			}
 			if malformedAuthorization {
-				writeBearerChallenge(w, http.StatusUnauthorized, "invalid_token", "")
+				writeBearerChallenge(w, http.StatusUnauthorized, "invalid_token", "", protectedResourceMetadataURL(cfg))
 				return
 			}
 			if !sessionPresent {
-				writeBearerChallenge(w, http.StatusUnauthorized, "", bearerRouteRequiredScope(r))
+				writeBearerChallenge(w, http.StatusUnauthorized, "", bearerRouteRequiredScope(r), protectedResourceMetadataURL(cfg))
 				return
 			}
 			handlerForSessionRequest(sessionHandler, csrfSessionHandler, r).ServeHTTP(w, r)
 		case credentialRouteMCPBearer:
 			if sessionPresent {
-				writeBearerChallenge(w, http.StatusUnauthorized, "invalid_token", "")
+				writeBearerChallenge(w, http.StatusUnauthorized, "invalid_token", "", protectedResourceMetadataURL(cfg))
 				return
 			}
 			if !authPresent {
 				if malformedAuthorization {
-					writeBearerChallenge(w, http.StatusUnauthorized, "invalid_token", "")
+					writeBearerChallenge(w, http.StatusUnauthorized, "invalid_token", "", protectedResourceMetadataURL(cfg))
 				} else {
 					headers, _ := mcpHeadersFromRequest(r)
-					writeBearerChallenge(w, http.StatusUnauthorized, "", mcpHeaderRequiredScope(headers.method, headers.toolName))
+					writeBearerChallenge(w, http.StatusUnauthorized, "", mcpHeaderRequiredScope(headers.method, headers.toolName), protectedResourceMetadataURL(cfg))
 				}
 				return
 			}
-			actor, ok := verifyBearerCredential(w, r, options.Auth, authHeader, "")
+			actor, ok := verifyBearerCredential(w, r, options.Auth, authHeader, "", protectedResourceMetadataURL(cfg))
 			if !ok {
 				return
 			}
-			if !preflightMCPBearerRoute(w, r, next, actor) {
+			if !preflightMCPBearerRoute(w, r, next, actor, cfg) {
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(contextWithCaller(r.Context(), actor)))
@@ -307,7 +307,7 @@ func bearerRouteRequiredScope(r *http.Request) string {
 	}
 }
 
-func preflightBearerRoute(w http.ResponseWriter, r *http.Request, next http.Handler, actor caller.Caller) bool {
+func preflightBearerRoute(w http.ResponseWriter, r *http.Request, next http.Handler, actor caller.Caller, cfg config.AuthConfig) bool {
 	handler, ok := next.(*Handler)
 	if !ok {
 		// A non-Vaultsmith handler is used only by middleware unit tests. Production
@@ -335,14 +335,14 @@ func preflightBearerRoute(w http.ResponseWriter, r *http.Request, next http.Hand
 		return true
 	}
 	if vaultservice.HasCode(err, vaultservice.CodeForbidden) {
-		writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope)
+		writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope, protectedResourceMetadataURL(cfg))
 	} else {
 		writeServiceError(w, err)
 	}
 	return false
 }
 
-func preflightMCPBearerRoute(w http.ResponseWriter, r *http.Request, next http.Handler, actor caller.Caller) bool {
+func preflightMCPBearerRoute(w http.ResponseWriter, r *http.Request, next http.Handler, actor caller.Caller, cfg config.AuthConfig) bool {
 	handler, ok := next.(*Handler)
 	if !ok {
 		return true
@@ -367,7 +367,7 @@ func preflightMCPBearerRoute(w http.ResponseWriter, r *http.Request, next http.H
 		return true
 	}
 	if vaultservice.HasCode(err, vaultservice.CodeForbidden) {
-		writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope)
+		writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope, protectedResourceMetadataURL(cfg))
 	} else {
 		writeServiceError(w, err)
 	}
@@ -440,7 +440,7 @@ func hasSessionCookie(r *http.Request, cfg config.AuthConfig) bool {
 	return false
 }
 
-func verifyBearerCredential(w http.ResponseWriter, r *http.Request, auth *authn.Authenticator, token, requiredScope string) (caller.Caller, bool) {
+func verifyBearerCredential(w http.ResponseWriter, r *http.Request, auth *authn.Authenticator, token, requiredScope, resourceMetadataURL string) (caller.Caller, bool) {
 	if auth == nil {
 		writeError(w, http.StatusServiceUnavailable, "not_ready", "service is not ready")
 		return caller.Caller{}, false
@@ -451,11 +451,11 @@ func verifyBearerCredential(w http.ResponseWriter, r *http.Request, auth *authn.
 			writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
 			return caller.Caller{}, false
 		}
-		writeBearerChallenge(w, http.StatusUnauthorized, "invalid_token", "")
+		writeBearerChallenge(w, http.StatusUnauthorized, "invalid_token", "", resourceMetadataURL)
 		return caller.Caller{}, false
 	}
 	if requiredScope != "" && !actor.HasScope(requiredScope) {
-		writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", requiredScope)
+		writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", requiredScope, resourceMetadataURL)
 		return caller.Caller{}, false
 	}
 	return actor, true
@@ -624,8 +624,16 @@ func writeAuthError(w http.ResponseWriter, status int, code string) {
 	writeError(w, status, code, message)
 }
 
-func writeBearerChallenge(w http.ResponseWriter, status int, bearerError, scope string) {
-	w.Header().Set("WWW-Authenticate", bearerChallenge(bearerError, scope))
+func protectedResourceMetadataURL(cfg config.AuthConfig) string {
+	base := strings.TrimRight(strings.TrimSpace(cfg.OIDC.PublicBaseURL), "/")
+	if base == "" {
+		return ""
+	}
+	return base + "/.well-known/oauth-protected-resource"
+}
+
+func writeBearerChallenge(w http.ResponseWriter, status int, bearerError, scope, resourceMetadataURL string) {
+	w.Header().Set("WWW-Authenticate", bearerChallenge(bearerError, scope, resourceMetadataURL))
 	code := "unauthorized"
 	message := "request could not be authenticated"
 	if status == http.StatusForbidden {
@@ -635,13 +643,16 @@ func writeBearerChallenge(w http.ResponseWriter, status int, bearerError, scope 
 	writeError(w, status, code, message)
 }
 
-func bearerChallenge(bearerError, scope string) string {
+func bearerChallenge(bearerError, scope, resourceMetadataURL string) string {
 	parts := []string{`Bearer realm="vaultsmith"`}
 	if bearerError != "" {
 		parts = append(parts, `error="`+bearerError+`"`)
 	}
 	if scope != "" {
 		parts = append(parts, `scope="`+scope+`"`)
+	}
+	if resourceMetadataURL != "" {
+		parts = append(parts, `resource_metadata="`+resourceMetadataURL+`"`)
 	}
 	return strings.Join(parts, ", ")
 }

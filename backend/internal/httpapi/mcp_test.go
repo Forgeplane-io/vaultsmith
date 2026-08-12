@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/forgeplane-io/vaultsmith/backend/internal/apimodels"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
@@ -169,6 +170,107 @@ func TestMCPUnsupportedJSONRPCMethodReturnsMethodNotFound(t *testing.T) {
 	}
 	if envelope.Error.Code != mcpErrorMethodNotFound {
 		t.Fatalf("error code = %d, want %d", envelope.Error.Code, mcpErrorMethodNotFound)
+	}
+}
+
+func TestMCPUnsupportedMethodsPreserveIDAndRequireMethodNameHeader(t *testing.T) {
+	tests := []struct {
+		method string
+		params string
+		name   string
+	}{
+		{method: "resources/read", params: `{"uri":"vaultsmith://profiles/dev",` + mcpMeta + `}`, name: "synthetic-resource"},
+		{method: "prompts/get", params: `{"name":"synthetic-prompt","arguments":{},` + mcpMeta + `}`, name: "synthetic-prompt"},
+	}
+	for _, test := range tests {
+		t.Run(test.method, func(t *testing.T) {
+			handler := mcpOffHandler()
+			request := newMCPRequest(test.method, `{"jsonrpc":"2.0","id":"preserved","method":"`+test.method+`","params":`+test.params+`}`)
+			request.Header.Set("Mcp-Name", test.name)
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404: %s", response.Code, response.Body.String())
+			}
+			var envelope struct {
+				ID    json.RawMessage `json:"id"`
+				Error mcpJSONRPCError `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if string(envelope.ID) != `"preserved"` {
+				t.Fatalf("response id = %s, want preserved request id", envelope.ID)
+			}
+			if envelope.Error.Code != mcpErrorMethodNotFound {
+				t.Fatalf("error code = %d, want %d", envelope.Error.Code, mcpErrorMethodNotFound)
+			}
+		})
+	}
+}
+
+func TestMCPUnsupportedMethodNameHeadersAreRequired(t *testing.T) {
+	for _, method := range []string{"resources/read", "prompts/get"} {
+		t.Run(method, func(t *testing.T) {
+			handler := mcpOffHandler()
+			params := `{"uri":"vaultsmith://profiles/dev",` + mcpMeta + `}`
+			if method == "prompts/get" {
+				params = `{"name":"synthetic-prompt","arguments":{},` + mcpMeta + `}`
+			}
+			request := newMCPRequest(method, `{"jsonrpc":"2.0","id":10,"method":"`+method+`","params":`+params+`}`)
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+			}
+			var envelope struct {
+				Error mcpJSONRPCError `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if envelope.Error.Code != mcpErrorHeaderMismatch {
+				t.Fatalf("error code = %d, want %d", envelope.Error.Code, mcpErrorHeaderMismatch)
+			}
+		})
+	}
+}
+
+func TestMCPMetaAcceptsCustomClientCapabilities(t *testing.T) {
+	handler := mcpOffHandler()
+	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{"vendor/custom":{}}}}}`
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, newMCPRequest("server/discover", body))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestMCPNotReadyServiceFailureReturnsHTTP503(t *testing.T) {
+	cfg := config.AuthConfig{Mode: config.AuthModeOff}
+	api := NewWithDependencies(nil, nil, Dependencies{AuthConfig: cfg})
+	handler := WrapSecurityWithOptions(api, cfg, SecurityOptions{MCPEnabled: true})
+	request := newMCPRequest("tools/call", `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"encrypt","arguments":{"profileId":"dev","plaintext":"synthetic"},`+mcpMeta+`}}`)
+	request.Header.Set("Mcp-Name", "encrypt")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", response.Code, response.Body.String())
+	}
+	var envelope apimodels.ErrorResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Error.Code != apimodels.ApiErrorCodeTemporarilyUnavailable {
+		t.Fatalf("error code = %q, want temporarily_unavailable", envelope.Error.Code)
 	}
 }
 
