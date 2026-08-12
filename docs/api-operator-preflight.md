@@ -1,6 +1,6 @@
-# Machine API rollout checklist
+# Machine API Rollout Checklist
 
-The bridge release is not implemented yet. Use this checklist when a release contains the Bearer API and MCP bridge.
+Use this checklist before activating canonical REST Bearer clients or MCP callers for a bridge release.
 
 Copy the checklist to the private operations system for each environment. Do not commit a completed copy: it can contain identity subjects, internal URLs, and network details. Do not record tokens, credentials, private keys, Vault values, password environment names, or private file paths. An unanswered item blocks the rollout.
 
@@ -122,11 +122,11 @@ The bridge compiles its operation limit from a checked-in benchmark. Helm does n
 | --- | --- | --- | --- | --- |
 | OpenAPI compatibility | release source | `make api-check` output | no new or stale findings | fix the contract or review one finding |
 | Generated contracts | release source | drift-check output | no drift | run `make generate-api` and review the result |
-| Admission capacity | benchmark | runtime configured-capacity metric | values match | lower the compiled limit or rerun the benchmark |
-| Pod memory | benchmark minimum | request, limit, and measured peak | deployment meets the minimum | add memory or lower the operation limit |
+| Admission capacity | `docs/benchmarks/admission-linux-amd64-2026-08-12.md` | runtime configured-capacity metric | values match | lower the compiled limit or rerun the benchmark |
+| Pod memory | benchmark receipt | request, limit, and measured peak | deployment meets or exceeds measured peak plus operator headroom | add memory or lower the operation limit |
 | Active leases | runtime limit | load-test peak | never exceeds the limit | stop rollout and inspect admission wiring |
 
-Do not start machine callers until the release includes the benchmark, compiled limit, minimum memory, and saturation test. At capacity, Vaultsmith must return `503 temporarily_unavailable` with `Retry-After: 1` before body decoding or Vault work.
+Do not start machine callers until the release includes the benchmark receipt, compiled limit, and saturation test. At capacity, Vaultsmith must return `503 temporarily_unavailable` with `Retry-After: 1` before body decoding or Vault work.
 
 ## Rollout and rollback
 

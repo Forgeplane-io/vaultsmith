@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/forgeplane-io/vaultsmith/backend/internal/apimodels"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
 )
 
@@ -83,12 +85,182 @@ func TestProfilesEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
 	profiles := decodeJSONBody[profilesResponse](t, response).Profiles
-	want := Profile{ID: "dev", Label: "Development", Capabilities: ProfileCapabilities{Encrypt: true, Decrypt: true}}
+	want := apimodels.Profile{Id: "dev", Label: "Development", Capabilities: apimodels.ProfileCapabilities{Encrypt: true, Decrypt: true, RotateSource: true, RotateDestination: true}}
 	if len(profiles) != 1 || profiles[0] != want {
 		t.Fatalf("profiles = %#v", profiles)
 	}
+	if response.Header().Get("X-Request-ID") == "" {
+		t.Fatal("X-Request-ID is missing")
+	}
 	if strings.Contains(response.Body.String(), "password") {
 		t.Fatalf("profiles response contains password-related data: %q", response.Body.String())
+	}
+}
+
+func TestCanonicalOperationEndpoints(t *testing.T) {
+	tests := []struct {
+		name      string
+		path      string
+		body      string
+		wantBody  string
+		wantCalls []operationCall
+	}{
+		{
+			name:     "encrypt",
+			path:     "/api/v1/profiles/dev/encrypt",
+			body:     `{"plaintext":"fixture-value"}`,
+			wantBody: `{"vaultText":"vault-output"}` + "\n",
+			wantCalls: []operationCall{
+				{profileID: "dev", mode: "encrypt", value: "fixture-value"},
+			},
+		},
+		{
+			name:     "decrypt",
+			path:     "/api/v1/profiles/dev/decrypt",
+			body:     `{"vaultText":"vault-input"}`,
+			wantBody: `{"plaintext":"plain-output"}` + "\n",
+			wantCalls: []operationCall{
+				{profileID: "dev", mode: "decrypt", value: "vault-input"},
+			},
+		},
+		{
+			name:     "rotate",
+			path:     "/api/v1/rotations",
+			body:     `{"sourceProfileId":"source","destinationProfileId":"destination","vaultText":"vault-input"}`,
+			wantBody: `{"vaultText":"vault-output"}` + "\n",
+			wantCalls: []operationCall{
+				{profileID: "source", mode: "decrypt", value: "vault-input"},
+				{profileID: "destination", mode: "encrypt", value: "plain-output"},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &fakeExecutor{value: "vault-output", decryptedValue: "plain-output"}
+			handler := newHandler([]Profile{
+				{ID: "dev", Label: "Development"},
+				{ID: "source", Label: "Source"},
+				{ID: "destination", Label: "Destination"},
+			}, executor)
+			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+			}
+			if response.Body.String() != test.wantBody {
+				t.Fatalf("body = %q, want %q", response.Body.String(), test.wantBody)
+			}
+			if !reflect.DeepEqual(executor.calls, test.wantCalls) {
+				t.Fatalf("calls = %#v, want %#v", executor.calls, test.wantCalls)
+			}
+			if response.Header().Get("X-Request-ID") == "" {
+				t.Fatal("X-Request-ID is missing")
+			}
+		})
+	}
+}
+
+func TestCanonicalOperationValidationBeforeBodyRead(t *testing.T) {
+	tests := []struct {
+		name    string
+		method  string
+		path    string
+		headers map[string]string
+		status  int
+	}{
+		{name: "encrypt wrong method", method: http.MethodGet, path: "/api/v1/profiles/dev/encrypt", status: http.StatusMethodNotAllowed},
+		{name: "decrypt missing content type", method: http.MethodPost, path: "/api/v1/profiles/dev/decrypt", status: http.StatusUnsupportedMediaType},
+		{name: "rotate unsupported encoding", method: http.MethodPost, path: "/api/v1/rotations", headers: map[string]string{"Content-Type": "application/json", "Content-Encoding": "gzip"}, status: http.StatusUnsupportedMediaType},
+		{name: "encoded slash profile", method: http.MethodPost, path: "/api/v1/profiles/dev%2Fprod/encrypt", headers: map[string]string{"Content-Type": "application/json"}, status: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := &trackingReader{}
+			handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
+			request := httptest.NewRequest(test.method, test.path, body)
+			for key, value := range test.headers {
+				request.Header.Set(key, value)
+			}
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
+			}
+			if body.read {
+				t.Fatal("body was read before route/method/header validation completed")
+			}
+		})
+	}
+}
+
+func TestProtectedResourceMetadataNativeOnly(t *testing.T) {
+	cfg := config.AuthConfig{
+		Mode: config.AuthModeNative,
+		OIDC: config.OIDCConfig{IssuerURL: "https://id.example.test/realms/vaultsmith", PublicBaseURL: "https://vaultsmith.example.test"},
+	}
+	handler := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{}, Dependencies{AuthConfig: cfg})
+	request := httptest.NewRequest(http.MethodGet, "https://vaultsmith.example.test/.well-known/oauth-protected-resource", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "public, max-age=300" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	var body protectedResourceMetadataResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Resource != "https://vaultsmith.example.test" || !reflect.DeepEqual(body.AuthorizationServers, []string{"https://id.example.test/realms/vaultsmith"}) {
+		t.Fatalf("metadata = %#v", body)
+	}
+	if !reflect.DeepEqual(body.ScopesSupported, []string{vaultservice.ScopeProfileRead, vaultservice.ScopeEncrypt, vaultservice.ScopeDecrypt, vaultservice.ScopeRotate}) {
+		t.Fatalf("scopes = %#v", body.ScopesSupported)
+	}
+
+	off := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{}, Dependencies{AuthConfig: config.AuthConfig{Mode: config.AuthModeOff}})
+	offResponse := httptest.NewRecorder()
+	off.ServeHTTP(offResponse, request)
+	if offResponse.Code != http.StatusNotFound {
+		t.Fatalf("off-mode status = %d, want 404", offResponse.Code)
+	}
+}
+
+func TestAdmissionMetricsAreBoundedAndUnlabeled(t *testing.T) {
+	admission, err := vaultservice.NewAdmission(2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{}, Dependencies{Admission: admission})
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	for _, line := range []string{
+		"vaultsmith_operation_admission_capacity 2\n",
+		"vaultsmith_operation_admission_in_use 0\n",
+		"vaultsmith_operation_admission_rejections_total 0\n",
+	} {
+		if !strings.Contains(body, line) {
+			t.Fatalf("metrics body = %q, want line %q", body, line)
+		}
+	}
+	if strings.Contains(body, "{") {
+		t.Fatalf("metrics contain labels: %q", body)
 	}
 }
 

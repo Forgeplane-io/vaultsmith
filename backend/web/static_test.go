@@ -72,10 +72,19 @@ func TestAPIRoutesDelegate(t *testing.T) {
 		_, _ = w.Write([]byte("api"))
 	})
 	handler := New(testAssets(), api)
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/profiles", nil)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusTeapot || response.Body.String() != "api" {
-		t.Fatalf("response = %d %q, want 418 api", response.Code, response.Body.String())
+	for _, route := range []string{
+		"/api/v1/profiles",
+		"/.well-known/oauth-protected-resource",
+		"/metrics",
+		"/mcp",
+	} {
+		t.Run(route, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, route, nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusTeapot || response.Body.String() != "api" {
+				t.Fatalf("response = %d %q, want 418 api", response.Code, response.Body.String())
+			}
+		})
 	}
 }

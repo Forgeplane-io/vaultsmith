@@ -39,6 +39,7 @@ archives:
       - README.md
       - CHANGELOG.md
       - api/openapi.yaml
+      - docs/api-reference.md
 
 checksum:
   name_template: checksums.txt

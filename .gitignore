@@ -20,6 +20,7 @@ backend/web/dist/assets/
 
 # Local scratch files
 /api/scripts/__pycache__/
+/scripts/__pycache__/
 .tmp/
 dist/
 .hermes/

@@ -55,7 +55,7 @@ services:
       keycloak:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-check-certificate --spider -q https://localhost/healthz"]
+      test: ["CMD-SHELL", "wget --no-check-certificate --spider -q https://localhost/"]
       interval: 3s
       timeout: 3s
       retries: 30

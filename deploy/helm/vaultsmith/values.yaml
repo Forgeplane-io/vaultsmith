@@ -62,6 +62,9 @@ auth:
   cors:
     allowedOrigins: []
 
+mcp:
+  enabled: false
+
 # The official Valkey chart is included by default. Set enabled to false only
 # when auth.redis.address points to an externally managed Valkey/Redis service.
 valkey:

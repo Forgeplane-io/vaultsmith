@@ -26,6 +26,31 @@ type Error struct {
 	cause   error
 }
 
+// PolicyDenied marks a post-decode Casbin denial. Transports use this marker to
+// distinguish policy denials from fixed-scope and ordinary domain errors.
+type PolicyDenied struct {
+	err error
+}
+
+func (e *PolicyDenied) Error() string {
+	if e == nil || e.err == nil {
+		return "operation is not permitted"
+	}
+	return e.err.Error()
+}
+
+func (e *PolicyDenied) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func IsPolicyDenied(err error) bool {
+	var denied *PolicyDenied
+	return errors.As(err, &denied)
+}
+
 func (e *Error) Error() string {
 	if e == nil {
 		return ""
@@ -74,6 +99,10 @@ func notFound() error {
 
 func forbidden() error {
 	return errorWithCode(CodeForbidden, "operation is not permitted")
+}
+
+func policyDenied() error {
+	return &PolicyDenied{err: forbidden()}
 }
 
 func notReady(message string) error {

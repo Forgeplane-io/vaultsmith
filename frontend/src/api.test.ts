@@ -29,6 +29,10 @@ describe('API client', () => {
     api = await import('./api')
   })
 
+  it('keeps the bridge operation timeout above the 30 second server deadline', () => {
+    expect(api.OPERATION_TIMEOUT_MS).toBe(40_000)
+  })
+
   it('loads public profiles from the same-origin endpoint', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse({ profiles: [{ id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false } }] }),

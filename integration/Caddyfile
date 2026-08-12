@@ -1,4 +1,17 @@
 https://localhost:443 {
   tls internal
-  reverse_proxy host.docker.internal:18080
+  @private path /healthz /readyz
+  respond @private 404
+  reverse_proxy host.docker.internal:18080 {
+    # Preserve Authorization, but never let a caller supply an identity that
+    # an upstream authenticating proxy could otherwise mistake as trusted.
+    header_up -X-Auth-Request-User
+    header_up -X-Auth-Request-Email
+    header_up -X-Auth-Request-Groups
+    header_up -X-Forwarded-User
+    header_up -X-Forwarded-Email
+    header_up -X-Remote-User
+    header_up -X-Remote-Groups
+    header_up -X-Groups
+  }
 }

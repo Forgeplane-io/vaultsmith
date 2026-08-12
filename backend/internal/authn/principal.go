@@ -156,6 +156,10 @@ func principalFromClaims(issuer string, claims map[string]any, groupsClaim strin
 	}, nil
 }
 
+func PrincipalFromVerifiedClaims(issuer string, claims map[string]any, groupsClaim string, expiresAt time.Time) (Principal, error) {
+	return principalFromClaims(issuer, claims, groupsClaim, expiresAt)
+}
+
 func claimPathValue(claims map[string]any, path string) (any, bool) {
 	var current any = claims
 	for _, segment := range strings.Split(path, ".") {

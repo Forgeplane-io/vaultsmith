@@ -103,6 +103,8 @@ func TestLoadJSONRejectsInvalidConfiguration(t *testing.T) {
 		{name: "duplicate password env", json: `[{"id":"one","label":"One","passwordEnv":"VAULT_PASSWORD_DEV"},{"id":"two","label":"Two","passwordEnv":"VAULT_PASSWORD_DEV"}]`, env: map[string]string{"VAULT_PASSWORD_DEV": secret}},
 		{name: "reserved profiles env", json: `[{"id":"dev","label":"Dev","passwordEnv":"VAULT_PROFILES_JSON"}]`, env: map[string]string{"VAULT_PROFILES_JSON": secret}},
 		{name: "reserved http env", json: `[{"id":"dev","label":"Dev","passwordEnv":"HTTP_ADDR"}]`, env: map[string]string{"HTTP_ADDR": secret}},
+		{name: "reserved mcp enabled env", json: `[{"id":"dev","label":"Dev","passwordEnv":"MCP_ENABLED"}]`, env: map[string]string{"MCP_ENABLED": secret}},
+		{name: "reserved mcp debug env", json: `[{"id":"dev","label":"Dev","passwordEnv":"MCPGODEBUG"}]`, env: map[string]string{"MCPGODEBUG": secret}},
 		{name: "missing password env", json: `[{"id":"dev","label":"Dev","passwordEnv":"VAULT_PASSWORD_DEV"}]`, env: nil},
 		{name: "empty password env", json: `[{"id":"dev","label":"Dev","passwordEnv":"VAULT_PASSWORD_DEV"}]`, env: map[string]string{"VAULT_PASSWORD_DEV": ""}},
 	}

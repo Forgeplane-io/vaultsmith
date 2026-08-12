@@ -216,7 +216,7 @@ func parseNativeOptions(cfg *AuthConfig, lookup EnvLookup) error {
 	if err != nil {
 		return err
 	}
-	issuerURL, err := validateWebURL("OIDC_ISSUER_URL", issuer, true)
+	issuerURL, err := validateWebURL("OIDC_ISSUER_URL", issuer, false)
 	if err != nil {
 		return err
 	}
@@ -244,7 +244,7 @@ func parseNativeOptions(cfg *AuthConfig, lookup EnvLookup) error {
 	if err != nil {
 		return err
 	}
-	redirectURL, err := validateWebURL("OIDC_REDIRECT_URL", redirect, true)
+	redirectURL, err := validateWebURL("OIDC_REDIRECT_URL", redirect, false)
 	if err != nil {
 		return err
 	}
@@ -255,7 +255,7 @@ func parseNativeOptions(cfg *AuthConfig, lookup EnvLookup) error {
 	if err != nil {
 		return err
 	}
-	publicBaseURL, err := validateWebURL("PUBLIC_BASE_URL", publicBase, true)
+	publicBaseURL, err := validateResourceOrigin("PUBLIC_BASE_URL", publicBase)
 	if err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func parseNativeOptions(cfg *AuthConfig, lookup EnvLookup) error {
 	cfg.OIDC.ClientID = clientID
 	cfg.OIDC.ClientSecret = clientSecret
 	cfg.OIDC.RedirectURL = redirectURL.String()
-	cfg.OIDC.PublicBaseURL = strings.TrimRight(publicBaseURL.String(), "/")
+	cfg.OIDC.PublicBaseURL = canonicalOrigin(publicBaseURL)
 	if raw, ok := lookup("OIDC_GROUPS_CLAIM"); ok && strings.TrimSpace(raw) != "" {
 		claim := strings.TrimSpace(raw)
 		if !validClaimPath(claim) {
@@ -297,6 +297,30 @@ func parseNativeOptions(cfg *AuthConfig, lookup EnvLookup) error {
 		return err
 	}
 	cfg.Policy.File = policyFile
+	return nil
+}
+
+func LoadMCPEnabled(lookup EnvLookup) (bool, error) {
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	raw, ok := lookup("MCP_ENABLED")
+	if !ok {
+		return false, nil
+	}
+	if raw == "" {
+		return false, errors.New("MCP_ENABLED must be true or false")
+	}
+	return boolOption("MCP_ENABLED", raw)
+}
+
+func RejectMCPGoDebug(lookup EnvLookup) error {
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	if raw, ok := lookup("MCPGODEBUG"); ok && raw != "" {
+		return errors.New("MCPGODEBUG must be unset or empty")
+	}
 	return nil
 }
 
@@ -484,6 +508,24 @@ func validateWebURL(key, raw string, allowLoopbackHTTP bool) (*url.URL, error) {
 		return nil, fmt.Errorf("%s must use HTTPS except for loopback development URLs", key)
 	}
 	return u, nil
+}
+
+func validateResourceOrigin(key, raw string) (*url.URL, error) {
+	u, err := validateWebURL(key, raw, false)
+	if err != nil {
+		return nil, err
+	}
+	if u.Path != "" && u.Path != "/" {
+		return nil, fmt.Errorf("%s must be an HTTPS origin without an application path", key)
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return nil, fmt.Errorf("%s must not contain a query or fragment", key)
+	}
+	return u, nil
+}
+
+func canonicalOrigin(u *url.URL) string {
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
 }
 
 func isLoopbackHost(host string) bool {

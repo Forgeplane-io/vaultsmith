@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
@@ -99,9 +100,28 @@ jobs:
           echo "Release not found for $tag${release_id:+ (release ID $release_id)}" >&2
           exit 1
 
+  acceptance:
+    name: Verify exact-source CI
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SOURCE_SHA: ${{ needs.validate.outputs.sha }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+      - name: Require successful full CI for exact source
+        run: bash scripts/verify_release_ci.sh
+
   publish:
     name: Build and publish release
-    needs: validate
+    needs: [validate, acceptance]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: release

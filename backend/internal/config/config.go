@@ -20,8 +20,10 @@ var (
 	profileIDPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 	passwordEnvPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 	reservedEnvNames   = map[string]struct{}{
-		profilesEnv: {},
-		"HTTP_ADDR": {},
+		profilesEnv:   {},
+		"HTTP_ADDR":   {},
+		"MCP_ENABLED": {},
+		"MCPGODEBUG":  {},
 	}
 )
 
@@ -45,6 +47,11 @@ type Config struct {
 	profiles []profile
 	executor *executor
 	auth     AuthConfig
+	mcp      MCPConfig
+}
+
+type MCPConfig struct {
+	Enabled bool
 }
 
 type ProfileExecutor interface {
@@ -75,6 +82,9 @@ func LoadFromEnv() (*Config, error) {
 }
 
 func LoadApplicationFromEnv() (*Config, error) {
+	if err := RejectMCPGoDebug(os.LookupEnv); err != nil {
+		return nil, err
+	}
 	loaded, err := LoadFromEnv()
 	if err != nil {
 		return nil, err
@@ -83,7 +93,12 @@ func LoadApplicationFromEnv() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	mcpEnabled, err := LoadMCPEnabled(os.LookupEnv)
+	if err != nil {
+		return nil, err
+	}
 	loaded.auth = *auth
+	loaded.mcp = MCPConfig{Enabled: mcpEnabled}
 	return loaded, nil
 }
 
@@ -165,6 +180,10 @@ func (c *Config) PublicProfiles() []PublicProfile {
 
 func (c *Config) Auth() AuthConfig {
 	return c.auth
+}
+
+func (c *Config) MCP() MCPConfig {
+	return c.mcp
 }
 
 func (c *Config) Executor() Executor {

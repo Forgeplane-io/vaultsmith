@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/forgeplane-io/vaultsmith/backend/internal/apimodels"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
 )
@@ -228,6 +229,9 @@ func TestSecurityRejectsLegacyAuthorizationBeforeCSRFAndSession(t *testing.T) {
 			body := &trackingReader{}
 			request := httptest.NewRequest(test.method, "https://example.test"+test.path, body)
 			request.Host = "example.test"
+			if test.method == http.MethodPost {
+				request.Header.Set("Content-Type", "application/json")
+			}
 			request.Header["Authorization"] = append([]string(nil), test.headers...)
 			if test.cookie {
 				request.AddCookie(&http.Cookie{Name: test.cfg.Session.CookieName, Value: test.cookieValue})
@@ -239,8 +243,8 @@ func TestSecurityRejectsLegacyAuthorizationBeforeCSRFAndSession(t *testing.T) {
 			if response.Code != test.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.wantStatus, response.Body.String())
 			}
-			var payload errorResponse
-			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil || payload.Error.Code != test.wantCode {
+			var payload apimodels.ErrorResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil || string(payload.Error.Code) != test.wantCode {
 				t.Fatalf("error payload = %#v, %v; want code %q", payload, err, test.wantCode)
 			}
 			if body.read || nextCalls != 0 {

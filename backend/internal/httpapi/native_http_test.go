@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/apimodels"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authz"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
@@ -95,7 +96,7 @@ func nativeHTTPFixture(t *testing.T) (http.Handler, *authn.Authenticator, config
 	}
 	executor := &recordingExecutor{}
 	api := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}, {ID: "prod", Label: "Production"}, {ID: "read", Label: "Read only"}}, executor, Dependencies{Auth: authenticator, Authorizer: authorizer, AuthConfig: cfg})
-	return WrapSecurity(authenticator.SessionMiddleware(api), cfg), authenticator, cfg, policyPath, executor
+	return WrapSecurityWithOptions(api, cfg, SecurityOptions{Auth: authenticator}), authenticator, cfg, policyPath, executor
 }
 
 func seedNativeSession(t *testing.T, authenticator *authn.Authenticator, requestedGroups ...string) string {
@@ -160,9 +161,9 @@ func TestNativeHTTPAuthorizedSessionCSRFAndProfileFiltering(t *testing.T) {
 		t.Fatalf("profiles response = %d %s", response.Code, response.Body.String())
 	}
 	profiles := decodeJSONBody[profilesResponse](t, response).Profiles
-	wantProfiles := []Profile{
-		{ID: "dev", Label: "Development", Capabilities: ProfileCapabilities{Encrypt: true, Decrypt: true}},
-		{ID: "read", Label: "Read only", Capabilities: ProfileCapabilities{Decrypt: true}},
+	wantProfiles := []apimodels.Profile{
+		{Id: "dev", Label: "Development", Capabilities: apimodels.ProfileCapabilities{Encrypt: true, Decrypt: true, RotateSource: true, RotateDestination: true}},
+		{Id: "read", Label: "Read only", Capabilities: apimodels.ProfileCapabilities{Decrypt: true, RotateSource: true}},
 	}
 	if !reflect.DeepEqual(profiles, wantProfiles) {
 		t.Fatalf("profiles = %#v, want authorized profiles with action capabilities %#v", profiles, wantProfiles)
@@ -271,7 +272,7 @@ func TestNativeHTTPPolicyFailureReturnsNotReady(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503: %s", response.Code, response.Body.String())
 	}
-	body := decodeJSONBody[errorResponse](t, response)
+	body := decodeJSONBody[apimodels.ErrorResponse](t, response)
 	if body.Error.Code != "not_ready" || strings.Contains(response.Body.String(), policyPath) {
 		t.Fatalf("body = %#v", body)
 	}
