@@ -194,11 +194,37 @@ jobs:
             --wait \
             --timeout 180s
           kubectl rollout status deployment/"$RELEASE_NAME" --namespace "$NAMESPACE" --timeout=120s
-          new_revision="$(kubectl get deployment "$RELEASE_NAME" --namespace "$NAMESPACE" -o jsonpath='{.metadata.generation}')"
-          test "$new_revision" -gt "$old_revision"
-          pod_ips="$(kubectl get pods --namespace "$NAMESPACE" -l app.kubernetes.io/name=vaultsmith,app.kubernetes.io/instance="$RELEASE_NAME" -o json | jq -r '.items[] | select(.status.phase == "Running") | .status.podIP')"
+          deployment_json="$(kubectl get deployment "$RELEASE_NAME" --namespace "$NAMESPACE" -o json)"
+          new_revision="$(jq -r '.metadata.generation' <<< "$deployment_json")"
+          if ! test "$new_revision" -gt "$old_revision"; then
+            echo "MCP rollout generation did not advance: before=$old_revision after=$new_revision" >&2
+            exit 1
+          fi
+          if ! jq -e '
+            .status.observedGeneration == .metadata.generation and
+            .status.updatedReplicas == .spec.replicas and
+            .status.readyReplicas == .spec.replicas and
+            .status.availableReplicas == .spec.replicas and
+            ((.status.unavailableReplicas // 0) == 0)
+          ' <<< "$deployment_json" >/dev/null; then
+            echo "MCP rollout did not converge to the desired Deployment state" >&2
+            jq '{generation: .metadata.generation, observed: .status.observedGeneration, desired: .spec.replicas, updated: .status.updatedReplicas, ready: .status.readyReplicas, available: .status.availableReplicas, unavailable: (.status.unavailableReplicas // 0)}' <<< "$deployment_json" >&2
+            exit 1
+          fi
+          pod_json="$(kubectl get pods --namespace "$NAMESPACE" -l app.kubernetes.io/name=vaultsmith,app.kubernetes.io/instance="$RELEASE_NAME" -o json)"
+          pod_ips="$(jq -r '
+            .items[] |
+            select(.metadata.deletionTimestamp == null) |
+            select(.status.phase == "Running") |
+            select(any(.status.conditions[]?; .type == "Ready" and .status == "True")) |
+            .status.podIP
+          ' <<< "$pod_json")"
           pod_count="$(printf '%s\n' "$pod_ips" | sed '/^$/d' | wc -l | tr -d ' ')"
-          test "$pod_count" -eq 2
+          if ! test "$pod_count" -eq 2; then
+            echo "MCP rollout active Ready pod count mismatch: configured=2 observed=$pod_count" >&2
+            jq '[.items[] | {name: .metadata.name, deleting: (.metadata.deletionTimestamp != null), phase: .status.phase, ready: any(.status.conditions[]?; .type == "Ready" and .status == "True"), podIP: .status.podIP}]' <<< "$pod_json" >&2
+            exit 1
+          fi
           kubectl run mcp-probe \
             --namespace "$NAMESPACE" \
             --image=curlimages/curl:8.12.1 \
