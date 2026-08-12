@@ -107,7 +107,7 @@ func signedAccessToken(t *testing.T, key *rsa.PrivateKey, kid, typ, issuer, audi
 	}
 	extra := map[string]any{
 		"client_id": "vaultsmith-ci",
-		"scope":     "vaultsmith.profile.read vaultsmith.encrypt vaultsmith.encrypt",
+		"scope":     "vaultsmith.profile.read vaultsmith.encrypt",
 		"groups":    []string{"operators"},
 	}
 	for key, value := range patch {
@@ -131,7 +131,7 @@ func TestOIDCDiscoveryURLPreservesIssuerPath(t *testing.T) {
 	}
 }
 
-func TestAccessTokenVerifierAcceptsRFC9068JWTAndDeduplicatesScopes(t *testing.T) {
+func TestAccessTokenVerifierAcceptsRFC9068JWT(t *testing.T) {
 	privateKey, publicKey := makeRSAJWK(t, "kid-1")
 	issuer := newAccessTokenIssuer(t, publicKey, "public, max-age=300")
 	verifier, err := NewAccessTokenVerifier(context.Background(), issuer.server.URL, issuer.server.URL, "groups", issuer.server.Client())
@@ -155,6 +155,18 @@ func TestAccessTokenVerifierAcceptsRFC9068JWTAndDeduplicatesScopes(t *testing.T)
 	}
 }
 
+func TestAccessTokenVerifierRejectsDuplicateScopes(t *testing.T) {
+	privateKey, publicKey := makeRSAJWK(t, "kid-1")
+	issuer := newAccessTokenIssuer(t, publicKey, "public, max-age=300")
+	verifier, err := NewAccessTokenVerifier(context.Background(), issuer.server.URL, issuer.server.URL, "groups", issuer.server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := signedAccessToken(t, privateKey, "kid-1", "at+jwt", issuer.server.URL, issuer.server.URL, map[string]any{"scope": "vaultsmith.encrypt vaultsmith.encrypt"})
+	if _, err := verifier.Verify(context.Background(), token); !errors.Is(err, ErrInvalidAccessToken) {
+		t.Fatalf("Verify() error = %v, want ErrInvalidAccessToken", err)
+	}
+}
 func TestAccessTokenVerifierDiscoveryAllowsOptionalAndExtensionMembers(t *testing.T) {
 	_, publicKey := makeRSAJWK(t, "kid-1")
 	issuer := newAccessTokenIssuer(t, publicKey, "public, max-age=300")
@@ -300,6 +312,33 @@ func TestAccessTokenVerifierUnknownKIDRefreshUsesSingleflight(t *testing.T) {
 	}
 }
 
+func TestAccessTokenVerifierUnknownKIDThrottleAppliesDuringRevalidation(t *testing.T) {
+	privateKey, publicKey := makeRSAJWK(t, "kid-known")
+	randomKey, _ := makeRSAJWK(t, "kid-random")
+	issuer := newAccessTokenIssuer(t, publicKey, "public, max-age=0")
+	verifier, err := NewAccessTokenVerifier(context.Background(), issuer.server.URL, issuer.server.URL, "groups", issuer.server.Client())
+	if err != nil {
+		t.Fatalf("NewAccessTokenVerifier() error = %v", err)
+	}
+	known := signedAccessToken(t, privateKey, "kid-known", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+	if _, err := verifier.Verify(context.Background(), known); err != nil {
+		t.Fatalf("Verify(known key) error = %v", err)
+	}
+
+	random1 := signedAccessToken(t, randomKey, "kid-random-1", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+	random2 := signedAccessToken(t, randomKey, "kid-random-2", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+	before := issuer.jwksCalls.Load()
+	if _, err := verifier.Verify(context.Background(), random1); !errors.Is(err, ErrInvalidAccessToken) {
+		t.Fatalf("Verify(random kid 1) error = %v, want ErrInvalidAccessToken", err)
+	}
+	if _, err := verifier.Verify(context.Background(), random2); !errors.Is(err, ErrInvalidAccessToken) {
+		t.Fatalf("Verify(random kid 2) error = %v, want ErrInvalidAccessToken", err)
+	}
+	if got := issuer.jwksCalls.Load() - before; got != 1 {
+		t.Fatalf("JWKS calls for sequential random kids = %d, want 1 during revalidation", got)
+	}
+}
+
 func TestAccessTokenVerifierNoStoreInvalidatesRetainedKeys(t *testing.T) {
 	privateKey, publicKey := makeRSAJWK(t, "kid-1")
 	issuer := newAccessTokenIssuer(t, publicKey, "no-store")
@@ -428,7 +467,7 @@ func TestJWKSCacheIgnoresAgeCacheControlDirective(t *testing.T) {
 		"Cache-Control": []string{"public, max-age=60, age=59"},
 	}, now)
 
-	if directives.freshness != time.Minute {
-		t.Fatalf("freshness = %s, want 1m when Age is only a Cache-Control extension", directives.freshness)
+	if directives.freshness != jwksMinFreshness {
+		t.Fatalf("freshness = %s, want %s for positive freshness below the five-minute floor", directives.freshness, jwksMinFreshness)
 	}
 }

@@ -142,7 +142,7 @@ func (h *Handler) serveProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.preflightProfiles(r.Context(), actor); err != nil {
 		if actor.Kind() == caller.KindBearer && vaultservice.HasCode(err, vaultservice.CodeForbidden) {
-			writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", vaultservice.ScopeProfileRead)
+			writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", vaultservice.ScopeProfileRead, protectedResourceMetadataURL(h.authConfig))
 		} else {
 			writeServiceError(w, err)
 		}
@@ -234,7 +234,7 @@ func (h *Handler) serveCanonicalOperation(w http.ResponseWriter, r *http.Request
 	if err := h.preflightOperation(r.Context(), actor, operation); err != nil {
 		if actor.Kind() == caller.KindBearer && vaultservice.HasCode(err, vaultservice.CodeForbidden) {
 			scope, _ := requiredBearerScope(operation)
-			writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope)
+			writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope, protectedResourceMetadataURL(h.authConfig))
 		} else {
 			writeServiceError(w, err)
 		}

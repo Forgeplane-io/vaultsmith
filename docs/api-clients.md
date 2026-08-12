@@ -125,7 +125,7 @@ Vaultsmith implements a stateless JSON response profile on `POST /mcp`:
 - protocol version `2026-07-28` only;
 - `Accept` must allow both `application/json` and `text/event-stream`;
 - `MCP-Protocol-Version` and `Mcp-Method` are required singleton headers;
-- `Mcp-Name` is also required for `tools/call`;
+- `Mcp-Name` is also required for `tools/call`, `resources/read`, and `prompts/get`;
 - every request `params._meta` includes the matching protocol version and client capabilities;
 - response cache metadata is private with zero TTL;
 - there is no server-sent event stream and no resumable session.

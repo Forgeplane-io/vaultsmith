@@ -23,6 +23,7 @@ import (
 const (
 	accessTokenHTTPTimeout = 5 * time.Second
 	jwksDefaultFreshness   = time.Hour
+	jwksMinFreshness       = 5 * time.Minute
 	jwksMaxFreshness       = 6 * time.Hour
 	jwksMaxStaleUse        = time.Hour
 	accessTokenSkew        = time.Minute
@@ -220,7 +221,7 @@ func parseAccessTokenScopes(claims map[string]any) ([]string, error) {
 			return nil, ErrInvalidAccessToken
 		}
 		if _, duplicate := seen[scope]; duplicate {
-			continue
+			return nil, ErrInvalidAccessToken
 		}
 		seen[scope] = struct{}{}
 		scopes = append(scopes, scope)
@@ -369,6 +370,8 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 				c.mu.Unlock()
 				return jwksRefreshResult{keys: keys, retained: true, owner: owner}, nil
 			}
+		}
+		if c.haveKeys && !c.containsKIDLocked(kid) {
 			if !c.lastUnknownKIDRefresh.IsZero() && refreshNow.Sub(c.lastUnknownKIDRefresh) < time.Minute {
 				c.mu.Unlock()
 				return jwksRefreshResult{}, ErrInvalidAccessToken
@@ -601,6 +604,9 @@ func parseCacheDirectives(header http.Header, now time.Time) cacheDirectives {
 	}
 	if directives.freshness > jwksMaxFreshness {
 		directives.freshness = jwksMaxFreshness
+	}
+	if directives.freshness > 0 && directives.freshness < jwksMinFreshness {
+		directives.freshness = jwksMinFreshness
 	}
 	if value, ok := values["stale-if-error"]; ok {
 		if lifetime, parsed := secondsDuration(value); parsed {

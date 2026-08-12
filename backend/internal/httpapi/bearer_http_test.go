@@ -167,6 +167,9 @@ func TestNativeBearerMissingAndInsufficientScopeChallengeBeforeBodyRead(t *testi
 			if !strings.Contains(response.Header().Get("WWW-Authenticate"), test.wantChallenge) {
 				t.Fatalf("WWW-Authenticate = %q, want contain %q", response.Header().Get("WWW-Authenticate"), test.wantChallenge)
 			}
+			if !strings.Contains(response.Header().Get("WWW-Authenticate"), `resource_metadata="https://vaultsmith.example.test/.well-known/oauth-protected-resource"`) {
+				t.Fatalf("WWW-Authenticate = %q, want canonical resource metadata URL", response.Header().Get("WWW-Authenticate"))
+			}
 			if body.read {
 				t.Fatal("body was read before bearer challenge")
 			}
