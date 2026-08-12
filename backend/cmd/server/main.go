@@ -16,11 +16,20 @@ import (
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authz"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/httpapi"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/version"
 	"github.com/forgeplane-io/vaultsmith/backend/web"
 )
 
 const defaultAddress = ":8080"
+
+type executorResolver struct {
+	configured config.Executor
+}
+
+func (r executorResolver) ForProfile(profileID string) (vaultservice.ProfileExecutor, error) {
+	return r.configured.ForProfile(profileID)
+}
 
 func main() {
 	showVersion := flag.Bool("version", false, "print the Vaultsmith version and exit")
@@ -87,10 +96,13 @@ func run() error {
 	if address == "" {
 		address = defaultAddress
 	}
-	api := httpapi.NewWithDependencies(publicProfiles, loaded.Executor(), httpapi.Dependencies{
+	admission := vaultservice.NewRuntimeAdmission()
+	log.Printf("vault operation admission capacity=%d basis=min(GOMAXPROCS,%d); saturation returns HTTP 503", admission.Capacity(), vaultservice.MaxRuntimeAdmissionCapacity)
+	api := httpapi.NewWithDependencies(publicProfiles, executorResolver{configured: loaded.Executor()}, httpapi.Dependencies{
 		Auth:       authenticator,
 		Authorizer: authorizer,
 		AuthConfig: authConfig,
+		Admission:  admission,
 	})
 	serverHandler := httpapi.WrapSecurity(authenticator.SessionMiddleware(api), authConfig)
 	server := &http.Server{

@@ -8,28 +8,26 @@ import (
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authz"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/caller"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
 )
 
 type Dependencies struct {
 	Auth       *authn.Authenticator
 	Authorizer *authz.Authorizer
 	AuthConfig config.AuthConfig
+	Admission  *vaultservice.Admission
 }
 
 func NewWithDependencies(profiles []Profile, executor Executor, dependencies Dependencies) http.Handler {
-	public := append([]Profile(nil), profiles...)
-	profileSet := make(map[string]struct{}, len(public))
-	for _, profile := range public {
-		profileSet[profile.ID] = struct{}{}
+	serviceProfiles := make([]vaultservice.Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		serviceProfiles = append(serviceProfiles, vaultservice.Profile{ID: profile.ID, Label: profile.Label})
 	}
 	return &Handler{
-		profiles:   profileSet,
-		public:     public,
-		executor:   executor,
-		ready:      len(public) > 0 && executor != nil,
+		service:    vaultservice.New(serviceProfiles, executor, dependencies.Authorizer, dependencies.Admission),
 		auth:       dependencies.Auth,
-		authorizer: dependencies.Authorizer,
 		authConfig: dependencies.AuthConfig,
 	}
 }
@@ -38,11 +36,32 @@ func WrapSecurity(next http.Handler, cfg config.AuthConfig) http.Handler {
 	if cfg.Mode == config.AuthModeNative {
 		next = csrfMiddleware(next, cfg)
 	}
+	next = credentialDispatchMiddleware(next, cfg)
 	next = corsMiddleware(next, cfg)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setSecurityHeaders(w)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func credentialDispatchMiddleware(next http.Handler, cfg config.AuthConfig) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isSessionOnlyAPIMethod(r) && rejectUnsupportedAuthorization(w, r, cfg) {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isSessionOnlyAPIMethod(r *http.Request) bool {
+	switch r.URL.Path {
+	case "/api/v1/profiles":
+		return r.Method == http.MethodGet
+	case "/api/v1/operations":
+		return r.Method == http.MethodPost
+	default:
+		return false
+	}
 }
 
 const nativeCSRFCookieName = "__Host-vaultsmith_csrf"
@@ -113,25 +132,32 @@ func requestOrigin(r *http.Request) string {
 	return proto + "://" + r.Host
 }
 
-func (h *Handler) requirePrincipal(r *http.Request) (authn.Principal, bool, int, string) {
-	if h.auth == nil || h.authorizer == nil {
-		return authn.Principal{}, false, http.StatusServiceUnavailable, "not_ready"
+func (h *Handler) requestCaller(r *http.Request) (caller.Caller, bool, int, string) {
+	if h.authConfig.Mode != config.AuthModeNative {
+		return caller.Anonymous(), true, 0, ""
+	}
+	if h.auth == nil {
+		return caller.Caller{}, false, http.StatusServiceUnavailable, "not_ready"
 	}
 	principal, found, err := h.auth.AuthenticatedPrincipal(r.Context())
 	if err != nil {
 		switch {
 		case errors.Is(err, authn.ErrNotAuthenticated), errors.Is(err, authn.ErrRefreshRequired):
-			return authn.Principal{}, false, http.StatusUnauthorized, "unauthorized"
+			return caller.Caller{}, false, http.StatusUnauthorized, "unauthorized"
 		case errors.Is(err, authn.ErrTemporaryUnavailable):
-			return authn.Principal{}, false, http.StatusServiceUnavailable, "temporarily_unavailable"
+			return caller.Caller{}, false, http.StatusServiceUnavailable, "temporarily_unavailable"
 		default:
-			return authn.Principal{}, false, http.StatusUnauthorized, "unauthorized"
+			return caller.Caller{}, false, http.StatusUnauthorized, "unauthorized"
 		}
 	}
 	if !found {
-		return authn.Principal{}, false, http.StatusUnauthorized, "unauthorized"
+		return caller.Caller{}, false, http.StatusUnauthorized, "unauthorized"
 	}
-	return principal, true, 0, ""
+	actor, err := caller.NewSession(principal.Issuer, principal.Subject, principal.Groups)
+	if err != nil {
+		return caller.Caller{}, false, http.StatusServiceUnavailable, "not_ready"
+	}
+	return actor, true, 0, ""
 }
 
 func writeAuthError(w http.ResponseWriter, status int, code string) {

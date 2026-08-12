@@ -16,20 +16,29 @@ import (
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authz"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
 )
 
 type recordingExecutor struct {
 	called bool
 }
 
-func (e *recordingExecutor) Execute(string, string, string) (string, error) {
-	e.called = true
+type recordingProfileExecutor struct {
+	owner *recordingExecutor
+}
+
+func (e *recordingExecutor) ForProfile(string) (vaultservice.ProfileExecutor, error) {
+	return &recordingProfileExecutor{owner: e}, nil
+}
+
+func (e *recordingProfileExecutor) Encrypt(context.Context, string) (string, error) {
+	e.owner.called = true
 	return "ok", nil
 }
 
-func (e *recordingExecutor) Rotate(string, string, string) (string, error) {
-	e.called = true
-	return "rotated", nil
+func (e *recordingProfileExecutor) Decrypt(context.Context, string) (string, error) {
+	e.owner.called = true
+	return "plaintext", nil
 }
 
 func writeNativePolicy(t *testing.T) string {

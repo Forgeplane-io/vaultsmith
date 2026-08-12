@@ -12,7 +12,7 @@ import (
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
 	"github.com/casbin/casbin/v2/persist/file-adapter"
-	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/caller"
 )
 
 func policyFile(t *testing.T, content string) string {
@@ -24,8 +24,12 @@ func policyFile(t *testing.T, content string) string {
 	return path
 }
 
-func principalWithGroups(groups ...string) authn.Principal {
-	return authn.Principal{Issuer: "https://issuer", Subject: "subject", Groups: groups}
+func principalWithGroups(groups ...string) caller.Caller {
+	actor, err := caller.NewSession("https://issuer", "subject", groups)
+	if err != nil {
+		panic(err)
+	}
+	return actor
 }
 
 func loadAuthorizer(t *testing.T, path string, profileIDs []string) *Authorizer {
@@ -41,7 +45,7 @@ func loadAuthorizer(t *testing.T, path string, profileIDs []string) *Authorizer 
 	return authorizer
 }
 
-func capabilitiesForProfiles(t *testing.T, authorizer *Authorizer, principal authn.Principal, profileIDs []string) map[string]ProfileCapabilities {
+func capabilitiesForProfiles(t *testing.T, authorizer *Authorizer, principal caller.Caller, profileIDs []string) map[string]ProfileCapabilities {
 	t.Helper()
 	capabilities, err := authorizer.CapabilitiesForProfiles(principal, profileIDs)
 	if err != nil {

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -26,23 +27,23 @@ func TestLoadJSONPreservesPublicOrdering(t *testing.T) {
 		t.Fatalf("PublicProfiles() = %#v, want %#v", got, want)
 	}
 
-	encoded, err := loaded.Executor().Execute("first", "encrypt", "fixture-value")
+	encoded, err := executorForProfile(t, loaded.Executor(), "first").Encrypt(context.Background(), "fixture-value")
 	if err != nil {
-		t.Fatalf("Executor().Execute(encrypt) error = %v", err)
+		t.Fatalf("Executor().Encrypt() error = %v", err)
 	}
 	if !strings.HasPrefix(encoded, ansiblevault.Header12Prefix+";first\n") {
 		t.Fatalf("encoded header = %q, want Vault 1.2 label", strings.SplitN(encoded, "\n", 2)[0])
 	}
-	decoded, err := loaded.Executor().Execute("first", "decrypt", encoded)
+	decoded, err := executorForProfile(t, loaded.Executor(), "first").Decrypt(context.Background(), encoded)
 	if err != nil {
-		t.Fatalf("Executor().Execute(decrypt) error = %v", err)
+		t.Fatalf("Executor().Decrypt() error = %v", err)
 	}
 	if decoded != "fixture-value" {
 		t.Fatalf("decoded value = %q, want %q", decoded, "fixture-value")
 	}
 }
 
-func TestExecutorRotateUsesDestinationProfile(t *testing.T) {
+func TestExecutorUsesSelectedProfileAndHonorsCancellation(t *testing.T) {
 	loaded, err := LoadJSON(`[
 		{"id":"source","label":"Source","passwordEnv":"VAULT_PASSWORD_SOURCE"},
 		{"id":"destination","label":"Destination","passwordEnv":"VAULT_PASSWORD_DESTINATION"}
@@ -53,35 +54,32 @@ func TestExecutorRotateUsesDestinationProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadJSON() error = %v", err)
 	}
-	input, err := loaded.Executor().Execute("source", "encrypt", "fixture-value")
+	input, err := executorForProfile(t, loaded.Executor(), "source").Encrypt(context.Background(), "fixture-value")
 	if err != nil {
 		t.Fatalf("encrypt source value: %v", err)
 	}
-	rotated, err := loaded.Executor().Rotate("source", "destination", input)
+	plaintext, err := executorForProfile(t, loaded.Executor(), "source").Decrypt(context.Background(), input)
 	if err != nil {
-		t.Fatalf("rotate value: %v", err)
+		t.Fatalf("decrypt source value: %v", err)
+	}
+	rotated, err := executorForProfile(t, loaded.Executor(), "destination").Encrypt(context.Background(), plaintext)
+	if err != nil {
+		t.Fatalf("encrypt destination value: %v", err)
 	}
 	if !strings.HasPrefix(rotated, ansiblevault.Header12Prefix+";destination\n") {
-		t.Fatalf("rotated header = %q, want destination label", strings.SplitN(rotated, "\n", 2)[0])
+		t.Fatalf("destination header = %q, want destination label", strings.SplitN(rotated, "\n", 2)[0])
 	}
-	decoded, err := loaded.Executor().Execute("destination", "decrypt", rotated)
+	decoded, err := executorForProfile(t, loaded.Executor(), "destination").Decrypt(context.Background(), rotated)
 	if err != nil {
 		t.Fatalf("decrypt rotated value: %v", err)
 	}
 	if decoded != "fixture-value" {
 		t.Fatalf("rotated plaintext = %q, want fixture-value", decoded)
 	}
-	for _, profileID := range []string{"missing", "destination"} {
-		sourceID := profileID
-		if profileID == "destination" {
-			sourceID = "source"
-		}
-		if _, err := loaded.Executor().Rotate(sourceID, "missing", input); !errors.Is(err, ErrProfileNotFound) {
-			t.Fatalf("Rotate(%q, missing) error = %v, want ErrProfileNotFound", sourceID, err)
-		}
-	}
-	if _, err := loaded.Executor().Rotate("missing", "destination", input); !errors.Is(err, ErrProfileNotFound) {
-		t.Fatalf("Rotate(missing, destination) error = %v, want ErrProfileNotFound", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if output, err := executorForProfile(t, loaded.Executor(), "source").Encrypt(ctx, "value"); !errors.Is(err, context.Canceled) || output != "" {
+		t.Fatalf("Encrypt(canceled) = %q, %v, want empty/context.Canceled", output, err)
 	}
 }
 
@@ -127,12 +125,18 @@ func TestExecutorErrorsAreClassifiable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadJSON() error = %v", err)
 	}
-	if _, err := loaded.Executor().Execute("missing", "encrypt", "value"); !errors.Is(err, ErrProfileNotFound) {
-		t.Fatalf("unknown profile error = %v, want ErrProfileNotFound", err)
+	if _, err := loaded.Executor().ForProfile("missing"); !errors.Is(err, ErrProfileNotFound) {
+		t.Fatalf("ForProfile(unknown profile) error = %v, want ErrProfileNotFound", err)
 	}
-	if _, err := loaded.Executor().Execute("dev", "rotate", "value"); !errors.Is(err, ErrUnsupportedMode) {
-		t.Fatalf("unknown mode error = %v, want ErrUnsupportedMode", err)
+}
+
+func executorForProfile(t *testing.T, executor Executor, profileID string) ProfileExecutor {
+	t.Helper()
+	bound, err := executor.ForProfile(profileID)
+	if err != nil {
+		t.Fatalf("ForProfile(%q) error = %v", profileID, err)
 	}
+	return bound
 }
 
 func mapLookup(values map[string]string) func(string) (string, bool) {
