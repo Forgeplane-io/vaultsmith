@@ -184,13 +184,27 @@ jobs:
           test -x "$syft_cmd"
           echo "$(dirname "$syft_cmd")" >> "$GITHUB_PATH"
 
-      - name: Run GoReleaser
+      - name: Install GoReleaser
         if: needs.validate.outputs.release_draft == 'true'
+        id: goreleaser_primary
+        continue-on-error: true
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: v2.14.2
-          args: release --clean
+          install-only: true
+
+      - name: Retry GoReleaser installation
+        if: needs.validate.outputs.release_draft == 'true' && steps.goreleaser_primary.outcome == 'failure'
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.14.2
+          install-only: true
+
+      - name: Run GoReleaser
+        if: needs.validate.outputs.release_draft == 'true'
+        run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
