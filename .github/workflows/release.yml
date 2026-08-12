@@ -160,14 +160,29 @@ jobs:
 
       - name: Install Syft
         if: needs.validate.outputs.release_draft == 'true'
-        id: syft
+        id: syft_primary
+        continue-on-error: true
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          syft-version: v1.50.0
+
+      - name: Retry Syft installation
+        if: needs.validate.outputs.release_draft == 'true' && steps.syft_primary.outcome == 'failure'
+        id: syft_retry
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           syft-version: v1.50.0
 
       - name: Add Syft to PATH
         if: needs.validate.outputs.release_draft == 'true'
-        run: echo "$(dirname '${{ steps.syft.outputs.cmd }}')" >> "$GITHUB_PATH"
+        env:
+          PRIMARY_SYFT: ${{ steps.syft_primary.outputs.cmd }}
+          RETRY_SYFT: ${{ steps.syft_retry.outputs.cmd }}
+        run: |
+          set -euo pipefail
+          syft_cmd="${RETRY_SYFT:-${PRIMARY_SYFT:-}}"
+          test -x "$syft_cmd"
+          echo "$(dirname "$syft_cmd")" >> "$GITHUB_PATH"
 
       - name: Run GoReleaser
         if: needs.validate.outputs.release_draft == 'true'
