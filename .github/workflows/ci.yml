@@ -352,12 +352,23 @@ jobs:
           syft_cmd="${RETRY_SYFT:-${PRIMARY_SYFT:-}}"
           test -x "$syft_cmd"
           echo "$(dirname "$syft_cmd")" >> "$GITHUB_PATH"
-      - name: Build a non-publishing snapshot
+      - name: Install GoReleaser
+        id: goreleaser_primary
+        continue-on-error: true
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: v2.14.2
-          args: release --snapshot --clean
+          install-only: true
+      - name: Retry GoReleaser installation
+        if: steps.goreleaser_primary.outcome == 'failure'
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.14.2
+          install-only: true
+      - name: Build a non-publishing snapshot
+        run: goreleaser release --snapshot --clean
       - name: Verify static API reference in every release archive
         run: |
           set -euo pipefail
