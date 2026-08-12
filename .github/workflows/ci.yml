@@ -40,7 +40,7 @@ jobs:
       - name: Build frontend
         run: npm run build
       - name: Verify tracked embedded frontend entrypoint
-        working-directory: ..
+        working-directory: .
         run: git diff --exit-code -- backend/web/dist/index.html
 
   backend:
@@ -332,12 +332,26 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install Syft
-        id: syft
+        id: syft_primary
+        continue-on-error: true
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          syft-version: v1.50.0
+      - name: Retry Syft installation
+        if: steps.syft_primary.outcome == 'failure'
+        id: syft_retry
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           syft-version: v1.50.0
       - name: Add Syft to PATH
-        run: echo "$(dirname '${{ steps.syft.outputs.cmd }}')" >> "$GITHUB_PATH"
+        env:
+          PRIMARY_SYFT: ${{ steps.syft_primary.outputs.cmd }}
+          RETRY_SYFT: ${{ steps.syft_retry.outputs.cmd }}
+        run: |
+          set -euo pipefail
+          syft_cmd="${RETRY_SYFT:-${PRIMARY_SYFT:-}}"
+          test -x "$syft_cmd"
+          echo "$(dirname "$syft_cmd")" >> "$GITHUB_PATH"
       - name: Build a non-publishing snapshot
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
