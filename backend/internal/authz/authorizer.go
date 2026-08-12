@@ -12,7 +12,7 @@ import (
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
 	"github.com/casbin/casbin/v2/persist/file-adapter"
-	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/caller"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 )
 
@@ -30,6 +30,11 @@ const (
 type ProfileCapabilities struct {
 	Encrypt bool
 	Decrypt bool
+}
+
+type Check struct {
+	Action   string
+	Resource string
 }
 
 var (
@@ -171,19 +176,44 @@ func (a *Authorizer) currentPolicy() (*Policy, error) {
 	return reloaded, nil
 }
 
-func (a *Authorizer) Authorize(principal authn.Principal, action, resource string) error {
-	policy, err := a.currentPolicy()
+func (a *Authorizer) Authorize(actor caller.Caller, action, resource string) error {
+	allowed, err := a.Evaluate(actor, []Check{{Action: action, Resource: resource}})
 	if err != nil {
 		return err
 	}
-	return authorizeWithPolicy(policy, principal, action, resource)
+	if len(allowed) != 1 || !allowed[0] {
+		return ErrForbidden
+	}
+	return nil
 }
 
-func authorizeWithPolicy(policy *Policy, principal authn.Principal, action, resource string) error {
+// Evaluate resolves the current policy once and applies every check against
+// that snapshot. Denials are false values; policy failures remain errors.
+func (a *Authorizer) Evaluate(actor caller.Caller, checks []Check) ([]bool, error) {
+	policy, err := a.currentPolicy()
+	if err != nil {
+		return nil, err
+	}
+	allowed := make([]bool, len(checks))
+	for index, check := range checks {
+		err := authorizeWithPolicy(policy, actor, check.Action, check.Resource)
+		switch {
+		case err == nil:
+			allowed[index] = true
+		case errors.Is(err, ErrForbidden):
+			allowed[index] = false
+		default:
+			return nil, err
+		}
+	}
+	return allowed, nil
+}
+
+func authorizeWithPolicy(policy *Policy, actor caller.Caller, action, resource string) error {
 	if policy == nil || policy.enforcer == nil {
 		return ErrPolicy
 	}
-	roles := policy.rolesForGroups(principal.Groups)
+	roles := policy.rolesForGroups(actor.Groups())
 	if len(roles) == 0 {
 		return ErrForbidden
 	}
@@ -197,12 +227,12 @@ func authorizeWithPolicy(policy *Policy, principal authn.Principal, action, reso
 	return nil
 }
 
-func (a *Authorizer) CapabilitiesForProfiles(principal authn.Principal, profileIDs []string) (map[string]ProfileCapabilities, error) {
+func (a *Authorizer) CapabilitiesForProfiles(actor caller.Caller, profileIDs []string) (map[string]ProfileCapabilities, error) {
 	policy, err := a.currentPolicy()
 	if err != nil {
 		return nil, err
 	}
-	if err := authorizeWithPolicy(policy, principal, ActionListProfiles, ResourceProfiles); err != nil {
+	if err := authorizeWithPolicy(policy, actor, ActionListProfiles, ResourceProfiles); err != nil {
 		if errors.Is(err, ErrForbidden) {
 			return map[string]ProfileCapabilities{}, nil
 		}
@@ -211,11 +241,11 @@ func (a *Authorizer) CapabilitiesForProfiles(principal authn.Principal, profileI
 	capabilities := make(map[string]ProfileCapabilities, len(profileIDs))
 	for _, profileID := range profileIDs {
 		resource := ProfileResource(profileID)
-		encryptErr := authorizeWithPolicy(policy, principal, ActionEncrypt, resource)
+		encryptErr := authorizeWithPolicy(policy, actor, ActionEncrypt, resource)
 		if encryptErr != nil && !errors.Is(encryptErr, ErrForbidden) {
 			return nil, encryptErr
 		}
-		decryptErr := authorizeWithPolicy(policy, principal, ActionDecrypt, resource)
+		decryptErr := authorizeWithPolicy(policy, actor, ActionDecrypt, resource)
 		if decryptErr != nil && !errors.Is(decryptErr, ErrForbidden) {
 			return nil, decryptErr
 		}
@@ -227,15 +257,15 @@ func (a *Authorizer) CapabilitiesForProfiles(principal authn.Principal, profileI
 	return capabilities, nil
 }
 
-func (a *Authorizer) AuthorizeRotate(principal authn.Principal, sourceProfileID, destinationProfileID string) error {
+func (a *Authorizer) AuthorizeRotate(actor caller.Caller, sourceProfileID, destinationProfileID string) error {
 	policy, err := a.currentPolicy()
 	if err != nil {
 		return err
 	}
-	if err := authorizeWithPolicy(policy, principal, ActionDecrypt, ProfileResource(sourceProfileID)); err != nil {
+	if err := authorizeWithPolicy(policy, actor, ActionDecrypt, ProfileResource(sourceProfileID)); err != nil {
 		return err
 	}
-	return authorizeWithPolicy(policy, principal, ActionEncrypt, ProfileResource(destinationProfileID))
+	return authorizeWithPolicy(policy, actor, ActionEncrypt, ProfileResource(destinationProfileID))
 }
 
 func ProfileResource(profileID string) string {

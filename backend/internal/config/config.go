@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +17,6 @@ const profilesEnv = "VAULT_PROFILES_JSON"
 
 var (
 	ErrProfileNotFound = errors.New("profile not found")
-	ErrUnsupportedMode = errors.New("unsupported operation mode")
 	profileIDPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 	passwordEnvPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 	reservedEnvNames   = map[string]struct{}{
@@ -47,13 +47,21 @@ type Config struct {
 	auth     AuthConfig
 }
 
+type ProfileExecutor interface {
+	Encrypt(context.Context, string) (string, error)
+	Decrypt(context.Context, string) (string, error)
+}
+
 type Executor interface {
-	Execute(profileID, mode, value string) (string, error)
-	Rotate(sourceProfileID, destinationProfileID, value string) (string, error)
+	ForProfile(string) (ProfileExecutor, error)
 }
 
 type executor struct {
-	profiles map[string]profile
+	profiles map[string]*profileExecutor
+}
+
+type profileExecutor struct {
+	profile profile
 }
 
 // LoadFromEnv loads the non-secret profile metadata from VAULT_PROFILES_JSON
@@ -136,9 +144,9 @@ func LoadJSON(profilesJSON string, lookup func(string) (string, bool)) (*Config,
 		})
 	}
 
-	byID := make(map[string]profile, len(profiles))
+	byID := make(map[string]*profileExecutor, len(profiles))
 	for _, current := range profiles {
-		byID[current.public.ID] = current
+		byID[current.public.ID] = &profileExecutor{profile: current}
 	}
 	return &Config{profiles: profiles, executor: &executor{profiles: byID}}, nil
 }
@@ -162,33 +170,39 @@ func (c *Config) Auth() AuthConfig {
 func (c *Config) Executor() Executor {
 	return c.executor
 }
-func (e *executor) Execute(profileID, mode, value string) (string, error) {
+
+func (e *executor) ForProfile(profileID string) (ProfileExecutor, error) {
 	current, ok := e.profiles[profileID]
 	if !ok {
-		return "", ErrProfileNotFound
+		return nil, ErrProfileNotFound
 	}
-	switch mode {
-	case "encrypt":
-		return ansiblevault.Encrypt([]byte(value), current.password, current.public.ID)
-	case "decrypt":
-		plaintext, err := ansiblevault.Decrypt(value, current.password)
-		if err != nil {
-			return "", err
-		}
-		return string(plaintext), nil
-	default:
-		return "", ErrUnsupportedMode
-	}
+	return current, nil
 }
 
-func (e *executor) Rotate(sourceProfileID, destinationProfileID, value string) (string, error) {
-	source, ok := e.profiles[sourceProfileID]
-	if !ok {
-		return "", ErrProfileNotFound
+func (e *profileExecutor) Encrypt(ctx context.Context, value string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
-	destination, ok := e.profiles[destinationProfileID]
-	if !ok {
-		return "", ErrProfileNotFound
+	output, err := ansiblevault.Encrypt([]byte(value), e.profile.password, e.profile.public.ID)
+	if err != nil {
+		return "", err
 	}
-	return ansiblevault.Reencrypt(value, source.password, destination.password, destination.public.ID)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return output, nil
+}
+
+func (e *profileExecutor) Decrypt(ctx context.Context, value string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	plaintext, err := ansiblevault.Decrypt(value, e.profile.password)
+	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return string(plaintext), nil
 }

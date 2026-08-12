@@ -1,26 +1,39 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
 )
 
 type fakeExecutor struct {
-	value string
-	err   error
-	calls []operationCall
+	value          string
+	decryptedValue string
+	err            error
+	calls          []operationCall
 }
 
 type operationCall struct {
-	profileID            string
-	sourceProfileID      string
-	destinationProfileID string
-	mode                 string
-	value                string
+	profileID string
+	mode      string
+	value     string
+}
+
+type trackingReader struct {
+	read bool
+}
+
+func (r *trackingReader) Read([]byte) (int, error) {
+	r.read = true
+	return 0, io.EOF
 }
 
 func newHandler(profiles []Profile, executor Executor) http.Handler {
@@ -36,14 +49,26 @@ func decodeJSONBody[T any](t *testing.T, response *httptest.ResponseRecorder) T 
 	return body
 }
 
-func (f *fakeExecutor) Execute(profileID, mode, value string) (string, error) {
-	f.calls = append(f.calls, operationCall{profileID: profileID, mode: mode, value: value})
-	return f.value, f.err
+type fakeProfileExecutor struct {
+	owner     *fakeExecutor
+	profileID string
 }
 
-func (f *fakeExecutor) Rotate(sourceProfileID, destinationProfileID, value string) (string, error) {
-	f.calls = append(f.calls, operationCall{sourceProfileID: sourceProfileID, destinationProfileID: destinationProfileID, mode: "rotate", value: value})
-	return f.value, f.err
+func (f *fakeExecutor) ForProfile(profileID string) (vaultservice.ProfileExecutor, error) {
+	return &fakeProfileExecutor{owner: f, profileID: profileID}, nil
+}
+
+func (f *fakeProfileExecutor) Encrypt(_ context.Context, value string) (string, error) {
+	f.owner.calls = append(f.owner.calls, operationCall{profileID: f.profileID, mode: "encrypt", value: value})
+	return f.owner.value, f.owner.err
+}
+
+func (f *fakeProfileExecutor) Decrypt(_ context.Context, value string) (string, error) {
+	f.owner.calls = append(f.owner.calls, operationCall{profileID: f.profileID, mode: "decrypt", value: value})
+	if f.owner.decryptedValue != "" {
+		return f.owner.decryptedValue, f.owner.err
+	}
+	return f.owner.value, f.owner.err
 }
 
 func TestProfilesEndpoint(t *testing.T) {
@@ -88,7 +113,7 @@ func TestOperationEndpoint(t *testing.T) {
 }
 
 func TestRotateOperationEndpoint(t *testing.T) {
-	executor := &fakeExecutor{value: "$ANSIBLE_VAULT;1.2;AES256;destination\nsynthetic"}
+	executor := &fakeExecutor{value: "$ANSIBLE_VAULT;1.2;AES256;destination\nsynthetic", decryptedValue: "fixture-value"}
 	handler := newHandler([]Profile{
 		{ID: "source", Label: "Source"},
 		{ID: "destination", Label: "Destination"},
@@ -105,9 +130,12 @@ func TestRotateOperationEndpoint(t *testing.T) {
 	if got := decodeJSONBody[valueResponse](t, response).Value; got != executor.value {
 		t.Fatalf("value = %q, want %q", got, executor.value)
 	}
-	wantCall := operationCall{sourceProfileID: "source", destinationProfileID: "destination", mode: "rotate", value: "vault-input"}
-	if len(executor.calls) != 1 || executor.calls[0] != wantCall {
-		t.Fatalf("calls = %#v, want %#v", executor.calls, []operationCall{wantCall})
+	wantCalls := []operationCall{
+		{profileID: "source", mode: "decrypt", value: "vault-input"},
+		{profileID: "destination", mode: "encrypt", value: "fixture-value"},
+	}
+	if !reflect.DeepEqual(executor.calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", executor.calls, wantCalls)
 	}
 }
 
@@ -213,73 +241,28 @@ func TestRotateValidation(t *testing.T) {
 	}
 }
 
-func TestLegacyOperationRetainsReleasedZeroValueDecoding(t *testing.T) {
+func TestLegacyOperationRequiresPresentNonNullVariantFields(t *testing.T) {
 	profiles := []Profile{
 		{ID: "dev", Label: "Development"},
 		{ID: "source", Label: "Source"},
 		{ID: "destination", Label: "Destination"},
 	}
-	rotateCall := operationCall{
-		sourceProfileID:      "source",
-		destinationProfileID: "destination",
-		mode:                 "rotate",
-		value:                "",
-	}
 	tests := []struct {
 		name string
 		body string
-		call operationCall
 	}{
-		{
-			name: "encrypt omitted value",
-			body: `{"profileId":"dev","mode":"encrypt"}`,
-			call: operationCall{profileID: "dev", mode: "encrypt", value: ""},
-		},
-		{
-			name: "encrypt null value",
-			body: `{"profileId":"dev","mode":"encrypt","value":null}`,
-			call: operationCall{profileID: "dev", mode: "encrypt", value: ""},
-		},
-		{
-			name: "decrypt omitted value",
-			body: `{"profileId":"dev","mode":"decrypt"}`,
-			call: operationCall{profileID: "dev", mode: "decrypt", value: ""},
-		},
-		{
-			name: "decrypt null value",
-			body: `{"profileId":"dev","mode":"decrypt","value":null}`,
-			call: operationCall{profileID: "dev", mode: "decrypt", value: ""},
-		},
-		{
-			name: "rotate omitted value",
-			body: `{"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination"}`,
-			call: rotateCall,
-		},
-		{
-			name: "rotate null value",
-			body: `{"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":null}`,
-			call: rotateCall,
-		},
-		{
-			name: "encrypt empty and null rotate fields",
-			body: `{"profileId":"dev","sourceProfileId":"","destinationProfileId":null,"mode":"encrypt","value":"value"}`,
-			call: operationCall{profileID: "dev", mode: "encrypt", value: "value"},
-		},
-		{
-			name: "decrypt null and empty rotate fields",
-			body: `{"profileId":"dev","sourceProfileId":null,"destinationProfileId":"","mode":"decrypt","value":"value"}`,
-			call: operationCall{profileID: "dev", mode: "decrypt", value: "value"},
-		},
-		{
-			name: "rotate empty profile field",
-			body: `{"profileId":"","mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":"value"}`,
-			call: operationCall{sourceProfileID: "source", destinationProfileID: "destination", mode: "rotate", value: "value"},
-		},
-		{
-			name: "rotate null profile field",
-			body: `{"profileId":null,"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":"value"}`,
-			call: operationCall{sourceProfileID: "source", destinationProfileID: "destination", mode: "rotate", value: "value"},
-		},
+		{name: "encrypt missing profile", body: `{"mode":"encrypt","value":"value"}`},
+		{name: "encrypt null profile", body: `{"profileId":null,"mode":"encrypt","value":"value"}`},
+		{name: "encrypt omitted value", body: `{"profileId":"dev","mode":"encrypt"}`},
+		{name: "encrypt null value", body: `{"profileId":"dev","mode":"encrypt","value":null}`},
+		{name: "decrypt omitted value", body: `{"profileId":"dev","mode":"decrypt"}`},
+		{name: "decrypt null value", body: `{"profileId":"dev","mode":"decrypt","value":null}`},
+		{name: "rotate omitted value", body: `{"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination"}`},
+		{name: "rotate null value", body: `{"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":null}`},
+		{name: "encrypt variant fields", body: `{"profileId":"dev","sourceProfileId":"","destinationProfileId":null,"mode":"encrypt","value":"value"}`},
+		{name: "decrypt variant fields", body: `{"profileId":"dev","sourceProfileId":null,"destinationProfileId":"","mode":"decrypt","value":"value"}`},
+		{name: "rotate profile field empty", body: `{"profileId":"","mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":"value"}`},
+		{name: "rotate profile field null", body: `{"profileId":null,"mode":"rotate","sourceProfileId":"source","destinationProfileId":"destination","value":"value"}`},
 	}
 
 	for _, test := range tests {
@@ -292,13 +275,30 @@ func TestLegacyOperationRetainsReleasedZeroValueDecoding(t *testing.T) {
 
 			handler.ServeHTTP(response, request)
 
-			if response.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
 			}
-			if len(executor.calls) != 1 || executor.calls[0] != test.call {
-				t.Fatalf("calls = %#v, want %#v", executor.calls, []operationCall{test.call})
+			if len(executor.calls) != 0 {
+				t.Fatalf("executor calls = %#v, want none", executor.calls)
 			}
 		})
+	}
+}
+
+func TestLegacyOperationAllowsPresentEmptyValue(t *testing.T) {
+	executor := &fakeExecutor{value: "synthetic-output"}
+	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, executor)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", strings.NewReader(`{"profileId":"dev","mode":"encrypt","value":""}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	if want := []operationCall{{profileID: "dev", mode: "encrypt", value: ""}}; !reflect.DeepEqual(executor.calls, want) {
+		t.Fatalf("executor calls = %#v, want %#v", executor.calls, want)
 	}
 }
 
@@ -352,6 +352,43 @@ func TestJSONBodyLimit(t *testing.T) {
 
 	if response.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestOperationAdmissionRejectsBeforeReadingBody(t *testing.T) {
+	admission, err := vaultservice.NewAdmission(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := admission.TryAcquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	executor := &fakeExecutor{value: "must-not-run"}
+	handler := NewWithDependencies(
+		[]Profile{{ID: "dev", Label: "Development"}},
+		executor,
+		Dependencies{Admission: admission},
+	)
+	body := &trackingReader{}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/operations", body)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Retry-After"); got != "1" {
+		t.Fatalf("Retry-After = %q, want 1", got)
+	}
+	if body.read {
+		t.Fatal("request body was read while admission was saturated")
+	}
+	if len(executor.calls) != 0 {
+		t.Fatalf("executor calls = %#v, want none", executor.calls)
 	}
 }
 
