@@ -375,12 +375,12 @@ jobs:
           archive_count=0
           for archive in dist/*.tar.gz; do
             test -f "$archive"
-            tar -tzf "$archive" | grep -Fxq 'docs/api-reference.md'
+            tar -tzf "$archive" 'docs/api-reference.md' >/dev/null
             archive_count=$((archive_count + 1))
           done
           for archive in dist/*.zip; do
             test -f "$archive"
-            unzip -Z1 "$archive" | grep -Fxq 'docs/api-reference.md'
+            unzip -Z1 "$archive" 'docs/api-reference.md' >/dev/null
             archive_count=$((archive_count + 1))
           done
           test "$archive_count" -eq 6
