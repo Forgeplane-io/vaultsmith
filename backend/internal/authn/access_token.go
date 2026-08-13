@@ -392,6 +392,7 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 				return jwksRefreshResult{keys: keys, retained: true, owner: owner}, nil
 			}
 		}
+		hadPriorJWKS := c.haveKeys || c.noStore || !c.lastUnknownKIDRefresh.IsZero()
 		unknownKID := !c.containsKIDLocked(kid)
 		if unknownKID {
 			if err := c.unknownKIDThrottleLocked(refreshNow, kid); err != nil {
@@ -402,8 +403,8 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 		conditional := jwksConditionalRequest{ETag: c.etag, LastModified: c.lastModified}
 		c.mu.Unlock()
 		keys, retained, err := c.refresh(refreshContext, verifier, conditional, refreshNow)
-		c.recordUnknownKIDOutcome(verifier.now(), kid, unknownKID, keys, err)
-		return jwksRefreshResult{keys: keys, retained: retained, owner: owner, unknownKID: unknownKID}, err
+		c.recordUnknownKIDOutcome(verifier.now(), kid, unknownKID, hadPriorJWKS, keys, err)
+		return jwksRefreshResult{keys: keys, retained: retained, owner: owner, unknownKID: unknownKID, hadPriorJWKS: hadPriorJWKS}, err
 	})
 	var callResult singleflight.Result
 	select {
@@ -444,7 +445,7 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 		}, 1)
 		go func() {
 			keys, retained, refreshErr := c.refresh(refreshContext, verifier, jwksConditionalRequest{}, verifier.now())
-			c.recordUnknownKIDOutcome(verifier.now(), kid, unknownKID, keys, refreshErr)
+			c.recordUnknownKIDOutcome(verifier.now(), kid, unknownKID, refresh.hadPriorJWKS, keys, refreshErr)
 			directResult <- struct {
 				keys     jose.JSONWebKeySet
 				retained bool
@@ -458,7 +459,7 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 			if direct.err != nil {
 				return jose.JSONWebKeySet{}, ErrAccessTokenKeyUnavailable
 			}
-			refresh = jwksRefreshResult{keys: direct.keys, retained: direct.retained, owner: owner, unknownKID: unknownKID}
+			refresh = jwksRefreshResult{keys: direct.keys, retained: direct.retained, owner: owner, unknownKID: unknownKID, hadPriorJWKS: refresh.hadPriorJWKS}
 		}
 	}
 	if refresh.retained && !keySetContains(refresh.keys, kid) {
@@ -471,10 +472,11 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 }
 
 type jwksRefreshResult struct {
-	keys       jose.JSONWebKeySet
-	retained   bool
-	owner      *byte
-	unknownKID bool
+	keys         jose.JSONWebKeySet
+	retained     bool
+	owner        *byte
+	unknownKID   bool
+	hadPriorJWKS bool
 }
 
 func (c *jwksCache) unknownKIDThrottleLocked(now time.Time, kid string) error {
@@ -496,17 +498,16 @@ func (c *jwksCache) unknownKIDThrottleLocked(now time.Time, kid string) error {
 	return ErrInvalidAccessToken
 }
 
-func (c *jwksCache) recordUnknownKIDOutcome(now time.Time, kid string, unknownKID bool, keys jose.JSONWebKeySet, refreshErr error) {
+func (c *jwksCache) recordUnknownKIDOutcome(now time.Time, kid string, unknownKID, hadPriorJWKS bool, keys jose.JSONWebKeySet, refreshErr error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !unknownKID {
 		return
 	}
-	if refreshErr == nil && keySetContains(keys, kid) {
-		c.lastUnknownKIDRefresh = time.Time{}
-		c.lastUnknownKIDExpiry = time.Time{}
-		c.lastUnknownKIDKeys = nil
-		c.lastUnknownKIDSuccess = false
+	// The first successful cold-cache lookup establishes the issuer's initial
+	// key set. It is not a rotation-triggered unknown-kid refresh, so do not
+	// throttle the first later request for a newly rotated key.
+	if !hadPriorJWKS && refreshErr == nil && keySetContains(keys, kid) {
 		return
 	}
 	c.lastUnknownKIDRefresh = now
