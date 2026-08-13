@@ -238,25 +238,32 @@ func TestAccessTokenVerifierRejectsInvalidTypeAudienceScopeAndGroups(t *testing.
 }
 
 func TestAccessTokenVerifierRefreshesUnknownKIDAndDoesNotAcceptRemovedKeys(t *testing.T) {
-	privateKey1, publicKey1 := makeRSAJWK(t, "kid-1")
-	privateKey2, publicKey2 := makeRSAJWK(t, "kid-2")
-	issuer := newAccessTokenIssuer(t, publicKey1, "public, max-age=300")
-	verifier, err := NewAccessTokenVerifier(context.Background(), issuer.server.URL, issuer.server.URL, "groups", issuer.server.Client())
-	if err != nil {
-		t.Fatalf("NewAccessTokenVerifier() error = %v", err)
-	}
-	token1 := signedAccessToken(t, privateKey1, "kid-1", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
-	if _, err := verifier.Verify(context.Background(), token1); err != nil {
-		t.Fatalf("Verify(old key) error = %v", err)
-	}
+	for _, cacheControl := range []string{"public, max-age=300", "no-store"} {
+		t.Run(cacheControl, func(t *testing.T) {
+			privateKey1, publicKey1 := makeRSAJWK(t, "kid-1")
+			privateKey2, publicKey2 := makeRSAJWK(t, "kid-2")
+			issuer := newAccessTokenIssuer(t, publicKey1, cacheControl)
+			verifier, err := NewAccessTokenVerifier(context.Background(), issuer.server.URL, issuer.server.URL, "groups", issuer.server.Client())
+			if err != nil {
+				t.Fatalf("NewAccessTokenVerifier() error = %v", err)
+			}
+			token1 := signedAccessToken(t, privateKey1, "kid-1", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+			if _, err := verifier.Verify(context.Background(), token1); err != nil {
+				t.Fatalf("Verify(old key) error = %v", err)
+			}
 
-	issuer.keys = jose.JSONWebKeySet{Keys: []jose.JSONWebKey{publicKey2}}
-	token2 := signedAccessToken(t, privateKey2, "kid-2", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
-	if _, err := verifier.Verify(context.Background(), token2); err != nil {
-		t.Fatalf("Verify(new key) error = %v", err)
-	}
-	if _, err := verifier.Verify(context.Background(), token1); err == nil {
-		t.Fatal("Verify(removed key) unexpectedly succeeded")
+			issuer.keys = jose.JSONWebKeySet{Keys: []jose.JSONWebKey{publicKey2}}
+			token2 := signedAccessToken(t, privateKey2, "kid-2", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+			if _, err := verifier.Verify(context.Background(), token2); err != nil {
+				t.Fatalf("Verify(new key) error = %v", err)
+			}
+			if _, err := verifier.Verify(context.Background(), token1); err == nil {
+				t.Fatal("Verify(removed key) unexpectedly succeeded")
+			}
+			if got := issuer.jwksCalls.Load(); got != 2 {
+				t.Fatalf("JWKS calls after successful rotation and removed-key attempt = %d, want 2", got)
+			}
+		})
 	}
 }
 
