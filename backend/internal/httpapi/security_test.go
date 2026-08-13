@@ -148,3 +148,36 @@ func TestWrapSecurityOffSkipsCSRF(t *testing.T) {
 		t.Fatalf("off-mode response issued %d cookies, want none", len(cookies))
 	}
 }
+
+func TestCORSAllowsOffModeSameOriginAndDefaultPorts(t *testing.T) {
+	cfg := config.AuthConfig{Mode: config.AuthModeOff}
+	wrapped := WrapSecurity(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), cfg)
+
+	tests := []struct {
+		name       string
+		requestURL string
+		host       string
+		origin     string
+	}{
+		{name: "https explicit default port", requestURL: "https://example.test/api", host: "example.test", origin: "https://example.test:443"},
+		{name: "http explicit default port", requestURL: "http://example.test/api", host: "example.test", origin: "http://example.test:80"},
+		{name: "non-default port", requestURL: "https://example.test:8443/api", host: "example.test:8443", origin: "https://example.test:8443"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, test.requestURL, nil)
+			request.Host = test.host
+			request.Header.Set("Origin", test.origin)
+			response := httptest.NewRecorder()
+			wrapped.ServeHTTP(response, request)
+			if response.Code != http.StatusNoContent {
+				t.Fatalf("same-origin status = %d, want %d", response.Code, http.StatusNoContent)
+			}
+			if got := response.Header().Get("Access-Control-Allow-Origin"); got != test.origin {
+				t.Fatalf("allow-origin = %q, want %q", got, test.origin)
+			}
+		})
+	}
+}

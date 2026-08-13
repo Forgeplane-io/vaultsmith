@@ -147,7 +147,7 @@ func loadOIDCComponents(
 	if oidcClient == nil {
 		oidcClient = http.DefaultClient
 	}
-	if err := validateStrictHTTPSURL("OIDC_ISSUER_URL", issuer, false); err != nil {
+	if err := validateStrictHTTPSURL("OIDC_ISSUER_URL", issuer, true); err != nil {
 		return nil, nil, err
 	}
 	if err := validateStrictResourceOrigin("PUBLIC_BASE_URL", audience); err != nil {

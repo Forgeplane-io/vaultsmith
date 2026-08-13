@@ -91,6 +91,32 @@ func TestLoadOIDCComponentsFetchesAndUsesOneStrictDiscoveryDocument(t *testing.T
 	}
 }
 
+func TestLoadOIDCComponentsAllowsQueryParametersInEndpointURLs(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer":                                server.URL,
+			"jwks_uri":                              server.URL + "/jwks?tenant=vaultsmith",
+			"authorization_endpoint":                server.URL + "/authorize?client=vaultsmith",
+			"token_endpoint":                        server.URL + "/token?audience=vaultsmith",
+			"id_token_signing_alg_values_supported": []string{"RS256"},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	access, provider, err := loadOIDCComponents(context.Background(), server.URL, server.URL, "groups", server.Client(), server.Client())
+	if err != nil {
+		t.Fatalf("loadOIDCComponents() error = %v", err)
+	}
+	if got := access.jwksURL; got != server.URL+"/jwks?tenant=vaultsmith" {
+		t.Fatalf("JWKS URL = %q", got)
+	}
+	endpoint := provider.Endpoint()
+	if endpoint.AuthURL != server.URL+"/authorize?client=vaultsmith" || endpoint.TokenURL != server.URL+"/token?audience=vaultsmith" {
+		t.Fatalf("provider endpoint = %#v", endpoint)
+	}
+}
+
 func TestSafeReturnToAllowsOnlyInternalPaths(t *testing.T) {
 	allowed := []string{"/", "/profiles", "/profiles?selected=dev", "/api/v1/profiles#top"}
 	for _, value := range allowed {

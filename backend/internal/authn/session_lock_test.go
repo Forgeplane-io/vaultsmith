@@ -45,6 +45,9 @@ func TestSessionMiddlewareDoesNotWriteBodyAfterCommitFailure(t *testing.T) {
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("response status = %d, want %d", response.Code, http.StatusServiceUnavailable)
 	}
+	if response.Header().Get("X-Request-ID") == "" {
+		t.Fatal("X-Request-ID is missing")
+	}
 	if strings.Contains(response.Body.String(), plaintext) {
 		t.Fatal("response disclosed plaintext after failed session commit")
 	}

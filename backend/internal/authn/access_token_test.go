@@ -121,13 +121,29 @@ func signedAccessToken(t *testing.T, key *rsa.PrivateKey, kid, typ, issuer, audi
 }
 
 func TestOIDCDiscoveryURLPreservesIssuerPath(t *testing.T) {
-	got, err := oidcDiscoveryURL("https://id.example.test/realms/vaultsmith")
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		issuer string
+		want   string
+	}{
+		{
+			issuer: "https://id.example.test/realms/vaultsmith",
+			want:   "https://id.example.test/realms/vaultsmith/.well-known/openid-configuration",
+		},
+		{
+			issuer: "https://id.example.test/realms/vault%2Ftenant",
+			want:   "https://id.example.test/realms/vault%2Ftenant/.well-known/openid-configuration",
+		},
 	}
-	want := "https://id.example.test/realms/vaultsmith/.well-known/openid-configuration"
-	if got != want {
-		t.Fatalf("oidcDiscoveryURL() = %q, want %q", got, want)
+	for _, test := range tests {
+		t.Run(test.issuer, func(t *testing.T) {
+			got, err := oidcDiscoveryURL(test.issuer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("oidcDiscoveryURL() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
