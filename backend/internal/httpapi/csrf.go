@@ -106,8 +106,11 @@ func csrfOriginAllowed(r *http.Request, cfg config.AuthConfig) bool {
 			return true
 		}
 		for _, allowed := range cfg.CORS.AllowedOrigins {
-			if origin == allowed {
-				return true
+			allowedKey, allowedOK := originComparisonKey(allowed, true)
+			if allowedOK {
+				if originKey, originOK := originComparisonKey(origin, false); originOK && originKey == allowedKey {
+					return true
+				}
 			}
 		}
 		return false

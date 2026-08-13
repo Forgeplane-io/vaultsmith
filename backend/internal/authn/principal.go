@@ -2,7 +2,9 @@ package authn
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/gob"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -68,12 +70,25 @@ func NewSessionManager(store scs.Store, cfg config.SessionConfig) *scs.SessionMa
 		Persist:  true,
 	}
 	manager.ErrorFunc = func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ensureSessionRequestID(w)
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte("{\"error\":{\"code\":\"temporarily_unavailable\",\"message\":\"service is temporarily unavailable\"}}"))
 	}
 	return manager
+}
+
+func ensureSessionRequestID(w http.ResponseWriter) {
+	if w.Header().Get("X-Request-ID") != "" {
+		return
+	}
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		w.Header().Set("X-Request-ID", "00000000000000000000000000000000")
+		return
+	}
+	w.Header().Set("X-Request-ID", hex.EncodeToString(value[:]))
 }
 
 func StorePrincipal(ctx context.Context, manager *scs.SessionManager, principal Principal, refreshToken string) {

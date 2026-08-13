@@ -62,7 +62,7 @@ func NewAccessTokenVerifier(ctx context.Context, issuer, audience, groupsClaim s
 	if client == nil {
 		client = http.DefaultClient
 	}
-	if err := validateStrictHTTPSURL("OIDC_ISSUER_URL", issuer, false); err != nil {
+	if err := validateStrictHTTPSURL("OIDC_ISSUER_URL", issuer, true); err != nil {
 		return nil, err
 	}
 	if err := validateStrictResourceOrigin("PUBLIC_BASE_URL", audience); err != nil {
@@ -87,7 +87,7 @@ func newAccessTokenVerifierFromDiscovery(issuer, audience, groupsClaim string, c
 		"authorization_endpoint": document.AuthorizationEndpoint,
 		"token_endpoint":         document.TokenEndpoint,
 	} {
-		if err := validateStrictHTTPSURL(name, value, true); err != nil {
+		if err := validateStrictHTTPSURL(name, value, false); err != nil {
 			return nil, err
 		}
 	}
@@ -282,14 +282,22 @@ func oidcDiscoveryURL(issuer string) (string, error) {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", fmt.Errorf("OIDC_ISSUER_URL must be an absolute HTTPS URL")
 	}
-	path := strings.TrimRight(parsed.EscapedPath(), "/")
+	path := strings.TrimRight(parsed.Path, "/")
+	if parsed.RawPath != "" {
+		rawPath := strings.TrimRight(parsed.RawPath, "/")
+		decodedPath, decodeErr := url.PathUnescape(rawPath)
+		if decodeErr != nil {
+			return "", fmt.Errorf("OIDC_ISSUER_URL must be an absolute HTTPS URL")
+		}
+		path = decodedPath
+		parsed.RawPath = rawPath + "/.well-known/openid-configuration"
+	}
 	if path == "" {
 		path = "/.well-known/openid-configuration"
 	} else {
 		path += "/.well-known/openid-configuration"
 	}
 	parsed.Path = path
-	parsed.RawPath = ""
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String(), nil
@@ -300,7 +308,7 @@ func validateStrictHTTPSURL(name, raw string, forbidQueryFragment bool) error {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || strings.ToLower(parsed.Scheme) != "https" {
 		return fmt.Errorf("%s must be an absolute HTTPS URL", name)
 	}
-	if forbidQueryFragment && (parsed.RawQuery != "" || parsed.Fragment != "") {
+	if parsed.Fragment != "" || (forbidQueryFragment && parsed.RawQuery != "") {
 		return fmt.Errorf("%s must not contain a query or fragment", name)
 	}
 	return nil

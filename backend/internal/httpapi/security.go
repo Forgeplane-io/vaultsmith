@@ -51,6 +51,7 @@ func WrapSecurityWithOptions(next http.Handler, cfg config.AuthConfig, options S
 		next = mcpMethodMiddleware(next, options.MCPEnabled)
 		next = disabledMCPMiddleware(next, options.MCPEnabled)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ensureRequestID(w)
 			setSecurityHeaders(w)
 			next.ServeHTTP(w, r)
 		})
@@ -62,6 +63,7 @@ func WrapSecurityWithOptions(next http.Handler, cfg config.AuthConfig, options S
 	next = mcpMethodMiddleware(next, options.MCPEnabled)
 	next = disabledMCPMiddleware(next, options.MCPEnabled)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ensureRequestID(w)
 		setSecurityHeaders(w)
 		next.ServeHTTP(w, r)
 	})
@@ -473,7 +475,9 @@ func csrfCookieName(cfg config.AuthConfig) string {
 func corsMiddleware(next http.Handler, cfg config.AuthConfig, mcpEnabled bool) http.Handler {
 	allowed := make(map[string]struct{}, len(cfg.CORS.AllowedOrigins))
 	for _, origin := range cfg.CORS.AllowedOrigins {
-		allowed[origin] = struct{}{}
+		if key, ok := originComparisonKey(origin, true); ok {
+			allowed[key] = struct{}{}
+		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
@@ -485,7 +489,11 @@ func corsMiddleware(next http.Handler, cfg config.AuthConfig, mcpEnabled bool) h
 			writeError(w, http.StatusForbidden, "forbidden", "operation is not permitted")
 			return
 		}
-		_, explicitlyAllowed := allowed[origin]
+		originKey, originKeyOK := originComparisonKey(origin, false)
+		_, explicitlyAllowed := allowed[originKey]
+		if !originKeyOK {
+			explicitlyAllowed = false
+		}
 		originAllowed := originAllowed(origin, r, cfg)
 		if !explicitlyAllowed && !originAllowed {
 			writeError(w, http.StatusForbidden, "forbidden", "operation is not permitted")
@@ -516,9 +524,6 @@ func corsMiddleware(next http.Handler, cfg config.AuthConfig, mcpEnabled bool) h
 }
 
 func originAllowed(origin string, r *http.Request, cfg config.AuthConfig) bool {
-	if cfg.Mode != config.AuthModeNative {
-		return false
-	}
 	return isSameOrigin(origin, r, cfg)
 }
 
@@ -545,19 +550,42 @@ func corsAllowedMethods(r *http.Request, mcpEnabled bool) string {
 }
 
 func isSameOrigin(origin string, r *http.Request, cfg config.AuthConfig) bool {
-	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+	originKey, ok := originComparisonKey(origin, false)
+	if !ok {
 		return false
 	}
 	expected := requestOrigin(r)
 	if cfg.OIDC.PublicBaseURL != "" {
-		base, baseErr := url.Parse(cfg.OIDC.PublicBaseURL)
-		if baseErr != nil || base.Scheme == "" || base.Host == "" {
-			return false
-		}
-		expected = base.Scheme + "://" + base.Host
+		expected = cfg.OIDC.PublicBaseURL
 	}
-	return strings.EqualFold(parsed.Scheme+"://"+parsed.Host, expected)
+	expectedKey, ok := originComparisonKey(expected, true)
+	if !ok {
+		return false
+	}
+	return originKey == expectedKey
+}
+
+func originComparisonKey(raw string, allowRootPath bool) (string, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	if parsed.Path != "" && (!allowRootPath || parsed.Path != "/") {
+		return "", false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return "", false
+	}
+	port := parsed.Port()
+	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
+		port = ""
+	}
+	return scheme + "|" + host + "|" + port, true
 }
 
 func requestOrigin(r *http.Request) string {
