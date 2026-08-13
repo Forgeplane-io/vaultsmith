@@ -352,6 +352,12 @@ type jwksCache struct {
 }
 
 func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifier, kid string) (jose.JSONWebKeySet, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return jose.JSONWebKeySet{}, err
+	}
 	now := verifier.now()
 	c.mu.Lock()
 
@@ -372,7 +378,11 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 	c.mu.Unlock()
 
 	owner := new(byte)
-	result, err, _ := c.refreshGroup.Do("jwks", func() (any, error) {
+	// A JWKS fetch is shared across callers. Keep it alive after a request
+	// disconnects so a caller cancellation cannot be recorded as issuer-wide
+	// unavailability. The fetch still has the bounded timeout in refresh.
+	refreshContext := context.WithoutCancel(ctx)
+	resultChannel := c.refreshGroup.DoChan("jwks", func() (any, error) {
 		refreshNow := verifier.now()
 		c.mu.Lock()
 		if c.haveKeys && !c.revalidationRequired(refreshNow) {
@@ -391,10 +401,17 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 		}
 		conditional := jwksConditionalRequest{ETag: c.etag, LastModified: c.lastModified}
 		c.mu.Unlock()
-		keys, retained, err := c.refresh(ctx, verifier, conditional, refreshNow)
+		keys, retained, err := c.refresh(refreshContext, verifier, conditional, refreshNow)
 		c.recordUnknownKIDOutcome(verifier.now(), kid, unknownKID, keys, err)
 		return jwksRefreshResult{keys: keys, retained: retained, owner: owner, unknownKID: unknownKID}, err
 	})
+	var callResult singleflight.Result
+	select {
+	case callResult = <-resultChannel:
+	case <-ctx.Done():
+		return jose.JSONWebKeySet{}, ctx.Err()
+	}
+	err := callResult.Err
 	if err != nil {
 		if errors.Is(err, ErrInvalidAccessToken) {
 			return jose.JSONWebKeySet{}, ErrInvalidAccessToken
@@ -406,7 +423,7 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 		}
 		return jose.JSONWebKeySet{}, ErrAccessTokenKeyUnavailable
 	}
-	refresh := result.(jwksRefreshResult)
+	refresh := callResult.Val.(jwksRefreshResult)
 	if !refresh.retained && refresh.owner != owner {
 		if refresh.unknownKID {
 			c.mu.Lock()
@@ -416,12 +433,33 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 				return jose.JSONWebKeySet{}, throttleErr
 			}
 		}
-		keys, retained, refreshErr := c.refresh(ctx, verifier, jwksConditionalRequest{}, verifier.now())
-		c.recordUnknownKIDOutcome(verifier.now(), kid, refresh.unknownKID, keys, refreshErr)
-		if refreshErr != nil {
-			return jose.JSONWebKeySet{}, ErrAccessTokenKeyUnavailable
+		if err := ctx.Err(); err != nil {
+			return jose.JSONWebKeySet{}, err
 		}
-		refresh = jwksRefreshResult{keys: keys, retained: retained, owner: owner, unknownKID: refresh.unknownKID}
+		unknownKID := refresh.unknownKID
+		directResult := make(chan struct {
+			keys     jose.JSONWebKeySet
+			retained bool
+			err      error
+		}, 1)
+		go func() {
+			keys, retained, refreshErr := c.refresh(refreshContext, verifier, jwksConditionalRequest{}, verifier.now())
+			c.recordUnknownKIDOutcome(verifier.now(), kid, unknownKID, keys, refreshErr)
+			directResult <- struct {
+				keys     jose.JSONWebKeySet
+				retained bool
+				err      error
+			}{keys: keys, retained: retained, err: refreshErr}
+		}()
+		select {
+		case <-ctx.Done():
+			return jose.JSONWebKeySet{}, ctx.Err()
+		case direct := <-directResult:
+			if direct.err != nil {
+				return jose.JSONWebKeySet{}, ErrAccessTokenKeyUnavailable
+			}
+			refresh = jwksRefreshResult{keys: direct.keys, retained: direct.retained, owner: owner, unknownKID: unknownKID}
+		}
 	}
 	if refresh.retained && !keySetContains(refresh.keys, kid) {
 		return jose.JSONWebKeySet{}, ErrInvalidAccessToken

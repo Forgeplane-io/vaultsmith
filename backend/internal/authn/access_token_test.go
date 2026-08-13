@@ -391,6 +391,57 @@ func TestAccessTokenVerifierUnknownKIDThrottleRetainsExpiredOutageOutcome(t *tes
 	}
 }
 
+func TestAccessTokenVerifierCanceledUnknownKIDRefreshDoesNotPoisonAvailability(t *testing.T) {
+	for _, cacheControl := range []string{"public, max-age=300", "no-store"} {
+		t.Run(cacheControl, func(t *testing.T) {
+			privateKey, publicKey := makeRSAJWK(t, "kid-known")
+			issuer := newAccessTokenIssuer(t, publicKey, cacheControl)
+			issuer.jwksStarted = make(chan struct{}, 1)
+			issuer.jwksBlock = make(chan struct{})
+			verifier, err := NewAccessTokenVerifier(context.Background(), issuer.server.URL, issuer.server.URL, "groups", issuer.server.Client())
+			if err != nil {
+				t.Fatalf("NewAccessTokenVerifier() error = %v", err)
+			}
+
+			randomKey, _ := makeRSAJWK(t, "kid-random")
+			random := signedAccessToken(t, randomKey, "kid-random", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			result := make(chan error, 1)
+			go func() {
+				_, verifyErr := verifier.Verify(ctx, random)
+				result <- verifyErr
+			}()
+
+			select {
+			case <-issuer.jwksStarted:
+			case <-time.After(time.Second):
+				t.Fatal("unknown-kid JWKS refresh did not start")
+			}
+			cancel()
+			select {
+			case verifyErr := <-result:
+				if !errors.Is(verifyErr, context.Canceled) {
+					t.Fatalf("Verify(canceled) error = %v, want context.Canceled", verifyErr)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("Verify(canceled) did not return promptly")
+			}
+			close(issuer.jwksBlock)
+
+			known := signedAccessToken(t, privateKey, "kid-known", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+			if _, err := verifier.Verify(context.Background(), known); err != nil {
+				t.Fatalf("Verify(known key after canceled refresh) error = %v", err)
+			}
+			otherKey, _ := makeRSAJWK(t, "kid-other")
+			other := signedAccessToken(t, otherKey, "kid-other", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+			if _, err := verifier.Verify(context.Background(), other); !errors.Is(err, ErrInvalidAccessToken) {
+				t.Fatalf("Verify(other unknown key after canceled refresh) error = %v, want ErrInvalidAccessToken", err)
+			}
+		})
+	}
+}
+
 func TestAccessTokenVerifierNoStoreInvalidatesRetainedKeys(t *testing.T) {
 	privateKey, publicKey := makeRSAJWK(t, "kid-1")
 	issuer := newAccessTokenIssuer(t, publicKey, "no-store")
