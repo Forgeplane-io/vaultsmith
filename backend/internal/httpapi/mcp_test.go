@@ -179,7 +179,7 @@ func TestMCPUnsupportedMethodsPreserveIDAndRequireMethodNameHeader(t *testing.T)
 		params string
 		name   string
 	}{
-		{method: "resources/read", params: `{"uri":"vaultsmith://profiles/dev",` + mcpMeta + `}`, name: "synthetic-resource"},
+		{method: "resources/read", params: `{"uri":"vaultsmith://profiles/dev",` + mcpMeta + `}`, name: "vaultsmith://profiles/dev"},
 		{method: "prompts/get", params: `{"name":"synthetic-prompt","arguments":{},` + mcpMeta + `}`, name: "synthetic-prompt"},
 	}
 	for _, test := range tests {
@@ -206,6 +206,41 @@ func TestMCPUnsupportedMethodsPreserveIDAndRequireMethodNameHeader(t *testing.T)
 			}
 			if envelope.Error.Code != mcpErrorMethodNotFound {
 				t.Fatalf("error code = %d, want %d", envelope.Error.Code, mcpErrorMethodNotFound)
+			}
+		})
+	}
+}
+
+func TestMCPUnsupportedMethodsRejectMismatchedMirroredName(t *testing.T) {
+	tests := []struct {
+		method string
+		params string
+		name   string
+	}{
+		{method: "resources/read", params: `{"uri":"vaultsmith://profiles/dev",` + mcpMeta + `}`, name: "other-resource"},
+		{method: "prompts/get", params: `{"name":"synthetic-prompt","arguments":{},` + mcpMeta + `}`, name: "other-prompt"},
+	}
+	for _, test := range tests {
+		t.Run(test.method, func(t *testing.T) {
+			handler := mcpOffHandler()
+			request := newMCPRequest(test.method, `{"jsonrpc":"2.0","id":"preserved","method":"`+test.method+`","params":`+test.params+`}`)
+			request.Header.Set("Mcp-Name", test.name)
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+			}
+			var envelope struct {
+				ID    json.RawMessage `json:"id"`
+				Error mcpJSONRPCError `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if string(envelope.ID) != `"preserved"` || envelope.Error.Code != mcpErrorHeaderMismatch {
+				t.Fatalf("response = %#v, want preserved id and HeaderMismatch", envelope)
 			}
 		})
 	}
@@ -269,8 +304,8 @@ func TestMCPNotReadyServiceFailureReturnsHTTP503(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.Error.Code != apimodels.ApiErrorCodeTemporarilyUnavailable {
-		t.Fatalf("error code = %q, want temporarily_unavailable", envelope.Error.Code)
+	if envelope.Error.Code != apimodels.ApiErrorCodeNotReady {
+		t.Fatalf("error code = %q, want not_ready", envelope.Error.Code)
 	}
 }
 
@@ -523,6 +558,27 @@ func TestMCPMetaValidatesSDKClientFields(t *testing.T) {
 	}
 }
 
+func TestMCPMetaRejectsMalformedProtocolVersionAsInvalidParams(t *testing.T) {
+	handler := mcpOffHandler()
+	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":true,"io.modelcontextprotocol/clientCapabilities":{}}}}`
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, newMCPRequest("server/discover", body))
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		Error mcpJSONRPCError `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Error.Code != mcpErrorInvalidParams {
+		t.Fatalf("error code = %d, want %d", envelope.Error.Code, mcpErrorInvalidParams)
+	}
+}
+
 func TestMCPMixedCaseBase64MarkerRemainsLiteral(t *testing.T) {
 	value := "=?BASE64?ZW5jcnlwdA==?="
 	decoded, err := decodeMCPNameHeader(value)
@@ -624,8 +680,8 @@ func TestMCPMetaRejectsInvalidExtensionName(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.Error.Code != mcpErrorHeaderMismatch {
-		t.Fatalf("error code = %d, want %d", envelope.Error.Code, mcpErrorHeaderMismatch)
+	if envelope.Error.Code != mcpErrorInvalidParams {
+		t.Fatalf("error code = %d, want %d", envelope.Error.Code, mcpErrorInvalidParams)
 	}
 }
 

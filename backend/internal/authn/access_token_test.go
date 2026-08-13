@@ -339,6 +339,58 @@ func TestAccessTokenVerifierUnknownKIDThrottleAppliesDuringRevalidation(t *testi
 	}
 }
 
+func TestAccessTokenVerifierUnknownKIDThrottleRetainsUnavailableOutcome(t *testing.T) {
+	privateKey, publicKey := makeRSAJWK(t, "kid-known")
+	issuer := newAccessTokenIssuer(t, publicKey, "no-store")
+	verifier, err := NewAccessTokenVerifier(context.Background(), issuer.server.URL, issuer.server.URL, "groups", issuer.server.Client())
+	if err != nil {
+		t.Fatalf("NewAccessTokenVerifier() error = %v", err)
+	}
+	known := signedAccessToken(t, privateKey, "kid-known", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+	if _, err := verifier.Verify(context.Background(), known); err != nil {
+		t.Fatalf("Verify(known key) error = %v", err)
+	}
+	issuer.server.Close()
+
+	randomKey, _ := makeRSAJWK(t, "kid-random")
+	random := signedAccessToken(t, randomKey, "kid-random", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+	for attempt := 1; attempt <= 2; attempt++ {
+		if _, err := verifier.Verify(context.Background(), random); !errors.Is(err, ErrAccessTokenKeyUnavailable) {
+			t.Fatalf("Verify(random key) attempt %d error = %v, want ErrAccessTokenKeyUnavailable", attempt, err)
+		}
+	}
+}
+
+func TestAccessTokenVerifierUnknownKIDThrottleRetainsExpiredOutageOutcome(t *testing.T) {
+	privateKey, publicKey := makeRSAJWK(t, "kid-known")
+	issuer := newAccessTokenIssuer(t, publicKey, "public, max-age=300")
+	verifier, err := NewAccessTokenVerifier(context.Background(), issuer.server.URL, issuer.server.URL, "groups", issuer.server.Client())
+	if err != nil {
+		t.Fatalf("NewAccessTokenVerifier() error = %v", err)
+	}
+	known := signedAccessToken(t, privateKey, "kid-known", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+	if _, err := verifier.Verify(context.Background(), known); err != nil {
+		t.Fatalf("Verify(known key) error = %v", err)
+	}
+	expired := time.Now().Add(10 * time.Minute)
+	verifier.now = func() time.Time { return expired }
+	issuer.jwksHandler = func(w http.ResponseWriter, _ *http.Request, _ *accessTokenIssuer) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+
+	randomKey, _ := makeRSAJWK(t, "kid-random")
+	random := signedAccessToken(t, randomKey, "kid-random", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+	before := issuer.jwksCalls.Load()
+	for attempt := 1; attempt <= 2; attempt++ {
+		if _, err := verifier.Verify(context.Background(), random); !errors.Is(err, ErrAccessTokenKeyUnavailable) {
+			t.Fatalf("Verify(random key) attempt %d error = %v, want ErrAccessTokenKeyUnavailable", attempt, err)
+		}
+	}
+	if got := issuer.jwksCalls.Load() - before; got != 1 {
+		t.Fatalf("JWKS calls after expired outage = %d, want one attempted refresh", got)
+	}
+}
+
 func TestAccessTokenVerifierNoStoreInvalidatesRetainedKeys(t *testing.T) {
 	privateKey, publicKey := makeRSAJWK(t, "kid-1")
 	issuer := newAccessTokenIssuer(t, publicKey, "no-store")

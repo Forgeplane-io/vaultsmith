@@ -122,6 +122,8 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 			scope := mcpHeaderRequiredScope(headerMethod, headerToolName)
 			if vaultservice.HasCode(preflightErr, vaultservice.CodeForbidden) {
 				writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope, protectedResourceMetadataURL(h.authConfig))
+			} else if errors.Is(preflightErr, context.Canceled) || errors.Is(preflightErr, context.DeadlineExceeded) {
+				writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
 			} else {
 				writeServiceError(w, preflightErr)
 			}
@@ -133,6 +135,8 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, vaultservice.ErrAdmissionSaturated) {
 			writeAdmissionSaturated(w, h.service.Admission())
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
 		} else {
 			writeServiceError(w, err)
 		}
@@ -167,22 +171,26 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 		mcpWriteHTTPError(w, http.StatusBadRequest, &request.id, mcpErrorHeaderMismatch, "HeaderMismatch", nil)
 		return
 	}
+	if err := validateMCPNameMirror(request.sdk.Method, request.sdk.Params, headerToolName); err != nil {
+		mcpWriteMCPValidationError(w, request.id, err)
+		return
+	}
 	switch request.sdk.Method {
 	case "server/discover":
 		if err := validateMCPMeta(request.sdk.Params, headerVersion); err != nil {
-			mcpWriteHTTPError(w, http.StatusBadRequest, &request.id, mcpErrorHeaderMismatch, "HeaderMismatch", nil)
+			mcpWriteMCPValidationError(w, request.id, err)
 			return
 		}
 		h.serveMCPDiscover(w, request.id, request.sdk.Params)
 	case "tools/list":
 		if err := validateMCPMeta(request.sdk.Params, headerVersion); err != nil {
-			mcpWriteHTTPError(w, http.StatusBadRequest, &request.id, mcpErrorHeaderMismatch, "HeaderMismatch", nil)
+			mcpWriteMCPValidationError(w, request.id, err)
 			return
 		}
 		h.serveMCPListTools(w, request.id, request.sdk.Params)
 	case "tools/call":
 		if err := validateMCPMeta(request.sdk.Params, headerVersion); err != nil {
-			mcpWriteHTTPError(w, http.StatusBadRequest, &request.id, mcpErrorHeaderMismatch, "HeaderMismatch", nil)
+			mcpWriteMCPValidationError(w, request.id, err)
 			return
 		}
 		h.serveMCPToolCall(w, r, request.id, request.sdk.Params, headerToolName, actor, lease, leaseContext)
@@ -251,7 +259,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 		profiles, err := h.service.ListProfiles(r.Context(), actor)
 		if err != nil {
 			if mcpServiceUnavailable(err) {
-				mcpWriteServiceUnavailable(w)
+				mcpWriteServiceUnavailable(w, err)
 				return
 			}
 			if vaultservice.HasCode(err, vaultservice.CodeForbidden) {
@@ -284,7 +292,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 		prepared, err := h.service.Prepare(leaseContext, actor, command, lease)
 		if err != nil {
 			if mcpServiceUnavailable(err) {
-				mcpWriteServiceUnavailable(w)
+				mcpWriteServiceUnavailable(w, err)
 				return
 			}
 			if actor.Kind() != caller.KindAnonymous && vaultservice.IsPolicyDenied(err) {
@@ -297,7 +305,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 		output, err := prepared.Run(leaseContext)
 		if err != nil {
 			if mcpServiceUnavailable(err) {
-				mcpWriteServiceUnavailable(w)
+				mcpWriteServiceUnavailable(w, err)
 				return
 			}
 			mcpWriteToolError(w, id, mcpTextToolFailure)
@@ -385,14 +393,72 @@ func sdkJSONRPCID(raw json.RawMessage) (jsonrpc.ID, error) {
 	return jsonrpc.MakeID(float64(value))
 }
 
+type mcpValidationError struct {
+	code    int
+	message string
+}
+
+func (e *mcpValidationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.message
+}
+
+func mcpInvalidParamsError(message string) error {
+	return &mcpValidationError{code: mcpErrorInvalidParams, message: message}
+}
+
+func mcpHeaderMismatchError(message string) error {
+	return &mcpValidationError{code: mcpErrorHeaderMismatch, message: message}
+}
+
+func mcpWriteMCPValidationError(w http.ResponseWriter, id json.RawMessage, err error) {
+	code := mcpErrorInvalidParams
+	message := "invalid params"
+	var validationErr *mcpValidationError
+	if errors.As(err, &validationErr) {
+		code = validationErr.code
+		if validationErr.message != "" {
+			message = validationErr.message
+		}
+	}
+	mcpWriteHTTPError(w, http.StatusBadRequest, &id, code, message, nil)
+}
+
+func validateMCPNameMirror(method string, params json.RawMessage, headerName string) error {
+	field := ""
+	switch method {
+	case "tools/call", "prompts/get":
+		field = "name"
+	case "resources/read":
+		field = "uri"
+	default:
+		return nil
+	}
+	fields, err := decodeOpenJSONObject(params)
+	if err != nil {
+		return nil
+	}
+	rawName, ok := fields[field]
+	if !ok {
+		return nil
+	}
+	bodyName, err := decodeOperationString(rawName)
+	if err != nil || bodyName == headerName {
+		return nil
+	}
+	return mcpHeaderMismatchError("HeaderMismatch")
+}
+
 func validateMCPMeta(params json.RawMessage, headerVersion string) error {
 	fields, err := decodeStrictObject(params, map[string]struct{}{"_meta": {}, "name": {}, "arguments": {}, "cursor": {}})
 	if err != nil {
-		return err
+		return mcpInvalidParamsError("invalid params")
 	}
 	rawMeta, ok := fields["_meta"]
 	if !ok {
-		return errors.New("missing meta")
+		return mcpInvalidParamsError("invalid params")
 	}
 	metaFields, err := decodeMCPMetaObject(rawMeta, map[string]struct{}{
 		mcp.MetaKeyProtocolVersion:    {},
@@ -400,24 +466,27 @@ func validateMCPMeta(params json.RawMessage, headerVersion string) error {
 		mcp.MetaKeyClientInfo:         {},
 	})
 	if err != nil {
-		return err
+		return mcpInvalidParamsError("invalid params")
 	}
 	rawVersion, ok := metaFields[mcp.MetaKeyProtocolVersion]
 	if !ok {
-		return errors.New("missing meta version")
+		return mcpInvalidParamsError("invalid params")
 	}
 	versionValue, err := decodeOperationString(rawVersion)
-	if err != nil || versionValue != headerVersion {
-		return errors.New("meta version mismatch")
+	if err != nil {
+		return mcpInvalidParamsError("invalid params")
+	}
+	if versionValue != headerVersion {
+		return mcpHeaderMismatchError("HeaderMismatch")
 	}
 	rawCapabilities, ok := metaFields[mcp.MetaKeyClientCapabilities]
 	if !ok || validateMCPClientCapabilities(rawCapabilities) != nil {
-		return errors.New("missing client capabilities")
+		return mcpInvalidParamsError("invalid params")
 	}
 	if rawClientInfo, present := metaFields[mcp.MetaKeyClientInfo]; present {
 		var implementation mcp.Implementation
 		if err := decodeStrictJSON(rawClientInfo, &implementation); err != nil || implementation.Name == "" || implementation.Version == "" {
-			return errors.New("invalid client info")
+			return mcpInvalidParamsError("invalid params")
 		}
 	}
 	return nil
@@ -678,7 +747,11 @@ func mcpServiceUnavailable(err error) bool {
 		errors.Is(err, context.DeadlineExceeded)
 }
 
-func mcpWriteServiceUnavailable(w http.ResponseWriter) {
+func mcpWriteServiceUnavailable(w http.ResponseWriter, err error) {
+	if vaultservice.HasCode(err, vaultservice.CodeNotReady) || vaultservice.HasCode(err, vaultservice.CodeTemporarilyUnavailable) {
+		writeServiceError(w, err)
+		return
+	}
 	writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
 }
 
