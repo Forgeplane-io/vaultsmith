@@ -147,6 +147,47 @@ func TestOIDCDiscoveryURLPreservesIssuerPath(t *testing.T) {
 	}
 }
 
+func TestOIDCDiscoveryURLRejectsIssuerQueryAndFragment(t *testing.T) {
+	for _, issuer := range []string{
+		"https://id.example.test/realms/vaultsmith?tenant=one",
+		"https://id.example.test/realms/vaultsmith?",
+		"https://id.example.test/realms/vaultsmith#fragment",
+		"https://id.example.test/realms/vaultsmith#",
+	} {
+		t.Run(issuer, func(t *testing.T) {
+			if _, err := oidcDiscoveryURL(issuer); err == nil {
+				t.Fatal("oidcDiscoveryURL() accepted an issuer query or fragment")
+			}
+		})
+	}
+}
+
+func TestValidateStrictHTTPSURLAllowsEndpointQueries(t *testing.T) {
+	for _, endpoint := range []string{
+		"https://id.example.test/authorize?client=vaultsmith",
+		"https://id.example.test/token?audience=vaultsmith",
+		"https://id.example.test/jwks?tenant=vaultsmith",
+		"https://id.example.test/endpoint?",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			if err := validateStrictHTTPSURL("endpoint", endpoint, false); err != nil {
+				t.Fatalf("validateStrictHTTPSURL() error = %v", err)
+			}
+		})
+	}
+	for _, endpoint := range []string{
+		"https://id.example.test/endpoint#fragment",
+		"https://id.example.test/endpoint#",
+		"https://id.example.test:",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			if err := validateStrictHTTPSURL("endpoint", endpoint, false); err == nil {
+				t.Fatal("validateStrictHTTPSURL() accepted an invalid endpoint")
+			}
+		})
+	}
+}
+
 func TestAccessTokenVerifierAcceptsRFC9068JWT(t *testing.T) {
 	privateKey, publicKey := makeRSAJWK(t, "kid-1")
 	issuer := newAccessTokenIssuer(t, publicKey, "public, max-age=300")

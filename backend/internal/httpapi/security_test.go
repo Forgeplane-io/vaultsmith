@@ -181,3 +181,26 @@ func TestCORSAllowsOffModeSameOriginAndDefaultPorts(t *testing.T) {
 		})
 	}
 }
+
+func TestCORSRejectsMalformedOriginMarkersAndEmptyPorts(t *testing.T) {
+	wrapped := WrapSecurity(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), config.AuthConfig{Mode: config.AuthModeOff})
+
+	for _, origin := range []string{
+		"https://example.test?",
+		"https://example.test#",
+		"https://example.test:",
+	} {
+		t.Run(origin, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "https://example.test/api", nil)
+			request.Host = "example.test"
+			request.Header.Set("Origin", origin)
+			response := httptest.NewRecorder()
+			wrapped.ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("malformed origin status = %d, want %d", response.Code, http.StatusForbidden)
+			}
+		})
+	}
+}

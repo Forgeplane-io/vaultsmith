@@ -278,6 +278,9 @@ func doOIDCRequest(client *http.Client, request *http.Request) (*http.Response, 
 }
 
 func oidcDiscoveryURL(issuer string) (string, error) {
+	if err := validateStrictHTTPSURL("OIDC_ISSUER_URL", issuer, true); err != nil {
+		return "", err
+	}
 	parsed, err := url.Parse(issuer)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", fmt.Errorf("OIDC_ISSUER_URL must be an absolute HTTPS URL")
@@ -304,11 +307,17 @@ func oidcDiscoveryURL(issuer string) (string, error) {
 }
 
 func validateStrictHTTPSURL(name, raw string, forbidQueryFragment bool) error {
+	if strings.Contains(raw, "#") {
+		return fmt.Errorf("%s must not contain a query or fragment", name)
+	}
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || strings.ToLower(parsed.Scheme) != "https" {
 		return fmt.Errorf("%s must be an absolute HTTPS URL", name)
 	}
-	if parsed.Fragment != "" || (forbidQueryFragment && parsed.RawQuery != "") {
+	if strings.HasSuffix(parsed.Host, ":") {
+		return fmt.Errorf("%s must be an absolute HTTPS URL", name)
+	}
+	if parsed.Fragment != "" || (forbidQueryFragment && (parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(raw, "?"))) {
 		return fmt.Errorf("%s must not contain a query or fragment", name)
 	}
 	return nil
