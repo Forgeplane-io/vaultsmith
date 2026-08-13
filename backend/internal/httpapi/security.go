@@ -566,8 +566,14 @@ func isSameOrigin(origin string, r *http.Request, cfg config.AuthConfig) bool {
 }
 
 func originComparisonKey(raw string, allowRootPath bool) (string, bool) {
+	if strings.ContainsAny(raw, "?#") {
+		return "", false
+	}
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", false
+	}
+	if strings.HasSuffix(parsed.Host, ":") {
 		return "", false
 	}
 	if parsed.Path != "" && (!allowRootPath || parsed.Path != "/") {
