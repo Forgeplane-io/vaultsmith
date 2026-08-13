@@ -346,16 +346,27 @@ type jwksCache struct {
 	lastModified          string
 	responseHeaders       http.Header
 	lastUnknownKIDRefresh time.Time
+	lastUnknownKIDExpiry  time.Time
+	lastUnknownKIDKeys    map[string]struct{}
+	lastUnknownKIDSuccess bool
 }
 
 func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifier, kid string) (jose.JSONWebKeySet, error) {
 	now := verifier.now()
 	c.mu.Lock()
+
 	if c.haveKeys && !c.revalidationRequired(now) {
 		if c.containsKIDLocked(kid) {
 			keys := c.keys
 			c.mu.Unlock()
 			return keys, nil
+		}
+	}
+	unknownKID := !c.containsKIDLocked(kid)
+	if unknownKID {
+		if err := c.unknownKIDThrottleLocked(now, kid); err != nil {
+			c.mu.Unlock()
+			return jose.JSONWebKeySet{}, err
 		}
 	}
 	c.mu.Unlock()
@@ -371,17 +382,18 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 				return jwksRefreshResult{keys: keys, retained: true, owner: owner}, nil
 			}
 		}
-		if c.haveKeys && !c.containsKIDLocked(kid) {
-			if !c.lastUnknownKIDRefresh.IsZero() && refreshNow.Sub(c.lastUnknownKIDRefresh) < time.Minute {
+		unknownKID := !c.containsKIDLocked(kid)
+		if unknownKID {
+			if err := c.unknownKIDThrottleLocked(refreshNow, kid); err != nil {
 				c.mu.Unlock()
-				return jwksRefreshResult{}, ErrInvalidAccessToken
+				return jwksRefreshResult{}, err
 			}
-			c.lastUnknownKIDRefresh = refreshNow
 		}
 		conditional := jwksConditionalRequest{ETag: c.etag, LastModified: c.lastModified}
 		c.mu.Unlock()
 		keys, retained, err := c.refresh(ctx, verifier, conditional, refreshNow)
-		return jwksRefreshResult{keys: keys, retained: retained, owner: owner}, err
+		c.recordUnknownKIDOutcome(verifier.now(), kid, unknownKID, keys, err)
+		return jwksRefreshResult{keys: keys, retained: retained, owner: owner, unknownKID: unknownKID}, err
 	})
 	if err != nil {
 		if errors.Is(err, ErrInvalidAccessToken) {
@@ -396,11 +408,20 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 	}
 	refresh := result.(jwksRefreshResult)
 	if !refresh.retained && refresh.owner != owner {
+		if refresh.unknownKID {
+			c.mu.Lock()
+			throttleErr := c.unknownKIDThrottleLocked(verifier.now(), kid)
+			c.mu.Unlock()
+			if throttleErr != nil {
+				return jose.JSONWebKeySet{}, throttleErr
+			}
+		}
 		keys, retained, refreshErr := c.refresh(ctx, verifier, jwksConditionalRequest{}, verifier.now())
+		c.recordUnknownKIDOutcome(verifier.now(), kid, refresh.unknownKID, keys, refreshErr)
 		if refreshErr != nil {
 			return jose.JSONWebKeySet{}, ErrAccessTokenKeyUnavailable
 		}
-		refresh = jwksRefreshResult{keys: keys, retained: retained, owner: owner}
+		refresh = jwksRefreshResult{keys: keys, retained: retained, owner: owner, unknownKID: refresh.unknownKID}
 	}
 	if refresh.retained && !keySetContains(refresh.keys, kid) {
 		return jose.JSONWebKeySet{}, ErrInvalidAccessToken
@@ -412,9 +433,58 @@ func (c *jwksCache) keysForKID(ctx context.Context, verifier *AccessTokenVerifie
 }
 
 type jwksRefreshResult struct {
-	keys     jose.JSONWebKeySet
-	retained bool
-	owner    *byte
+	keys       jose.JSONWebKeySet
+	retained   bool
+	owner      *byte
+	unknownKID bool
+}
+
+func (c *jwksCache) unknownKIDThrottleLocked(now time.Time, kid string) error {
+	if c.lastUnknownKIDRefresh.IsZero() || !now.Before(c.lastUnknownKIDRefresh.Add(time.Minute)) {
+		return nil
+	}
+	if !c.lastUnknownKIDSuccess {
+		return ErrAccessTokenKeyUnavailable
+	}
+	if _, present := c.lastUnknownKIDKeys[kid]; present {
+		return nil
+	}
+	// A successful result obtained before the retained cache expired does not
+	// satisfy the next mandatory revalidation. Allow that one fetch, but keep
+	// the successful absence proof for cold and no-store caches.
+	if !c.lastUnknownKIDExpiry.IsZero() && !c.expiry.IsZero() && !now.Before(c.expiry) && c.lastUnknownKIDExpiry.After(c.lastUnknownKIDRefresh) {
+		return nil
+	}
+	return ErrInvalidAccessToken
+}
+
+func (c *jwksCache) recordUnknownKIDOutcome(now time.Time, kid string, unknownKID bool, keys jose.JSONWebKeySet, refreshErr error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !unknownKID {
+		return
+	}
+	if refreshErr == nil && keySetContains(keys, kid) {
+		c.lastUnknownKIDRefresh = time.Time{}
+		c.lastUnknownKIDExpiry = time.Time{}
+		c.lastUnknownKIDKeys = nil
+		c.lastUnknownKIDSuccess = false
+		return
+	}
+	c.lastUnknownKIDRefresh = now
+	c.lastUnknownKIDExpiry = c.expiry
+	if refreshErr != nil {
+		c.lastUnknownKIDSuccess = false
+		c.lastUnknownKIDKeys = nil
+		return
+	}
+	c.lastUnknownKIDSuccess = true
+	c.lastUnknownKIDKeys = make(map[string]struct{}, len(keys.Keys))
+	for _, key := range keys.Keys {
+		if key.KeyID != "" {
+			c.lastUnknownKIDKeys[key.KeyID] = struct{}{}
+		}
+	}
 }
 
 func (c *jwksCache) revalidationRequired(now time.Time) bool {
