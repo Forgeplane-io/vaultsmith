@@ -35,11 +35,19 @@ describe('API client', () => {
 
   it('loads public profiles from the same-origin endpoint', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      jsonResponse({ profiles: [{ id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false } }] }),
+      jsonResponse({ profiles: [{
+        id: 'dev',
+        label: 'Development',
+        capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: true },
+      }] }),
     )
 
     await expect(api.fetchProfiles()).resolves.toEqual([
-      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false } },
+      {
+        id: 'dev',
+        label: 'Development',
+        capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: true },
+      },
     ])
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/profiles', expect.objectContaining({ headers: { Accept: 'application/json' } }))
   })
@@ -54,6 +62,7 @@ describe('API client', () => {
         rotateSource: true,
         rotateDestination: false,
       },
+      futureCapability: true,
     }]
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ profiles }))
 
@@ -108,32 +117,57 @@ describe('API client', () => {
     }
   })
 
-  it('sends the exact operation contract', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ value: 'vault-output' }))
+  it('sends the canonical encrypt contract', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ vaultText: 'vault-output' }))
 
     await expect(api.runOperation({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })).resolves.toBe('vault-output')
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/operations',
+      '/api/v1/profiles/dev/encrypt',
       expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       }),
     )
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ plaintext: 'fixture-value' })
   })
 
-  it('sends the exact rotate operation contract', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ value: 'rotated-vault-output' }))
+  it('sends the canonical decrypt contract', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ plaintext: 'decrypted-output' }))
+
+    await expect(api.runOperation({ profileId: 'dev', mode: 'decrypt', value: 'vault-input' })).resolves.toBe('decrypted-output')
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/profiles/dev/decrypt',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ vaultText: 'vault-input' })
+  })
+
+  it('sends the canonical rotate operation contract', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ vaultText: 'rotated-vault-output' }))
 
     await expect(api.runOperation({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: 'vault-input' })).resolves.toBe('rotated-vault-output')
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/operations',
+      '/api/v1/rotations',
       expect.objectContaining({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       }),
     )
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: 'vault-input' })
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ sourceProfileId: 'dev', destinationProfileId: 'prod', vaultText: 'vault-input' })
+  })
+
+  it('URL-encodes profile IDs in canonical operation paths', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ vaultText: 'vault-output' }))
+
+    await expect(api.runOperation({ profileId: 'team/prod', mode: 'encrypt', value: 'fixture-value' })).resolves.toBe('vault-output')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/profiles/team%2Fprod/encrypt',
+      expect.anything(),
+    )
   })
 
   it('sends a CSRF-protected same-origin logout request', async () => {
@@ -282,7 +316,7 @@ describe('API client', () => {
         resolveLateVerification = resolve
       }))
       .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(jsonResponse({ value: 'vault-output' }))
+      .mockResolvedValueOnce(jsonResponse({ vaultText: 'vault-output' }))
 
     try {
       await api.fetchSession()
@@ -301,7 +335,7 @@ describe('API client', () => {
       await vi.advanceTimersByTimeAsync(0)
 
       await api.runOperation({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })
-      expect(fetchMock).toHaveBeenNthCalledWith(5, '/api/v1/operations', expect.objectContaining({
+      expect(fetchMock).toHaveBeenNthCalledWith(5, '/api/v1/profiles/dev/encrypt', expect.objectContaining({
         headers: { 'Content-Type': 'application/json' },
       }))
     } finally {

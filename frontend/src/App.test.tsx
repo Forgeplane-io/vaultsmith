@@ -4,27 +4,51 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { MAX_PLAINTEXT_BYTES, OPERATION_TIMEOUT_MS } from './api'
 import App from './App'
 
-const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
-  new Response(JSON.stringify(body), {
+const jsonResponse = (body: unknown, init: ResponseInit = {}) => {
+  const responseBody = body && typeof body === 'object' && 'value' in body
+    ? { vaultText: (body as { value: unknown }).value, plaintext: (body as { value: unknown }).value }
+    : body
+  return new Response(JSON.stringify(responseBody), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
     ...init,
   })
+}
 
 const emptyResponse = (status = 204) => new Response(null, { status })
 
-const defaultProfiles = [{ id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true } }]
+const defaultProfiles = [{ id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } }]
 const sourceAndDestinationProfiles = [
   ...defaultProfiles,
-  { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: true } },
+  { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
 ]
 const asymmetricProfiles = [
-  { id: 'write', label: 'Write only', capabilities: { encrypt: true, decrypt: false } },
-  { id: 'read', label: 'Read only', capabilities: { encrypt: false, decrypt: true } },
+  { id: 'write', label: 'Write only', capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: true } },
+  { id: 'read', label: 'Read only', capabilities: { encrypt: false, decrypt: true, rotateSource: true, rotateDestination: false } },
 ]
 
-function profilesResponse(profiles = defaultProfiles) {
-  return jsonResponse({ profiles })
+type TestProfile = {
+  id: string
+  label: string
+  capabilities: {
+    encrypt: boolean
+    decrypt: boolean
+    rotateSource?: boolean
+    rotateDestination?: boolean
+  }
+}
+
+function profilesResponse(profiles: TestProfile[] = defaultProfiles) {
+  return jsonResponse({
+    profiles: profiles.map((profile) => ({
+      ...profile,
+      capabilities: {
+        ...profile.capabilities,
+        rotateSource: profile.capabilities.rotateSource ?? profile.capabilities.decrypt,
+        rotateDestination: profile.capabilities.rotateDestination ?? profile.capabilities.encrypt,
+      },
+    })),
+  })
 }
 
 const sessionResponse = () => jsonResponse({ authenticated: false, authRequired: false, csrfToken: '' })
@@ -35,16 +59,25 @@ const authenticatedSessionResponse = () => jsonResponse({
   csrfToken: 'csrf-token',
 })
 
-function mockProfileLoad(profiles = defaultProfiles) {
+function mockProfileLoad(profiles: TestProfile[] = defaultProfiles) {
   return vi.spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(sessionResponse())
     .mockResolvedValueOnce(profilesResponse(profiles))
 }
 
-function mockAuthenticatedProfileLoad(profiles = defaultProfiles) {
+function mockAuthenticatedProfileLoad(profiles: TestProfile[] = defaultProfiles) {
   return vi.spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(authenticatedSessionResponse())
     .mockResolvedValueOnce(profilesResponse(profiles))
+}
+
+function isOperationPath(path: unknown): boolean {
+  return typeof path === 'string'
+    && (path === '/api/v1/rotations' || /^\/api\/v1\/profiles\/.*\/(encrypt|decrypt)$/.test(path))
+}
+
+function operationCalls(fetchMock: { mock: { calls: ReadonlyArray<ReadonlyArray<unknown>> } }) {
+  return fetchMock.mock.calls.filter(([path]) => isOperationPath(path))
 }
 
 const pastedVault = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
@@ -377,12 +410,12 @@ describe('Vaultsmith operator experience', () => {
 
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue('vault-output'))
     expect(fetchMock).toHaveBeenLastCalledWith(
-      '/api/v1/operations',
+      '/api/v1/profiles/dev/encrypt',
       expect.objectContaining({
         method: 'POST',
       }),
     )
-    expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })
+    expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({ plaintext: 'fixture-value' })
   })
 
   it('copies an encrypted result as an Ansible snippet with a valid variable name', async () => {
@@ -654,10 +687,10 @@ describe('Vaultsmith operator experience', () => {
 
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('Decrypted value hidden'))
     expect(fetchMock).toHaveBeenLastCalledWith(
-      '/api/v1/operations',
+      '/api/v1/profiles/dev/decrypt',
       expect.objectContaining({ method: 'POST' }),
     )
-    expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({ profileId: 'dev', mode: 'decrypt', value: '$ANSIBLE_VAULT;1.1;AES256\nfixture' })
+    expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({ vaultText: '$ANSIBLE_VAULT;1.1;AES256\nfixture' })
   })
 
   it('extracts a pasted Vault block in decrypt mode without reading navigator clipboard', async () => {
@@ -740,12 +773,12 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('textbox', { name: 'Ansible variable name' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Copy Ansible snippet' })).toBeDisabled()
     expect(fetchMock).toHaveBeenLastCalledWith(
-      '/api/v1/operations',
+      '/api/v1/rotations',
       expect.objectContaining({
         method: 'POST',
       }),
     )
-    expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: '$ANSIBLE_VAULT;1.1;AES256\nfixture' })
+    expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({ sourceProfileId: 'dev', destinationProfileId: 'prod', vaultText: '$ANSIBLE_VAULT;1.1;AES256\nfixture' })
   })
 
   it('filters selectors by action and clears ineligible selections across modes', async () => {
@@ -767,7 +800,7 @@ describe('Vaultsmith operator experience', () => {
     await user.type(screen.getByRole('textbox', { name: 'Protected value to decrypt' }), 'vault-text')
     expect(screen.getByRole('button', { name: 'Decrypt' })).toBeDisabled()
     fireEvent.submit(screen.getByRole('form', { name: 'Vault operation form' }))
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(0)
+    expect(operationCalls(fetchMock)).toHaveLength(0)
 
     await user.selectOptions(decryptSelect, 'read')
     await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
@@ -778,7 +811,7 @@ describe('Vaultsmith operator experience', () => {
     expect(within(destinationSelect).getByRole('option', { name: 'Write only' })).toBeInTheDocument()
     expect(within(destinationSelect).queryByRole('option', { name: 'Read only' })).not.toBeInTheDocument()
     expect(sourceSelect).toHaveValue('read')
-    expect(destinationSelect).toHaveValue('write')
+    await waitFor(() => expect(destinationSelect).toHaveValue('write'))
   })
 
   it('selects the first available operation when Encrypt is unavailable at startup', async () => {
@@ -1111,7 +1144,7 @@ describe('Vaultsmith operator experience', () => {
     await user.type(input, 'replacement-value')
     expect(screen.getByRole('status')).toHaveTextContent('Refreshing environments…')
     expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+    expect(operationCalls(fetchMock)).toHaveLength(1)
 
     resolveRefresh(profilesResponse(refreshedProfiles))
 
@@ -1122,7 +1155,7 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('combobox', { name: 'To environment' })).toHaveValue('')
     expect(within(screen.getByRole('combobox', { name: 'From environment' })).getByRole('option', { name: 'Production' })).toBeInTheDocument()
     expect(within(screen.getByRole('combobox', { name: 'To environment' })).getByRole('option', { name: 'Development' })).toBeInTheDocument()
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+    expect(operationCalls(fetchMock)).toHaveLength(1)
   })
 
   it('switches to an available operation after a permission refresh removes the current mode', async () => {
@@ -1175,7 +1208,7 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('button', { name: 'Encrypt' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Clear values' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Retry loading environments' })).toBeEnabled()
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+    expect(operationCalls(fetchMock)).toHaveLength(1)
 
     await user.click(screen.getByRole('button', { name: 'Clear values' }))
     expect(input).toHaveValue('')
@@ -1186,7 +1219,7 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Refreshing environments…')
     await user.type(input, 'replacement-value')
     expect(screen.getByRole('status')).toHaveTextContent('Refreshing environments…')
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+    expect(operationCalls(fetchMock)).toHaveLength(1)
 
     resolveRetry(profilesResponse(defaultProfiles))
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Your permissions changed. Environments were refreshed; review the selection and try again.'))
@@ -1344,20 +1377,20 @@ describe('Vaultsmith operator experience', () => {
     const suggestion = screen.getByRole('button', { name: 'Use Production' })
     expect(suggestion).toHaveAttribute('type', 'button')
     expect(environment).toHaveValue('dev')
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(0)
+    expect(operationCalls(fetchMock)).toHaveLength(0)
 
     await user.click(suggestion)
 
     expect(environment).toHaveValue('prod')
     expect(input).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;prod\nfixture')
     expect(screen.queryByRole('button', { name: 'Use Production' })).not.toBeInTheDocument()
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(0)
+    expect(operationCalls(fetchMock)).toHaveLength(0)
   })
 
   it('changes only the rotate source when a Vault ID suggestion is accepted', async () => {
     const profiles = [
       ...sourceAndDestinationProfiles,
-      { id: 'stage', label: 'Staging', capabilities: { encrypt: true, decrypt: true } },
+      { id: 'stage', label: 'Staging', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
     ]
     const fetchMock = mockProfileLoad(profiles)
     const user = userEvent.setup()
@@ -1377,14 +1410,14 @@ describe('Vaultsmith operator experience', () => {
     expect(source).toHaveValue('stage')
     expect(destination).toHaveValue('prod')
     expect(input).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;stage\nfixture')
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(0)
+    expect(operationCalls(fetchMock)).toHaveLength(0)
   })
 
   it('does not offer a Vault ID action for ineligible or unsafe inspection states', async () => {
     const profiles = [
-      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true } },
+      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
       { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: false } },
-      { id: 'stage', label: 'Staging', capabilities: { encrypt: true, decrypt: true } },
+      { id: 'stage', label: 'Staging', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
     ]
     mockProfileLoad(profiles)
     const user = userEvent.setup()
@@ -1412,7 +1445,7 @@ describe('Vaultsmith operator experience', () => {
   it('offers a retained Vault ID after a permission refresh clears the selection', async () => {
     const refreshedProfiles = [
       { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false } },
-      { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: true } },
+      { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
     ]
     const fetchMock = mockProfileLoad(sourceAndDestinationProfiles)
       .mockResolvedValueOnce(jsonResponse(
@@ -1433,13 +1466,13 @@ describe('Vaultsmith operator experience', () => {
     const environment = screen.getByRole('combobox', { name: 'Environment' })
     expect(environment).toHaveValue('')
     expect(input).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;prod\nfixture')
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+    expect(operationCalls(fetchMock)).toHaveLength(1)
 
     await user.click(screen.getByRole('button', { name: 'Use Production' }))
 
     expect(environment).toHaveValue('prod')
     expect(input).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;prod\nfixture')
-    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/v1/operations')).toHaveLength(1)
+    expect(operationCalls(fetchMock)).toHaveLength(1)
   })
 
   it('prioritizes unsupported format guidance over label mismatch', async () => {

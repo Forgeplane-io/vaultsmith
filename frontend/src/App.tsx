@@ -74,7 +74,7 @@ export default function App() {
       ? previousMode
       : preferredAvailableMode(loadedProfiles)
     const eligibleProfiles = profilesForMode(loadedProfiles, nextMode)
-    const encryptProfiles = profilesForMode(loadedProfiles, 'encrypt')
+    const destinationProfiles = profilesForCapability(loadedProfiles, 'rotateDestination')
     const allowInitialSelection = initialProfileSelectionRef.current && valueRef.current.length === 0
     initialProfileSelectionRef.current = false
     setProfiles(loadedProfiles)
@@ -87,9 +87,9 @@ export default function App() {
     setProfileId((current) => profileIsEligible(eligibleProfiles, current)
       ? current
       : allowInitialSelection ? eligibleProfiles[0]?.id || '' : '')
-    setDestinationProfileId((current) => profileIsEligible(encryptProfiles, current)
+    setDestinationProfileId((current) => profileIsEligible(destinationProfiles, current)
       ? current
-      : allowInitialSelection ? encryptProfiles[1]?.id || encryptProfiles[0]?.id || '' : '')
+      : allowInitialSelection ? destinationProfiles[1]?.id || destinationProfiles[0]?.id || '' : '')
   }
 
   useEffect(() => {
@@ -182,14 +182,20 @@ export default function App() {
   const visibleError = overLimit ? limitMessage(mode) : error || profileLoadError
   const encryptProfiles = useMemo(() => profilesForMode(profiles, 'encrypt'), [profiles])
   const decryptProfiles = useMemo(() => profilesForMode(profiles, 'decrypt'), [profiles])
-  const eligibleProfiles = mode === 'encrypt' ? encryptProfiles : decryptProfiles
+  const rotateSourceProfiles = useMemo(() => profilesForCapability(profiles, 'rotateSource'), [profiles])
+  const rotateDestinationProfiles = useMemo(() => profilesForCapability(profiles, 'rotateDestination'), [profiles])
+  const eligibleProfiles = mode === 'encrypt'
+    ? encryptProfiles
+    : mode === 'decrypt'
+      ? decryptProfiles
+      : rotateSourceProfiles
   const profileSnapshotReady = profileSnapshotValid && !loadingProfiles && !profileLoadFailed
   const encryptAvailable = encryptProfiles.length > 0
   const decryptAvailable = decryptProfiles.length > 0
-  const rotateAvailable = encryptAvailable && decryptAvailable
+  const rotateAvailable = rotateSourceProfiles.length > 0 && rotateDestinationProfiles.length > 0
   const modeAvailable = mode === 'encrypt' ? encryptAvailable : mode === 'decrypt' ? decryptAvailable : rotateAvailable
   const selectedProfileEligible = profileIsEligible(eligibleProfiles, profileId)
-  const selectedDestinationEligible = mode !== 'rotate' || profileIsEligible(encryptProfiles, destinationProfileId)
+  const selectedDestinationEligible = mode !== 'rotate' || profileIsEligible(rotateDestinationProfiles, destinationProfileId)
   const workbenchLocked = busy || signingOut
   const canSubmit = profileSnapshotReady && !workbenchLocked && modeAvailable && selectedProfileEligible && selectedDestinationEligible && value.length > 0 && !overLimit
   const canClear = Boolean(value || output || ansibleVariableName)
@@ -226,9 +232,9 @@ export default function App() {
   )
   const suggestedDecryptProfile = useMemo(
     () => profileSnapshotReady && mode !== 'encrypt' && formatInspection
-      ? vaultIdSuggestedProfile(formatInspection, profileId, decryptProfiles)
+      ? vaultIdSuggestedProfile(formatInspection, profileId, mode === 'rotate' ? rotateSourceProfiles : decryptProfiles)
       : null,
-    [decryptProfiles, formatInspection, mode, profileId, profileSnapshotReady],
+    [decryptProfiles, formatInspection, mode, profileId, profileSnapshotReady, rotateSourceProfiles],
   )
   const selectedProfileLabel = profiles.find((profile) => profile.id === profileId)?.label || profileId
   const inputDescriptionIds = value && formatInspection
@@ -257,7 +263,7 @@ export default function App() {
     const retainedInput = Boolean(value) && nextMode !== mode
     const nextProfiles = profilesForMode(profiles, nextMode)
     setProfileId((current) => profileIsEligible(nextProfiles, current) ? current : '')
-    setDestinationProfileId((current) => profileIsEligible(encryptProfiles, current) ? current : '')
+    setDestinationProfileId((current) => profileIsEligible(profilesForCapability(profiles, 'rotateDestination'), current) ? current : '')
     setMode(nextMode)
     invalidateOutput()
     setModeNotice(retainedInput
@@ -298,7 +304,7 @@ export default function App() {
     if (workbenchLocked || mode === 'encrypt' || !profileSnapshotReady) return
 
     const currentInspection = inspectVaultFormat(value, profileId)
-    const currentSuggestion = vaultIdSuggestedProfile(currentInspection, profileId, decryptProfiles)
+    const currentSuggestion = vaultIdSuggestedProfile(currentInspection, profileId, mode === 'rotate' ? rotateSourceProfiles : decryptProfiles)
     if (currentSuggestion?.id !== expectedProfileId) return
 
     changeProfile(currentSuggestion.id)
@@ -716,11 +722,11 @@ export default function App() {
                     <select
                       id="source-profile-select"
                       value={profileId}
-                      disabled={!profileSnapshotReady || workbenchLocked || decryptProfiles.length === 0}
+                      disabled={!profileSnapshotReady || workbenchLocked || rotateSourceProfiles.length === 0}
                       onChange={(event) => changeProfile(event.target.value)}
                     >
-                      {!profileIsEligible(decryptProfiles, profileId) && <option value="">Select an environment</option>}
-                      {decryptProfiles.map((profile) => (
+                      {!profileIsEligible(rotateSourceProfiles, profileId) && <option value="">Select an environment</option>}
+                      {rotateSourceProfiles.map((profile) => (
                         <option key={profile.id} value={profile.id}>{profile.label}</option>
                       ))}
                     </select>
@@ -730,11 +736,11 @@ export default function App() {
                     <select
                       id="destination-profile-select"
                       value={destinationProfileId}
-                      disabled={!profileSnapshotReady || workbenchLocked || encryptProfiles.length === 0}
+                      disabled={!profileSnapshotReady || workbenchLocked || rotateDestinationProfiles.length === 0}
                       onChange={(event) => changeDestinationProfile(event.target.value)}
                     >
-                      {!profileIsEligible(encryptProfiles, destinationProfileId) && <option value="">Select an environment</option>}
-                      {encryptProfiles.map((profile) => (
+                      {!profileIsEligible(rotateDestinationProfiles, destinationProfileId) && <option value="">Select an environment</option>}
+                      {rotateDestinationProfiles.map((profile) => (
                         <option key={profile.id} value={profile.id}>{profile.label}</option>
                       ))}
                     </select>
@@ -946,7 +952,7 @@ function operationReadyLabel(mode: OperationMode): string {
 
 function modeIsAvailable(profiles: Profile[], mode: OperationMode): boolean {
   if (mode === 'rotate') {
-    return profilesForMode(profiles, 'encrypt').length > 0 && profilesForMode(profiles, 'decrypt').length > 0
+    return profilesForCapability(profiles, 'rotateSource').length > 0 && profilesForCapability(profiles, 'rotateDestination').length > 0
   }
   return profilesForMode(profiles, mode).length > 0
 }
@@ -959,7 +965,11 @@ function preferredAvailableMode(profiles: Profile[]): OperationMode {
 }
 
 function profilesForMode(profiles: Profile[], mode: OperationMode): Profile[] {
-  const capability = mode === 'encrypt' ? 'encrypt' : 'decrypt'
+  const capability = mode === 'encrypt' ? 'encrypt' : mode === 'decrypt' ? 'decrypt' : 'rotateSource'
+  return profilesForCapability(profiles, capability)
+}
+
+function profilesForCapability(profiles: Profile[], capability: 'encrypt' | 'decrypt' | 'rotateSource' | 'rotateDestination'): Profile[] {
   return profiles.filter((profile) => profile.capabilities[capability])
 }
 
