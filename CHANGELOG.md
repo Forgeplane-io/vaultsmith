@@ -5,6 +5,12 @@ All notable changes to Vaultsmith are documented here. Release Please maintains 
 ## [0.5.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.4.0...v0.5.0) (2026-08-14)
 
 
+## Installation and Upgrading
+
+- The bundled UI now uses the canonical REST API. Older clients can continue to use `POST /api/v1/operations`.
+- Native deployments need OIDC, a public URL, CSRF, profile, policy, and Redis settings. See the deployment guide.
+- MCP is off by default.
+
 ### Features
 
 * **api:** add contract foundation ([3ff6709](https://github.com/Forgeplane-io/vaultsmith/commit/3ff670935092d98321bffe353c245d90c15cccb4))
