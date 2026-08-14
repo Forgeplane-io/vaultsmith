@@ -2,6 +2,33 @@
 
 All notable changes to Vaultsmith are documented here. Release Please maintains this file from Conventional Commits.
 
+## [0.5.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.4.0...v0.5.0) (2026-08-14)
+
+
+### Features
+
+* **api:** add contract foundation ([3ff6709](https://github.com/Forgeplane-io/vaultsmith/commit/3ff670935092d98321bffe353c245d90c15cccb4))
+* **api:** extract shared vault service ([95ca7c0](https://github.com/Forgeplane-io/vaultsmith/commit/95ca7c01313b23376b689a1cbace7ca5a904b2f3))
+* **api:** ship server bridge ([9666ce3](https://github.com/Forgeplane-io/vaultsmith/commit/9666ce3e50cdc5650abda679fafec9ed7c14981e))
+* **ui:** use canonical REST operation endpoints ([02685af](https://github.com/Forgeplane-io/vaultsmith/commit/02685afaee23a5f6b92890327f99c27fbf90ba9c))
+
+
+### Bug Fixes
+
+* **api:** address sequence 3 review blockers ([d98ad60](https://github.com/Forgeplane-io/vaultsmith/commit/d98ad601b2084b87a20ae8c6e1bfbe721535731b))
+* **api:** close authentication boundary blockers ([ba174a1](https://github.com/Forgeplane-io/vaultsmith/commit/ba174a19852dde104ba3ce761bbb1b22567efdc7))
+* **api:** close remaining review blockers ([4091764](https://github.com/Forgeplane-io/vaultsmith/commit/4091764fa22f5497e723115b593c6568e28026c6))
+* **api:** preserve MCP extension metadata ([65b1d2f](https://github.com/Forgeplane-io/vaultsmith/commit/65b1d2fd19d2e8a1c683566874d198da43b12a19))
+* **api:** reject malformed origin and endpoint URLs ([042d053](https://github.com/Forgeplane-io/vaultsmith/commit/042d053ebd115c044719362257d21e54b8b16fc7))
+* **api:** update vulnerable generator dependency ([776f656](https://github.com/Forgeplane-io/vaultsmith/commit/776f65634ffa77acc487e489c9a712dab786dab2))
+* **authn:** isolate JWKS refresh from caller cancellation ([a212bab](https://github.com/Forgeplane-io/vaultsmith/commit/a212bab8a07a7421d8b9eb2c294275e7546f26f5))
+* **authn:** retain JWKS unknown-kid throttle ([ba335d3](https://github.com/Forgeplane-io/vaultsmith/commit/ba335d3925190e292153da23daa2fd3d6f632a7e))
+* **ci:** harden release bootstrap ([0240d2d](https://github.com/Forgeplane-io/vaultsmith/commit/0240d2db13031178befa316de7b659c5602b002d))
+* **ci:** retry GoReleaser bootstrap ([0006bab](https://github.com/Forgeplane-io/vaultsmith/commit/0006bab5a9c167d826153ee27fe01900062b9852))
+* **ci:** verify active rollout pods ([61137f0](https://github.com/Forgeplane-io/vaultsmith/commit/61137f0303047483d080a0bd69eb4a943aded32f))
+* **ci:** verify release archive members ([02a6ff0](https://github.com/Forgeplane-io/vaultsmith/commit/02a6ff0b4876ae954588bb2a161263c2d3d0072c))
+* **ui:** update embedded frontend entrypoint ([022e3c0](https://github.com/Forgeplane-io/vaultsmith/commit/022e3c01ae5e819bd66ef3f597e0eaf5f213f50b))
+
 ## [0.4.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.3.1...v0.4.0) (2026-08-10)
 
 
