@@ -18,5 +18,9 @@
     { "type": "build", "section": "Maintenance", "hidden": true },
     { "type": "ci", "section": "Maintenance", "hidden": true },
     { "type": "chore", "section": "Maintenance", "hidden": true }
+  ],
+  "extra-files": [
+    { "type": "generic", "path": "README.md" },
+    { "type": "generic", "path": "docs/deployment.md" }
   ]
 }
