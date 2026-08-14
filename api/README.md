@@ -1,6 +1,13 @@
 # API contract
 
-`openapi.yaml` defines the v1 REST wire contract served by Vaultsmith. The bridge keeps legacy `POST /api/v1/operations` compatibility while adding canonical REST routes for profiles, encrypt, decrypt, and rotate.
+`openapi.yaml` defines the canonical v1 REST API served by Vaultsmith. The normal API surface is:
+
+- `GET /api/v1/profiles`
+- `POST /api/v1/profiles/{profileId}/encrypt`
+- `POST /api/v1/profiles/{profileId}/decrypt`
+- `POST /api/v1/rotations`
+
+The deprecated legacy operation endpoint, `POST /api/v1/operations`, remains only as a compatibility surface for existing v1 callers. New clients must use the canonical REST API.
 
 ## Requirements
 
@@ -59,4 +66,4 @@ Some decoder changes cannot be expressed by OpenAPI or `oasdiff`. Duplicate JSON
 
 ## Runtime notes
 
-Canonical REST and the legacy operation route share the same service authorization, byte limits, no-store responses, request IDs, and 30-second application deadline. Native Bearer access tokens use the `PUBLIC_BASE_URL` HTTPS origin as the audience and require exact scopes: `vaultsmith.profile.read`, `vaultsmith.encrypt`, `vaultsmith.decrypt`, and `vaultsmith.rotate`. The MCP endpoint is outside OpenAPI, is disabled by default, and uses `POST /mcp` only when `MCP_ENABLED=true`.
+The canonical REST API and the legacy operation endpoint share the same service authorization, byte limits, no-store responses, request IDs, and 30-second application deadline. Native Bearer access tokens use the `PUBLIC_BASE_URL` HTTPS origin as the audience and require exact scopes: `vaultsmith.profile.read`, `vaultsmith.encrypt`, `vaultsmith.decrypt`, and `vaultsmith.rotate`. The MCP endpoint is outside OpenAPI, is disabled by default, and uses `POST /mcp` only when `MCP_ENABLED=true`.

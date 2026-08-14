@@ -113,11 +113,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Run a deprecated tagged Vault operation
+         * Run the deprecated legacy operation endpoint
          * @deprecated
-         * @description Compatibility adapter retained for v1 and used by the bridge-release UI.
-         *     It accepts browser sessions only in native mode and is anonymous in off
-         *     mode. It keeps the released tagged variants and generic value response,
+         * @description Compatibility-only adapter retained for existing v1 callers. New clients
+         *     and the bundled UI use the canonical REST routes instead. It accepts
+         *     browser sessions only in native mode and is anonymous in off mode. It
+         *     keeps the released tagged variants and generic value response,
          *     while also requiring present non-null values and canonical profile IDs,
          *     rejecting every variant-irrelevant member, non-canonical field casing,
          *     duplicate JSON keys, malformed raw UTF-8, unsupported Content-Encoding,

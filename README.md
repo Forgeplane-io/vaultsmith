@@ -60,7 +60,7 @@ Native mode uses the verified `(iss, sub)` pair as identity. Browser users authe
 
 ### HTTP API
 
-The bundled UI keeps using the legacy operation route for this bridge release. Canonical REST routes and the legacy route share the same service behavior, limits, no-store responses, request IDs, 30-second application deadline, and admission limit. Configured CORS origins are explicit.
+The bundled UI uses the canonical REST API. The deprecated legacy operation endpoint remains for v1 compatibility only. Canonical REST and the legacy endpoint share the same service behavior, limits, no-store responses, request IDs, 30-second application deadline, and admission limit. Configured CORS origins are explicit.
 
 - [Static REST API reference](docs/api-reference.md)
 - [Authentication and authorization](docs/authentication.md)
@@ -72,17 +72,20 @@ The bundled UI keeps using the legacy operation route for this bridge release. C
 | `GET /healthz` | Liveness. |
 | `GET /readyz` | Readiness. |
 | `GET /api/v1/session` | Session and CSRF bootstrap. |
-| `GET /api/v1/profiles` | Profiles allowed for the current user and their capabilities. |
-| `POST /api/v1/operations` | Encrypt, decrypt, or re-key a value. |
-| `POST /api/v1/profiles/{profileId}/encrypt` | Canonical encrypt route. |
-| `POST /api/v1/profiles/{profileId}/decrypt` | Canonical decrypt route. |
-| `POST /api/v1/rotations` | Canonical re-key route. |
+| `GET /api/v1/profiles` | Canonical profile discovery. |
+| `POST /api/v1/profiles/{profileId}/encrypt` | Canonical Encrypt API. |
+| `POST /api/v1/profiles/{profileId}/decrypt` | Canonical Decrypt API. |
+| `POST /api/v1/rotations` | Canonical Rotate API (re-key in the UI). |
 | `GET /.well-known/oauth-protected-resource` | Native-mode protected-resource metadata. |
 | `POST /mcp` | MCP Streamable HTTP endpoint when `MCP_ENABLED=true`. |
 | `GET /metrics` | Private admission capacity, current use, and rejection counters. |
 | `GET /auth/login` | Start native OIDC login. |
 | `GET /auth/callback` | Complete native OIDC login. |
 | `POST /auth/logout` | CSRF-protected logout. |
+
+### Legacy compatibility
+
+`POST /api/v1/operations` is the deprecated legacy operation endpoint. It remains only for existing v1 compatibility callers. New clients and the bundled UI must use the canonical REST API above.
 
 Operation modes are `encrypt`, `decrypt`, and `rotate` (the API name for re-key). A re-key request names `sourceProfileId` and `destinationProfileId`. In native mode, session mutations require the CSRF token returned by `/api/v1/session`; Bearer requests do not use sessions or CSRF and require the exact operation scope. MCP is disabled by default with `mcp.enabled: false` / `MCP_ENABLED=false`.
 

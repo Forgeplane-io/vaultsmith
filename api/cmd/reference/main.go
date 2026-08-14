@@ -196,8 +196,26 @@ func generateReference(raw []byte) ([]byte, error) {
 
 	line(&out, "# Operations")
 	line(&out, "")
-	for _, item := range endpoints(doc.Paths) {
+	items := endpoints(doc.Paths)
+	for _, item := range items {
+		if item.Operation.Deprecated {
+			continue
+		}
 		writeOperation(&out, doc, item)
+	}
+
+	compatibility := make([]endpoint, 0)
+	for _, item := range items {
+		if item.Operation.Deprecated {
+			compatibility = append(compatibility, item)
+		}
+	}
+	if len(compatibility) > 0 {
+		line(&out, "# Compatibility")
+		line(&out, "")
+		for _, item := range compatibility {
+			writeOperation(&out, doc, item)
+		}
 	}
 
 	if len(doc.Components.Schemas) > 0 {

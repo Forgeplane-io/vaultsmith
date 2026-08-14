@@ -215,7 +215,7 @@ All operation responses are `Cache-Control: no-store`. Keep response bodies out 
 
 ## Compatibility policy
 
-`POST /api/v1/operations` is deprecated. It remains for the bundled bridge-release UI and supports native session or off mode only. New clients must use the canonical routes.
+`POST /api/v1/operations` is deprecated. It remains only as the legacy operation endpoint for existing v1 compatibility callers and supports native session or off mode. New clients and the bundled UI must use the canonical REST API. The examples above use canonical Encrypt, Decrypt, and Rotate routes; they do not use the legacy endpoint.
 
 The `/api/v1` wire contract is additive:
 

@@ -164,7 +164,7 @@ The protocol boundary is the client-visible HTTPS origin in `PUBLIC_BASE_URL`. T
 
 The application limits encrypt plaintext to 1 MiB, Vault text for decrypt/re-key to 5 MiB, and JSON request bodies to 8 MiB. Configure the edge to enforce a deliberate request limit no higher than the application limit and return an explicit `413` when exceeded. Rate limits must preserve measured normal automation bursts and identify the configured rate in operator logs or alerts; do not add a silent arbitrary cap.
 
-Every canonical REST, legacy operation, and enabled MCP request has a server-owned 30-second application deadline after route/method/no-body header validation. The server timeouts are 5 seconds for headers, 40 seconds for reads, and 45 seconds for writes; configure edge timeouts to at least 50 seconds.
+Every canonical REST, legacy operation endpoint, and enabled MCP request has a server-owned 30-second application deadline after route/method/no-body header validation. The server timeouts are 5 seconds for headers, 40 seconds for reads, and 45 seconds for writes; configure edge timeouts to at least 50 seconds.
 
 Operation admission is non-blocking after authentication and before body decoding. Saturation returns `503 temporarily_unavailable` with `Retry-After: 1`. The compiled cap is selected from [`docs/benchmarks/admission-linux-amd64-2026-08-12.md`](benchmarks/admission-linux-amd64-2026-08-12.md); Helm does not configure it.
 
