@@ -26,7 +26,7 @@ Use a Bearer access token for canonical REST and MCP machine clients:
 - `POST /api/v1/rotations`
 - `POST /mcp` when enabled
 
-Bearer requests do not load or update Redis sessions. They do not use CSRF and do not receive cookies. The deprecated `POST /api/v1/operations` route stays session-only in native mode for the bundled bridge-release UI.
+Bearer requests do not load or update Redis sessions. They do not use CSRF and do not receive cookies. The deprecated `POST /api/v1/operations` legacy operation endpoint stays session-only in native mode for compatibility callers.
 
 Do not send a session cookie and `Authorization` together. Vaultsmith rejects mixed or duplicate credentials. It never falls back to a session or anonymous access after an invalid Bearer token.
 

@@ -4,11 +4,13 @@ info:
   version: 1.0.0
   description: |
     Canonical v1 machine API for profile discovery and in-memory Ansible Vault
-    operations.
+    operations. The canonical REST operations are listed first in this
+    reference. POST /api/v1/operations is deprecated compatibility only; new
+    clients and the bundled UI use the canonical routes.
 
     Native mode accepts either the opaque browser session or an RFC 9068 Bearer
     access token on canonical REST routes. Session mutations also require the
-    CSRF header. The deprecated legacy operation route remains session-only.
+    CSRF header. The deprecated legacy operation endpoint remains session-only.
     At runtime, auth.mode=off removes these security requirements and grants
     every reachable caller full anonymous operation access. The static contract
     does not advertise an anonymous security alternative because that would be
@@ -272,11 +274,12 @@ paths:
       deprecated: true
       tags:
         - Operations
-      summary: Run a deprecated tagged Vault operation
+      summary: Run the deprecated legacy operation endpoint
       description: |
-        Compatibility adapter retained for v1 and used by the bridge-release UI.
-        It accepts browser sessions only in native mode and is anonymous in off
-        mode. It keeps the released tagged variants and generic value response,
+        Compatibility-only adapter retained for existing v1 callers. New clients
+        and the bundled UI use the canonical REST routes instead. It accepts
+        browser sessions only in native mode and is anonymous in off mode. It
+        keeps the released tagged variants and generic value response,
         while also requiring present non-null values and canonical profile IDs,
         rejecting every variant-irrelevant member, non-canonical field casing,
         duplicate JSON keys, malformed raw UTF-8, unsupported Content-Encoding,

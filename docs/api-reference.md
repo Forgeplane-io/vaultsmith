@@ -4,7 +4,7 @@
 
 **Contract version:** `1.0.0`
 
-Canonical v1 machine API for profile discovery and in-memory Ansible Vault operations. Native mode accepts either the opaque browser session or an RFC 9068 Bearer access token on canonical REST routes. Session mutations also require the CSRF header. The deprecated legacy operation route remains session-only. At runtime, auth.mode=off removes these security requirements and grants every reachable caller full anonymous operation access. The static contract does not advertise an anonymous security alternative because that would be unsafe for native deployments. Submitted plaintext and Vault text are processed in memory. Vaultsmith does not persist operation records, request values, results, idempotency data, or Bearer access tokens. Secret-bearing responses and API errors use Cache-Control: no-store and are not compressed.
+Canonical v1 machine API for profile discovery and in-memory Ansible Vault operations. The canonical REST operations are listed first in this reference. POST /api/v1/operations is deprecated compatibility only; new clients and the bundled UI use the canonical routes. Native mode accepts either the opaque browser session or an RFC 9068 Bearer access token on canonical REST routes. Session mutations also require the CSRF header. The deprecated legacy operation endpoint remains session-only. At runtime, auth.mode=off removes these security requirements and grants every reachable caller full anonymous operation access. The static contract does not advertise an anonymous security alternative because that would be unsafe for native deployments. Submitted plaintext and Vault text are processed in memory. Vaultsmith does not persist operation records, request values, results, idempotency data, or Bearer access tokens. Secret-bearing responses and API errors use Cache-Control: no-store and are not compressed.
 
 This is the static reference for the released REST contract. The canonical source is [`api/openapi.yaml`](../api/openapi.yaml). MCP is documented separately because it is not part of OpenAPI.
 
@@ -21,45 +21,6 @@ This is the static reference for the released REST contract. The canonical sourc
 | `SessionCookie` | apiKey | cookie `__Host-vaultsmith_session` | Opaque native-mode browser session cookie. |
 
 # Operations
-
-## `POST /api/v1/operations`
-
-**Run a deprecated tagged Vault operation**
-
-**Operation ID:** `legacyOperation`
-
-**Deprecated:** Yes
-
-Compatibility adapter retained for v1 and used by the bridge-release UI. It accepts browser sessions only in native mode and is anonymous in off mode. It keeps the released tagged variants and generic value response, while also requiring present non-null values and canonical profile IDs, rejecting every variant-irrelevant member, non-canonical field casing, duplicate JSON keys, malformed raw UTF-8, unsupported Content-Encoding, oversized decrypted plaintext, and ambiguous credentials. Legacy CORS and CSRF failures use the stable error-code table. The adapter executes through the shared service once.
-
-**Authentication:** `CsrfHeader` + `SessionCookie`
-
-**Application deadline:** 30 seconds
-
-**Maximum HTTP body:** 8388608 bytes (8 MiB)
-
-**Automatic retry:** Prohibited
-
-### Request body
-
-**Required:** yes
-
-- `application/json`: [LegacyOperationRequest](#schema-legacyoperationrequest)
-
-### Responses
-
-| Status | Meaning | Body |
-| --- | --- | --- |
-| `200` | Released generic operation result. | `application/json` [LegacyValueResponse](#schema-legacyvalueresponse) |
-| `400` | Invalid path value, JSON, UTF-8, fields, Origin, or credential combination. | [InvalidRequest](#response-invalidrequest) |
-| `401` | A browser session is missing or an Authorization header was supplied. | [UnauthorizedLegacy](#response-unauthorizedlegacy) |
-| `403` | CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request. | [Forbidden](#response-forbidden) |
-| `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
-| `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |
-| `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
-| `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
-| `422` | The Vault operation failed. Wrong passwords, malformed Vault text, MAC failures, invalid or oversized decrypted plaintext, and other Vault failures are intentionally indistinguishable. | [OperationFailed](#response-operationfailed) |
-| `503` | Startup state, a runtime authentication dependency, operation admission, or the 30-second application request deadline prevented completion. Retry-After is present only for immediate admission saturation. | [ServiceUnavailable](#response-serviceunavailable) |
 
 ## `GET /api/v1/profiles`
 
@@ -205,6 +166,47 @@ Decrypts with the source profile and re-encrypts with the destination profile. P
 | `200` | Newly randomized Vault text labeled for the destination profile. | `application/json` [RotateResponse](#schema-rotateresponse) |
 | `400` | Invalid path value, JSON, UTF-8, fields, Origin, or credential combination. | [InvalidRequest](#response-invalidrequest) |
 | `401` | Native-mode credentials are missing or invalid. | [Unauthorized](#response-unauthorized) |
+| `403` | CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request. | [Forbidden](#response-forbidden) |
+| `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
+| `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |
+| `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
+| `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
+| `422` | The Vault operation failed. Wrong passwords, malformed Vault text, MAC failures, invalid or oversized decrypted plaintext, and other Vault failures are intentionally indistinguishable. | [OperationFailed](#response-operationfailed) |
+| `503` | Startup state, a runtime authentication dependency, operation admission, or the 30-second application request deadline prevented completion. Retry-After is present only for immediate admission saturation. | [ServiceUnavailable](#response-serviceunavailable) |
+
+# Compatibility
+
+## `POST /api/v1/operations`
+
+**Run the deprecated legacy operation endpoint**
+
+**Operation ID:** `legacyOperation`
+
+**Deprecated:** Yes
+
+Compatibility-only adapter retained for existing v1 callers. New clients and the bundled UI use the canonical REST routes instead. It accepts browser sessions only in native mode and is anonymous in off mode. It keeps the released tagged variants and generic value response, while also requiring present non-null values and canonical profile IDs, rejecting every variant-irrelevant member, non-canonical field casing, duplicate JSON keys, malformed raw UTF-8, unsupported Content-Encoding, oversized decrypted plaintext, and ambiguous credentials. Legacy CORS and CSRF failures use the stable error-code table. The adapter executes through the shared service once.
+
+**Authentication:** `CsrfHeader` + `SessionCookie`
+
+**Application deadline:** 30 seconds
+
+**Maximum HTTP body:** 8388608 bytes (8 MiB)
+
+**Automatic retry:** Prohibited
+
+### Request body
+
+**Required:** yes
+
+- `application/json`: [LegacyOperationRequest](#schema-legacyoperationrequest)
+
+### Responses
+
+| Status | Meaning | Body |
+| --- | --- | --- |
+| `200` | Released generic operation result. | `application/json` [LegacyValueResponse](#schema-legacyvalueresponse) |
+| `400` | Invalid path value, JSON, UTF-8, fields, Origin, or credential combination. | [InvalidRequest](#response-invalidrequest) |
+| `401` | A browser session is missing or an Authorization header was supplied. | [UnauthorizedLegacy](#response-unauthorizedlegacy) |
 | `403` | CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request. | [Forbidden](#response-forbidden) |
 | `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
 | `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |

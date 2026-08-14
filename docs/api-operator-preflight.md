@@ -1,6 +1,6 @@
 # Machine API Rollout Checklist
 
-Use this checklist before activating canonical REST Bearer clients or MCP callers for a bridge release.
+Use this checklist before activating canonical REST Bearer clients or MCP callers for a Vaultsmith release.
 
 Copy the checklist to the private operations system for each environment. Do not commit a completed copy: it can contain identity subjects, internal URLs, and network details. Do not record tokens, credentials, private keys, Vault values, password environment names, or private file paths. An unanswered item blocks the rollout.
 
@@ -8,7 +8,7 @@ Copy the checklist to the private operations system for each environment. Do not
 - Owner:
 - Review date:
 - Rollout ticket:
-- Bridge version:
+- Vaultsmith version:
 - Status:
 
 ## Authentication and URLs
@@ -47,7 +47,7 @@ List every browser origin. Wildcards and `Origin: null` are invalid.
 
 ## Reserved environment names
 
-Older releases allowed profile password environment names that the bridge reserves.
+Older releases allowed profile password environment names that Vaultsmith reserves.
 
 | Check | Result | Owner if it fails |
 | --- | --- | --- |
@@ -116,7 +116,7 @@ Available scopes are case-sensitive:
 
 ## Build and capacity
 
-The bridge compiles its operation limit from a checked-in benchmark. Helm does not configure it.
+Vaultsmith compiles its operation limit from a checked-in benchmark. Helm does not configure it.
 
 | Check | Source | Evidence | Pass condition | Fix |
 | --- | --- | --- | --- | --- |
@@ -132,10 +132,10 @@ Do not start machine callers until the release includes the benchmark receipt, c
 
 Run these checks in order:
 
-1. Test the released UI against a mix of old and bridge replicas. Profile listing and one legacy operation must succeed, and the operation must run once.
-2. Test a Bearer client against one bridge canary. Verify audience, scopes, Casbin policy, and rejection of mixed credentials.
+1. Test the released UI against a mix of old and current replicas. Profile listing and the canonical Encrypt, Decrypt, and Rotate operations must succeed on current replicas; existing legacy operation callers must continue to work.
+2. Test a Bearer client against one current canary. Verify audience, scopes, Casbin policy, and rejection of mixed credentials.
 3. On every serving replica, verify that `/mcp` returns `404` for every method, including `OPTIONS`, while MCP is disabled.
-4. Roll out the bridge to every serving replica before starting external clients on canonical REST.
+4. Roll out the current release to every serving replica before starting external clients on canonical REST.
 5. Set `mcp.enabled=true` in a separate rollout. Start MCP callers only after every serving replica has MCP enabled.
 6. Run `server/discover`, `tools/list`, and one call for each tool with protocol revision `2026-07-28`. Confirm that responses stay within the protocol limits.
 7. Check `/healthz`, `/readyz`, issuer readiness, and JWKS readiness against their documented statuses.
@@ -143,18 +143,18 @@ Run these checks in order:
 
 Rollback is ordered:
 
-1. Stop all canonical external REST clients before rolling any replica below the bridge release.
+1. Stop all canonical external REST clients before rolling any replica below the current release.
 2. Stop MCP callers before setting `mcp.enabled=false`.
-3. Record the restart owner and get separate restart approval before the MCP-disable or bridge-image rollout.
-4. Roll back the bridge image or route traffic to the previous replicas.
+3. Record the restart owner and get separate restart approval before the MCP-disable or application-image rollout.
+4. Roll back the application image or route traffic to the previous release replicas.
 
 A rollback must not require profile password or policy changes.
 
-## Legacy route removal
+## Legacy operation endpoint removal
 
 `POST /api/v1/operations` remains available throughout v1. Removal requires v2 and all of these conditions:
 
-- [ ] The bundled UI uses only canonical routes.
+- [x] The current bundled UI uses only canonical routes.
 - [ ] Known external callers have moved and their owners confirmed the change.
 - [ ] Route metrics show no expected traffic during the agreed observation window.
 - [ ] Release notes announce the removal and the change passes compatibility review.

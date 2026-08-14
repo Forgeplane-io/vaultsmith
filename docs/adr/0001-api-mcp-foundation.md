@@ -6,11 +6,11 @@
 
 ## Context
 
-Vaultsmith v0.4.0 exposes `GET /api/v1/profiles` and `POST /api/v1/operations` to the bundled browser UI. The handlers decode HTTP requests, select credentials and profiles, enforce policy and limits, and run Vault operations.
+Vaultsmith v0.4.0 exposed `GET /api/v1/profiles` and `POST /api/v1/operations` to the bundled browser UI. This is historical v0.4.0 context; current releases use the canonical REST routes for the bundled UI. The handlers decode HTTP requests, select credentials and profiles, enforce policy and limits, and run Vault operations.
 
 The new API must also support OAuth clients and MCP agents. These callers must use the same profiles, policy, limits, and operation code as the UI. Profile passwords stay on the server. Vaultsmith does not store submitted plaintext, Vault text, or operation results.
 
-During a rolling deployment, one pod can serve old UI assets while another handles the request. The legacy route must therefore keep working until every pod and the bundled UI have moved to the new routes.
+During the v0.4.0-to-v0.5.0 migration, one pod could serve old UI assets while another handled the request. The legacy operation endpoint therefore stayed available until every pod and the bundled UI moved to the canonical routes. Current releases have completed that UI migration.
 
 ## Decision
 
@@ -42,7 +42,7 @@ Health, readiness, login, callback, logout, and browser-session bootstrap routes
 
 - In `native` mode, canonical REST accepts exactly one browser session or one OAuth Bearer token.
 - In `native` mode, MCP accepts Bearer tokens only.
-- In `native` mode, the legacy route accepts browser sessions only and rejects an `Authorization` header before reading the body.
+- In `native` mode, the legacy operation endpoint accepts browser sessions only and rejects an `Authorization` header before reading the body.
 - In `off` mode, REST and enabled MCP are anonymous. Any caller that can reach them can run every operation. Vaultsmith rejects supplied `Authorization` headers because it cannot validate them in this mode.
 - Browser-session mutations require CSRF. Bearer and anonymous requests do not.
 - Bearer requests never fall back to a session or read or write Redis session state.
@@ -83,7 +83,7 @@ A shared caller package and `backend/internal/vaultservice` own profile projecti
 
 Every mutation passes through `Prepare` once. `Prepare` is the single full authorization point: it requires the active admission lease, validates and authorizes the command, and returns a request-bound prepared operation. `Run` can execute only that operation.
 
-One non-blocking admission controller covers body decoding and Vault work for canonical REST, the legacy route, and MCP. Its capacity is fixed in code from a checked-in benchmark. Helm does not configure it.
+One non-blocking admission controller covers body decoding and Vault work for canonical REST, the legacy operation endpoint, and MCP. Its capacity is fixed in code from a checked-in benchmark. Helm does not configure it.
 
 ### JSON and HTTP limits
 
@@ -101,7 +101,7 @@ All request paths reject duplicate JSON keys, trailing JSON values, and malforme
 | JSON request body | 8 MiB |
 | HTTP headers | 16 KiB |
 
-Canonical REST, the legacy route, and enabled MCP use a 30-second operation deadline that starts after credential authentication. The server read and write limits are 40 and 45 seconds. The edge timeout must be at least 50 seconds.
+Canonical REST, the legacy operation endpoint, and enabled MCP use a 30-second operation deadline that starts after credential authentication. The server read and write limits are 40 and 45 seconds. The edge timeout must be at least 50 seconds.
 
 API errors keep the existing shape:
 
@@ -136,7 +136,7 @@ Any non-empty `MCPGODEBUG` value stops startup before the listener binds. Profil
 
 ### Generation and compatibility
 
-`api/baselines/v0.4.0.yaml` records the REST API from v0.4.0. The bridge compares against this file. Later releases compare against the previous tagged `api/openapi.yaml`.
+`api/baselines/v0.4.0.yaml` records the REST API from v0.4.0. The compatibility checker compares against this file. Later releases compare against the previous tagged `api/openapi.yaml`.
 
 The toolchain is limited to:
 
@@ -148,7 +148,7 @@ Generated files are committed. CI regenerates and compiles them, validates OpenA
 
 Clients must ignore unknown response properties. New routes and optional response properties remain compatible with v1. Removing or renaming a field or route, or changing a status meaning, requires v2.
 
-The v0.4.0 decoder accepted omitted or null strings, empty or null fields from the wrong operation variant, non-canonical profile IDs, case-insensitive field names, duplicate keys, malformed UTF-8, unsupported content encodings, ambiguous credentials, oversized decrypted output, and legacy middleware error codes that the new bridge rejects. `oasdiff` findings are accepted one occurrence at a time. Release notes list every hardening in this paragraph, whether or not OpenAPI or `oasdiff` can describe it. Changes that OpenAPI cannot describe also need tests and an ADR entry. The bridge does not claim byte-for-byte compatibility with the old decoder.
+The v0.4.0 decoder accepted omitted or null strings, empty or null fields from the wrong operation variant, non-canonical profile IDs, case-insensitive field names, duplicate keys, malformed UTF-8, unsupported content encodings, ambiguous credentials, oversized decrypted output, and legacy middleware error codes that the current implementation rejects. `oasdiff` findings are accepted one occurrence at a time. Release notes list every hardening in this paragraph, whether or not OpenAPI or `oasdiff` can describe it. Changes that OpenAPI cannot describe also need tests and an ADR entry. The current implementation does not claim byte-for-byte compatibility with the old decoder.
 
 ### Data and telemetry
 
@@ -158,11 +158,10 @@ Logs, metrics, traces, errors, and new state must not contain request or respons
 
 ## Consequences
 
-- Old UI assets can keep using `/api/v1/operations` during the bridge rollout.
-- External clients do not use canonical REST until every serving pod runs the bridge release.
+- During the v0.4.0-to-v0.5.0 migration, old UI assets could keep using `/api/v1/operations` while replicas were mixed. That was a historical rollout constraint, not the current UI contract.
+- The current bundled UI uses canonical REST. External clients should use canonical REST after deploying the current release; the legacy operation endpoint remains only for existing v1 compatibility callers.
 - MCP starts in a separate rollout after every serving pod has it enabled.
 - Operators complete [`api-operator-preflight.md`](../api-operator-preflight.md) before enabling Bearer or MCP access.
-- A later release can move the bundled UI to the canonical routes.
 - `off` mode remains unsafe on an exposed network.
 
 ## Rejected alternatives
