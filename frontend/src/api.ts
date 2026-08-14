@@ -1,13 +1,12 @@
+import type { components } from './generated/api'
+
 export type OperationMode = 'encrypt' | 'decrypt' | 'rotate'
 
-export type Profile = {
-  id: string
-  label: string
-  capabilities: {
-    encrypt: boolean
-    decrypt: boolean
-  }
-}
+export type Profile = components['schemas']['Profile']
+
+type EncryptRequest = components['schemas']['EncryptRequest']
+type DecryptRequest = components['schemas']['DecryptRequest']
+type RotateRequest = components['schemas']['RotateRequest']
 
 export type Session = {
   authenticated: boolean
@@ -219,16 +218,33 @@ export async function logout(signal?: AbortSignal): Promise<void> {
 }
 
 export async function runOperation(request: OperationRequest, signal?: AbortSignal): Promise<string> {
-  const payload = await requestJSON('/api/v1/operations', {
+  const operation = request.mode === 'rotate'
+    ? {
+      path: '/api/v1/rotations',
+      body: {
+        sourceProfileId: request.sourceProfileId,
+        destinationProfileId: request.destinationProfileId,
+        vaultText: request.value,
+      } satisfies RotateRequest,
+      responseField: 'vaultText' as const,
+    }
+    : {
+      path: `/api/v1/profiles/${encodeURIComponent(request.profileId)}/${request.mode}`,
+      body: request.mode === 'encrypt'
+        ? { plaintext: request.value } satisfies EncryptRequest
+        : { vaultText: request.value } satisfies DecryptRequest,
+      responseField: request.mode === 'encrypt' ? 'vaultText' as const : 'plaintext' as const,
+    }
+  const payload = await requestJSON(operation.path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
+    body: JSON.stringify(operation.body),
     signal,
   })
-  if (!isValueEnvelope(payload)) {
+  if (!isOperationResponse(payload, operation.responseField)) {
     throw new ApiError('The service returned an invalid operation response', 'invalid_response')
   }
-  return payload.value
+  return payload[operation.responseField]
 }
 
 export function utf8ByteLength(value: string): number {
@@ -269,9 +285,14 @@ function isProfile(value: unknown): value is Profile {
     && Boolean(capabilities && typeof capabilities === 'object')
     && typeof capabilities?.encrypt === 'boolean'
     && typeof capabilities?.decrypt === 'boolean'
+    && typeof capabilities?.rotateSource === 'boolean'
+    && typeof capabilities?.rotateDestination === 'boolean'
 }
 
-function isValueEnvelope(value: unknown): value is { value: string } {
-  if (!value || typeof value !== 'object' || !('value' in value)) return false
-  return typeof (value as { value?: unknown }).value === 'string'
+function isOperationResponse(
+  value: unknown,
+  field: 'vaultText' | 'plaintext',
+): value is Record<typeof field, string> {
+  if (!value || typeof value !== 'object' || !(field in value)) return false
+  return typeof (value as Record<string, unknown>)[field] === 'string'
 }
