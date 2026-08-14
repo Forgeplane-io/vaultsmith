@@ -25,12 +25,13 @@ Application limits:
 
 ### Install with Helm
 
-The public OCI chart is version `0.3.1`:
+The public OCI chart command below uses the release-managed chart version:
 
 ```sh
+VAULTSMITH_CHART_VERSION=0.5.0 # x-release-please-version
 helm upgrade --install vaultsmith \
   oci://ghcr.io/forgeplane-io/charts/vaultsmith \
-  --version 0.3.1 \
+  --version "$VAULTSMITH_CHART_VERSION" \
   --namespace vaultsmith \
   --create-namespace \
   -f /path/to/vaultsmith-values.yaml

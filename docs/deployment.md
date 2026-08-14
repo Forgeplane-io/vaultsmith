@@ -43,12 +43,13 @@ The only MCP chart value is `mcp.enabled`, which defaults to `false` and maps to
 
 ### Published chart
 
-The public OCI chart is version `0.3.1`:
+The public OCI chart command below uses the release-managed chart version:
 
 ```sh
+VAULTSMITH_CHART_VERSION=0.5.0 # x-release-please-version
 helm upgrade --install vaultsmith \
   oci://ghcr.io/forgeplane-io/charts/vaultsmith \
-  --version 0.3.1 \
+  --version "$VAULTSMITH_CHART_VERSION" \
   --namespace vaultsmith \
   --create-namespace \
   -f /path/to/vaultsmith-values.yaml
@@ -183,9 +184,10 @@ A Gateway, HTTPRoute, Ingress annotation, or NetworkPolicy object is not proof t
 3. Install or upgrade the release:
 
    ```sh
+   VAULTSMITH_CHART_VERSION=0.5.0 # x-release-please-version
    helm upgrade --install vaultsmith \
      oci://ghcr.io/forgeplane-io/charts/vaultsmith \
-     --version 0.3.1 \
+     --version "$VAULTSMITH_CHART_VERSION" \
      --namespace vaultsmith \
      --create-namespace \
      -f /path/to/vaultsmith-values.yaml \
