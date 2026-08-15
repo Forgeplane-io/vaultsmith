@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/forgeplane-io/vaultsmith/backend/internal/attestationkeyring"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authz"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
@@ -57,6 +58,8 @@ func run() error {
 	if authConfig.Mode == config.AuthModeOff {
 		log.Print("WARNING: Vaultsmith does not authenticate requests; run it only behind an authenticated private boundary.")
 	}
+	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	startupContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -96,6 +99,19 @@ func run() error {
 		}
 	}
 
+	var keyringManager *attestationkeyring.Manager
+	proofsConfig := loaded.Proofs()
+	if proofsConfig.Enabled {
+		keyringManager, err = attestationkeyring.NewManager(proofsConfig.KeyringFile, proofsConfig.Issuer)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = keyringManager.Close() }()
+		if err := keyringManager.Start(shutdownContext); err != nil {
+			return err
+		}
+	}
+
 	address := os.Getenv("HTTP_ADDR")
 	if address == "" {
 		address = defaultAddress
@@ -119,8 +135,6 @@ func run() error {
 		MaxHeaderBytes:    16 * 1024,
 	}
 
-	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	go func() {
 		<-shutdownContext.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
