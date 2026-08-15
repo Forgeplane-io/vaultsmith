@@ -58,6 +58,13 @@ const authenticatedSessionResponse = () => jsonResponse({
   email: 'operator@example.test',
   csrfToken: 'csrf-token',
 })
+const attestedSessionResponse = () => jsonResponse({
+  authenticated: true,
+  authRequired: true,
+  email: 'operator@example.test',
+  csrfToken: 'csrf-token',
+  attestationEnabled: true,
+})
 
 function mockProfileLoad(profiles: TestProfile[] = defaultProfiles) {
   return vi.spyOn(globalThis, 'fetch')
@@ -68,6 +75,12 @@ function mockProfileLoad(profiles: TestProfile[] = defaultProfiles) {
 function mockAuthenticatedProfileLoad(profiles: TestProfile[] = defaultProfiles) {
   return vi.spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(authenticatedSessionResponse())
+    .mockResolvedValueOnce(profilesResponse(profiles))
+}
+
+function mockAttestedProfileLoad(profiles: TestProfile[] = defaultProfiles) {
+  return vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(attestedSessionResponse())
     .mockResolvedValueOnce(profilesResponse(profiles))
 }
 
@@ -779,6 +792,103 @@ describe('Vaultsmith operator experience', () => {
       }),
     )
     expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({ sourceProfileId: 'dev', destinationProfileId: 'prod', vaultText: '$ANSIBLE_VAULT;1.1;AES256\nfixture' })
+  })
+
+  it('issues an attestation separately and opens the verify workbench from the result', async () => {
+    const fixtureAttestation = { protected: 'header', payload: 'claims', signature: 'signature' }
+    const fetchMock = mockAttestedProfileLoad(sourceAndDestinationProfiles)
+      .mockResolvedValueOnce(jsonResponse({ vaultText: '$ANSIBLE_VAULT;1.2;AES256;prod\\nrotated', attestation: fixtureAttestation }))
+      .mockResolvedValueOnce(jsonResponse({
+        valid: true,
+        attestation: {
+          issuer: 'https://vaultsmith.example.test',
+          issuedAt: '2026-08-15T12:00:00Z',
+          operation: 'rotate',
+          sourceProfileId: 'dev',
+          destinationProfileId: 'prod',
+          kid: 'kid-fixture',
+          binding: { repository: 'repo-fixture' },
+        },
+      }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Issue attestation' }))
+    await user.type(screen.getByRole('textbox', { name: 'Repository' }), 'repo-fixture')
+    await user.type(screen.getByRole('textbox', { name: 'Protected value to re-key' }), '$ANSIBLE_VAULT;1.1;AES256\\nfixture')
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;prod\\nrotated'))
+    expect(screen.getByRole('region', { name: 'Rotation attestation' })).toBeInTheDocument()
+    expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).toEqual({
+      sourceProfileId: 'dev',
+      destinationProfileId: 'prod',
+      vaultText: '$ANSIBLE_VAULT;1.1;AES256\\nfixture',
+      attestation: { binding: { repository: 'repo-fixture' } },
+    })
+
+    expect(screen.getByRole('button', { name: 'Copy attestation' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: /^Verify$/ }))
+    expect(screen.queryByRole('combobox', { name: 'Environment' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Attestation' })).toHaveValue(JSON.stringify(fixtureAttestation, null, 2))
+    await user.click(screen.getAllByRole('button', { name: 'Verify' }).at(-1)!)
+    expect(await screen.findByRole('heading', { name: 'Verified' })).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/attestations/verify', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('blocks bindings that exceed the canonical 4 KiB limit even when fields fit', async () => {
+    mockAttestedProfileLoad(sourceAndDestinationProfiles)
+    const user = userEvent.setup()
+    const maximumField = 'x'.repeat(1024)
+
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Issue attestation' }))
+    for (const field of ['Repository', 'Revision', 'Path', 'Selector']) {
+      fireEvent.change(screen.getByRole('textbox', { name: field }), { target: { value: maximumField } })
+    }
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Set verify mode' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Attestation' }), { target: { value: '{"protected":"header","payload":"claims","signature":"signature"}' } })
+    await user.type(screen.getByRole('textbox', { name: 'Original Vault' }), 'input-vault')
+    await user.type(screen.getByRole('textbox', { name: 'Rotated Vault' }), 'output-vault')
+    for (const field of ['Repository', 'Revision', 'Path', 'Selector']) {
+      fireEvent.change(screen.getByRole('textbox', { name: field }), { target: { value: maximumField } })
+    }
+    expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled()
+  })
+
+  it('offers verify without profiles and shows only a stable semantic failure', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(attestedSessionResponse())
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'forbidden', message: 'private profile detail' } }, { status: 403 }))
+      .mockResolvedValueOnce(jsonResponse({ valid: false, reason: 'binding_mismatch' }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    await user.click(await screen.findByRole('button', { name: 'Set verify mode' }))
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Attestation' }), { target: { value: '{"protected":"header","payload":"claims","signature":"signature"}' } })
+    await user.type(screen.getByRole('textbox', { name: 'Original Vault' }), 'input-vault')
+    await user.type(screen.getByRole('textbox', { name: 'Rotated Vault' }), 'output-vault')
+    await user.click(screen.getAllByRole('button', { name: 'Verify' }).at(-1)!)
+
+    expect(await screen.findByRole('heading', { name: 'Not verified' })).toBeInTheDocument()
+    const verificationResult = screen.getByRole('region', { name: 'Verification result' })
+    expect(verificationResult).toHaveTextContent('The attestation binding does not match the expected context.')
+    expect(verificationResult).not.toHaveTextContent('private profile detail')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/attestations/verify', expect.objectContaining({ method: 'POST' }))
+
+    await user.click(screen.getByRole('button', { name: 'Back to operations' }))
+    await user.click(screen.getByRole('button', { name: 'Set verify mode' }))
+    expect(screen.getByRole('textbox', { name: 'Attestation' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Original Vault' })).toHaveValue('')
+    expect(screen.getByRole('textbox', { name: 'Rotated Vault' })).toHaveValue('')
+    expect(screen.queryByRole('region', { name: 'Verification result' })).not.toBeInTheDocument()
   })
 
   it('filters selectors by action and clears ineligible selections across modes', async () => {

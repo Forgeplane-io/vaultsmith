@@ -108,6 +108,28 @@ input:disabled {
 .mode-fieldset legend { color: var(--text); font-size: 0.9rem; font-weight: 700; }
 .field-help { color: var(--dim); font-size: 0.82rem; font-weight: 400; line-height: 1.45; }
 .rotate-profile-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+.attestation-options { display: grid; gap: 0.75rem; margin: 0 0 0.75rem; padding: 0.8rem 0.9rem; border: 1px solid var(--border-soft); border-radius: 0.75rem; background: var(--surface); }
+.attestation-options legend { padding: 0 0.25rem; color: var(--text); font-size: 0.9rem; font-weight: 700; }
+.checkbox-label { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--text); font-weight: 700; }
+.checkbox-label input { width: 1rem; height: 1rem; accent-color: var(--accent); }
+.binding-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; }
+.verify-mode-controls { display: grid; gap: 0.75rem; width: 100%; }
+.verify-mode-button { align-self: end; }
+.verification-panes { grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); }
+.verification-card { min-height: 0; }
+.attestation-result-card,
+.verification-summary { display: grid; gap: 0.7rem; padding: 0.8rem 0.9rem; border: 1px solid var(--border-soft); border-radius: 0.75rem; background: var(--surface); }
+.attestation-result-card textarea { min-height: 8rem; resize: vertical; }
+.verification-actions { margin-top: 0.75rem; }
+.verification-summary { margin-top: 0.75rem; }
+.verification-summary[data-valid="true"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--border-soft)); }
+.verification-summary[data-valid="false"] { border-color: color-mix(in srgb, #d97b7b 50%, var(--border-soft)); }
+.verification-summary h2 { margin: 0; font-size: 1rem; }
+.verification-summary p { margin: 0; color: var(--muted); line-height: 1.45; }
+.verification-claims { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem 1rem; margin: 0; }
+.verification-claims > div { min-width: 0; }
+.verification-claims dt { color: var(--dim); font-size: 0.78rem; }
+.verification-claims dd { margin: 0.15rem 0 0; overflow-wrap: anywhere; color: var(--text); }
 select,
 input,
 textarea { border: 1px solid var(--border); border-radius: 0.55rem; background: var(--surface); color: var(--text); outline: none; }
@@ -275,6 +297,8 @@ textarea:disabled {
 
 @container (max-width: 34rem) {
   .rotate-profile-fields { grid-template-columns: 1fr; }
+  .binding-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .verification-claims { grid-template-columns: 1fr; }
   .format-inspector-grid { grid-template-columns: 1fr; gap: 0.6rem; }
 }
 
