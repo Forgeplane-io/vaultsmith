@@ -134,10 +134,7 @@ func TestVerificationPrecedenceAndReasons(t *testing.T) {
 
 	unsupported := claims
 	unsupported.Version = 2
-	future, err := Sign(unsupported, testKid, privateKey)
-	if err != nil {
-		t.Fatalf("Sign(future version) error = %v", err)
-	}
+	future := signClaimsForTest(t, unsupported, testKid, privateKey)
 	futureClaims, futureErr := Verify(future, base)
 	if reason, ok := VerificationReasonOf(futureErr); !ok || reason != UnsupportedVersion {
 		t.Fatalf("future version reason = %q, ok=%v, err=%v", reason, ok, futureErr)
@@ -330,6 +327,16 @@ func TestDigestDomainSeparation(t *testing.T) {
 	}
 }
 
+func TestSignRequiresSupportedVersion(t *testing.T) {
+	for _, version := range []int64{0, 2, MaxJCSSafeInteger} {
+		claims := testClaims(t)
+		claims.Version = version
+		if _, err := Sign(claims, testKid, testPrivateKey()); !errors.Is(err, ErrMalformed) {
+			t.Fatalf("Sign(version=%d) error = %v, want ErrMalformed", version, err)
+		}
+	}
+}
+
 func TestVersionSafeRange(t *testing.T) {
 	for _, version := range []int64{0, 1, MaxJCSSafeInteger} {
 		claims := testClaims(t)
@@ -429,6 +436,25 @@ func mutateSignature(t *testing.T, signed Signed) Signed {
 	signature[0] ^= 0x80
 	signed.Signature = encodeBase64URL(signature)
 	return signed
+}
+
+func signClaimsForTest(t *testing.T, claims RotationClaims, kid string, privateKey ed25519.PrivateKey) Signed {
+	t.Helper()
+	protected, err := canonicalProtectedHeader(protectedHeader{Alg: "EdDSA", Kid: kid, Typ: attestationType})
+	if err != nil {
+		t.Fatalf("canonical test header: %v", err)
+	}
+	payload, err := canonicalClaims(claims)
+	if err != nil {
+		t.Fatalf("canonical test claims: %v", err)
+	}
+	protectedEncoded := encodeBase64URL(protected)
+	payloadEncoded := encodeBase64URL(payload)
+	return Signed{
+		Protected: protectedEncoded,
+		Payload:   payloadEncoded,
+		Signature: encodeBase64URL(ed25519.Sign(privateKey, []byte(protectedEncoded+"."+payloadEncoded))),
+	}
 }
 
 func resignWithProtected(t *testing.T, signed Signed, protected []byte, privateKey ed25519.PrivateKey) Signed {

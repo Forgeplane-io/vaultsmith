@@ -64,12 +64,11 @@ var protectedMembers = map[string]struct{}{
 	"alg": {}, "kid": {}, "typ": {},
 }
 
-// Sign validates typed claims and emits a flattened EdDSA JWS. Version values
-// in the exact JCS-safe integer range are serializable so that a caller can
-// produce a signed future-version fixture; Verify reports versions other than
-// SupportedVersion as unsupported_version after signature validation.
+// Sign validates v1 typed claims and emits a flattened EdDSA JWS. Future
+// versions remain verifiable through test-only/raw construction so Verify can
+// report unsupported_version, but the public v1 signer cannot mint them.
 func Sign(claims RotationClaims, kid string, privateKey ed25519.PrivateKey) (Signed, error) {
-	if err := validateClaims(claims); err != nil {
+	if err := validateSigningClaims(claims); err != nil {
 		return Signed{}, ErrMalformed
 	}
 	if !validKID(kid) {
