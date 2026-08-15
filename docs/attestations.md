@@ -316,20 +316,37 @@ or response bodies in CI logs.
 
 The repository includes unit, race, and benchmark coverage for proof parsing,
 canonical digests, signing, verification, key lifecycle reload, malformed
-replacement handling, and the separate verifier admission path. Run the
-repository's Helm, Go, frontend, API, compatibility, smoke, and release checks
-before publishing. Benchmark results are machine and workload specific; do not
-change operation-admission limits from an unmeasured local run.
+replacement handling, the separate verifier admission path, rotation overhead,
+reload under traffic, large retired-key sets, and concurrent verification. Run
+the repository's Helm, Go, frontend, API, compatibility, smoke, and release
+checks before publishing. Benchmark results are machine and workload specific;
+do not change operation-admission limits from an unmeasured local run.
 
 The focused benchmark commands are:
 
 ```sh
-go test -run '^$' -bench 'Benchmark(IssueAttestation|VerifyAttestation)$' -benchmem ./backend/internal/vaultservice
+go test -run '^$' -bench 'Benchmark(IssueAttestation|VerifyAttestation|RotateAttestationOverhead)$' -benchmem ./backend/internal/vaultservice
+go test -run '^$' -bench 'Benchmark(KeyringReloadUnderTraffic|LargeRetiredKeySet|ConcurrentVerification)$' -benchmem ./backend/internal/attestationkeyring
 go test -run '^$' -bench BenchmarkDigestBytes -benchmem ./backend/internal/attestation
 ```
 
-These measure synthetic claims and byte buffers only. They are qualification
-inputs, not a portable production SLO or a Linux/amd64 baseline.
+As one local qualification sample (`darwin/arm64`, Apple M1 Pro, Go
+`-benchtime=200ms`), the focused cases measured approximately:
+
+| Case | ns/op | Notes |
+| --- | ---: | --- |
+| Rotation without attestation | 1,581 | Full service prepare/run path with synthetic Vault executor |
+| Rotation with attestation | 68,043 | Same path plus canonical digests and Ed25519 signing |
+| Keyring reload under traffic | 355,453 | Four concurrent Resolve/Sign workers while replacing the file |
+| Historical verification with 255 retired keys | 61,770 | Maximum supported 256-entry keyring, one active plus 255 retired |
+| Public discovery with 255 retired keys | 659,203 | JWKS serialization at the same supported bound |
+| Concurrent verification | 16,822 | Parallel Ed25519 verification through the immutable manager snapshot |
+
+These measure synthetic claims, envelopes, and keyrings only. They are
+qualification inputs, not portable production SLOs or Linux/amd64 baselines.
+The parser currently bounds a keyring at 256 entries and 64 KiB; those are the
+supported limits for retired-key history. The reload interval remains fixed
+application policy and is not a Helm value.
 
 The release acceptance evidence must show:
 
