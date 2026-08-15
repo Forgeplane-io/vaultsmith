@@ -16,10 +16,12 @@ import (
 )
 
 type Dependencies struct {
-	Auth       *authn.Authenticator
-	Authorizer *authz.Authorizer
-	AuthConfig config.AuthConfig
-	Admission  *vaultservice.Admission
+	Auth              *authn.Authenticator
+	Authorizer        *authz.Authorizer
+	AuthConfig        config.AuthConfig
+	Admission         *vaultservice.Admission
+	VerifierAdmission *vaultservice.Admission
+	Service           *vaultservice.Service
 }
 
 type SecurityOptions struct {
@@ -32,8 +34,18 @@ func NewWithDependencies(profiles []Profile, executor Executor, dependencies Dep
 	for _, profile := range profiles {
 		serviceProfiles = append(serviceProfiles, vaultservice.Profile{ID: profile.ID, Label: profile.Label})
 	}
+	service := dependencies.Service
+	if service == nil {
+		service = vaultservice.NewWithOptions(
+			serviceProfiles,
+			executor,
+			dependencies.Authorizer,
+			dependencies.Admission,
+			vaultservice.ServiceOptions{VerifierAdmission: dependencies.VerifierAdmission},
+		)
+	}
 	return &Handler{
-		service:    vaultservice.New(serviceProfiles, executor, dependencies.Authorizer, dependencies.Admission),
+		service:    service,
 		auth:       dependencies.Auth,
 		authConfig: dependencies.AuthConfig,
 	}
@@ -140,6 +152,8 @@ func applicationDeadlineApplies(r *http.Request) bool {
 		return true
 	case canonicalOperationPath(r.URL) && r.Method == http.MethodPost:
 		return true
+	case r.URL.Path == "/api/v1/attestations/verify" && r.Method == http.MethodPost:
+		return true
 	case r.URL.Path == "/mcp" && r.Method == http.MethodPost:
 		return true
 	default:
@@ -171,7 +185,7 @@ func preflightApplicationRequest(w http.ResponseWriter, r *http.Request, mcpEnab
 			methodNotAllowed(w, http.MethodGet)
 			return r, false
 		}
-	case r.URL.Path == "/api/v1/operations", r.URL.Path == "/api/v1/rotations", canonicalOperationPath(r.URL):
+	case r.URL.Path == "/api/v1/operations", r.URL.Path == "/api/v1/rotations", r.URL.Path == "/api/v1/attestations/verify", canonicalOperationPath(r.URL):
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
 			return r, false
@@ -296,6 +310,8 @@ func bearerRouteRequiredScope(r *http.Request) string {
 	switch r.URL.Path {
 	case "/api/v1/profiles":
 		return vaultservice.ScopeProfileRead
+	case "/api/v1/attestations/verify":
+		return vaultservice.ScopeAttestationVerify
 	case "/api/v1/rotations":
 		scope, _ := vaultservice.RequiredScope(vaultservice.OperationRotate)
 		return scope
@@ -322,6 +338,17 @@ func preflightBearerRoute(w http.ResponseWriter, r *http.Request, next http.Hand
 	case r.URL.Path == "/api/v1/profiles":
 		scope = vaultservice.ScopeProfileRead
 		err = handler.preflightProfiles(r.Context(), actor)
+	case r.URL.Path == "/api/v1/attestations/verify":
+		scope = vaultservice.ScopeAttestationVerify
+		if !actor.HasScope(scope) {
+			writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope, protectedResourceMetadataURL(cfg))
+			return false
+		}
+		if handler.service == nil {
+			writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeAttestationUnavailable), "rotation attestation service is unavailable")
+			return false
+		}
+		err = handler.service.PreflightAttestationVerify(r.Context(), actor)
 	case r.URL.Path == "/api/v1/rotations":
 		scope = vaultservice.ScopeRotate
 		err = handler.preflightOperation(r.Context(), actor, vaultservice.OperationRotate)
@@ -399,7 +426,7 @@ func classifyCredentialRoute(r *http.Request, mcpEnabled bool) credentialRoute {
 		return credentialRouteSessionFlow
 	case r.URL.Path == "/api/v1/operations":
 		return credentialRouteSessionOnly
-	case r.URL.Path == "/api/v1/profiles" || r.URL.Path == "/api/v1/rotations" || canonicalOperationPath(r.URL):
+	case r.URL.Path == "/api/v1/profiles" || r.URL.Path == "/api/v1/rotations" || r.URL.Path == "/api/v1/attestations/verify" || canonicalOperationPath(r.URL):
 		return credentialRouteSessionOrBearer
 	case r.URL.Path == "/mcp" && mcpEnabled:
 		return credentialRouteMCPBearer
@@ -535,7 +562,7 @@ func corsAllowedHeaders(r *http.Request, cfg config.AuthConfig, mcpEnabled bool)
 			headers = append(headers, "Authorization")
 		}
 	} else if cfg.Mode == config.AuthModeNative {
-		if r.URL.Path == "/api/v1/profiles" || r.URL.Path == "/api/v1/rotations" || canonicalOperationPath(r.URL) {
+		if r.URL.Path == "/api/v1/profiles" || r.URL.Path == "/api/v1/rotations" || r.URL.Path == "/api/v1/attestations/verify" || canonicalOperationPath(r.URL) {
 			headers = append(headers, "Authorization")
 		}
 	}

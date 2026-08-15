@@ -103,6 +103,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/attestations/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify a rotation attestation
+         * @description Verifies a flattened JWS rotation attestation against the local issuer,
+         *     immutable keyring, and supplied Vault envelopes. Verification never
+         *     decrypts either envelope or resolves configured profiles. A syntactically
+         *     valid attestation with a semantic mismatch returns HTTP 200 with valid
+         *     false and a closed verification reason.
+         */
+        post: operations["verifyAttestation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/.well-known/vaultsmith-attestation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get rotation-attestation metadata */
+        get: operations["attestationMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/.well-known/vaultsmith-attestation/jwks.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get public rotation-attestation keys */
+        get: operations["attestationJWKS"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the current session and capability state */
+        get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operations": {
         parameters: {
             query?: never;
@@ -179,11 +254,107 @@ export interface components {
             destinationProfileId: components["schemas"]["ProfileId"];
             /** @description UTF-8 Ansible Vault 1.1 or 1.2 text limited to 5 MiB by encoded bytes. */
             vaultText: string;
+            attestation?: components["schemas"]["RotationAttestationRequest"];
         };
         /** @description Secret-bearing response. Clients ignore unknown properties. */
         RotateResponse: {
             /** @description Ansible Vault 1.2/AES256 text labeled with the destination profile. */
             vaultText: string;
+            attestation?: components["schemas"]["RotationAttestation"];
+        };
+        /** @description Optional request to bind the rotation result to caller context. */
+        RotationAttestationRequest: {
+            binding?: components["schemas"]["RotationBinding"];
+        };
+        /** @description Partial exact-match binding. At least one field is required. */
+        RotationBinding: {
+            repository?: string;
+            revision?: string;
+            path?: string;
+            selector?: string;
+        };
+        RotationAttestation: {
+            /** @description Unpadded base64url protected JWS header. */
+            protected: string;
+            /** @description Unpadded base64url canonical JCS claims. */
+            payload: string;
+            /** @description Unpadded base64url pure Ed25519 signature. */
+            signature: string;
+        };
+        AttestationProtectedHeader: {
+            /** @constant */
+            alg: "Ed25519";
+            kid: string;
+            /** @constant */
+            typ: "application/vaultsmith-rotation-attestation+json";
+        };
+        DigestBinding: {
+            /** @constant */
+            algorithm: "sha-256";
+            digest: string;
+        };
+        RotationAttestationClaims: {
+            /** Format: uri */
+            issuer: string;
+            /** Format: date-time */
+            issuedAt: string;
+            /** @constant */
+            operation: "rotate";
+            sourceProfileId: components["schemas"]["ProfileId"];
+            destinationProfileId: components["schemas"]["ProfileId"];
+            kid: string;
+            binding?: components["schemas"]["RotationBinding"];
+        };
+        VerifyAttestationRequest: {
+            attestation: components["schemas"]["RotationAttestation"];
+            inputVaultText: string;
+            outputVaultText: string;
+            expectedBinding?: components["schemas"]["RotationBinding"];
+        };
+        /** @enum {string} */
+        AttestationVerificationReason: "signature_invalid" | "unknown_key" | "key_revoked" | "issuer_mismatch" | "unsupported_version" | "input_digest_mismatch" | "output_digest_mismatch" | "binding_mismatch";
+        VerifyAttestationResponse: {
+            valid: boolean;
+            reason?: components["schemas"]["AttestationVerificationReason"];
+            attestation?: components["schemas"]["RotationAttestationClaims"];
+        };
+        AttestationError: {
+            /** @enum {string} */
+            code: "feature_unavailable" | "attestation_unavailable" | "attestation_busy";
+            message: string;
+        };
+        AttestationErrorResponse: {
+            error: components["schemas"]["AttestationError"];
+        };
+        AttestationMetadata: {
+            /** Format: uri */
+            issuer: string;
+            activeKid: string;
+            attestationVersions: number[];
+            /** Format: uri */
+            jwksUri: string;
+            revokedKids: string[];
+        };
+        AttestationJWKS: {
+            keys: {
+                /** @constant */
+                kty: "OKP";
+                /** @constant */
+                crv: "Ed25519";
+                /** @constant */
+                alg: "Ed25519";
+                /** @constant */
+                use: "sig";
+                kid: string;
+                x: string;
+            }[];
+        };
+        SessionResponse: {
+            authenticated: boolean;
+            authRequired: boolean;
+            email?: string;
+            csrfToken: string;
+            attestationEnabled: boolean;
         };
         LegacyOperationRequest: components["schemas"]["LegacyEncryptRequest"] | components["schemas"]["LegacyDecryptRequest"] | components["schemas"]["LegacyRotateRequest"];
         LegacyEncryptRequest: {
@@ -451,6 +622,18 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /** @description The rotation-attestation subsystem is disabled, unavailable, or saturated. */
+        AttestationServiceUnavailable: {
+            headers: {
+                "Cache-Control": components["headers"]["NoStore"];
+                "X-Request-ID": components["headers"]["RequestId"];
+                "Retry-After": components["headers"]["RetryAfter"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["AttestationErrorResponse"];
+            };
+        };
     };
     parameters: {
         /** @description URL-decoded configured profile ID. Encoded path separators are rejected. */
@@ -644,6 +827,114 @@ export interface operations {
             413: components["responses"]["RequestTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["OperationFailed"];
+            503: components["responses"]["AttestationServiceUnavailable"];
+        };
+    };
+    verifyAttestation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyAttestationRequest"];
+            };
+        };
+        responses: {
+            /** @description Validity result and safe claims when signature verification succeeds. */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["NoStore"];
+                    "X-Request-ID": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyAttestationResponse"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            405: components["responses"]["MethodNotAllowedPost"];
+            413: components["responses"]["RequestTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            503: components["responses"]["AttestationServiceUnavailable"];
+        };
+    };
+    attestationMetadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deterministic non-secret local attestation metadata. */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["NoStore"];
+                    "X-Request-ID": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttestationMetadata"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            405: components["responses"]["MethodNotAllowedGet"];
+            503: components["responses"]["AttestationServiceUnavailable"];
+        };
+    };
+    attestationJWKS: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deterministic public-only Ed25519 JWKS. */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["NoStore"];
+                    "X-Request-ID": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttestationJWKS"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            405: components["responses"]["MethodNotAllowedGet"];
+            503: components["responses"]["AttestationServiceUnavailable"];
+        };
+    };
+    getSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session state with additive capability flags. */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["NoStore"];
+                    "X-Request-ID": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            405: components["responses"]["MethodNotAllowedGet"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

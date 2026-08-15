@@ -102,6 +102,14 @@ func (m *Manager) Snapshot() *Snapshot {
 	return m.current.Load()
 }
 
+// Issuer returns the canonical local issuer configured for this manager.
+func (m *Manager) Issuer() string {
+	if m == nil {
+		return ""
+	}
+	return m.issuer
+}
+
 // Ready reports whether a valid snapshot is available and the manager is not
 // closed.
 func (m *Manager) Ready() bool {

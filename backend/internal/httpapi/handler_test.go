@@ -223,7 +223,7 @@ func TestProtectedResourceMetadataNativeOnly(t *testing.T) {
 	if body.Resource != "https://vaultsmith.example.test" || !reflect.DeepEqual(body.AuthorizationServers, []string{"https://id.example.test/realms/vaultsmith"}) {
 		t.Fatalf("metadata = %#v", body)
 	}
-	if !reflect.DeepEqual(body.ScopesSupported, []string{vaultservice.ScopeProfileRead, vaultservice.ScopeEncrypt, vaultservice.ScopeDecrypt, vaultservice.ScopeRotate}) {
+	if !reflect.DeepEqual(body.ScopesSupported, []string{vaultservice.ScopeProfileRead, vaultservice.ScopeEncrypt, vaultservice.ScopeDecrypt, vaultservice.ScopeRotate, vaultservice.ScopeAttestationVerify}) {
 		t.Fatalf("scopes = %#v", body.ScopesSupported)
 	}
 

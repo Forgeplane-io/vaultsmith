@@ -6,6 +6,7 @@ package apimodels
 import (
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 )
@@ -46,6 +47,168 @@ func (e ApiErrorCode) Valid() bool {
 	}
 }
 
+// Defines values for AttestationErrorCode.
+const (
+	AttestationBusy        AttestationErrorCode = "attestation_busy"
+	AttestationUnavailable AttestationErrorCode = "attestation_unavailable"
+	FeatureUnavailable     AttestationErrorCode = "feature_unavailable"
+)
+
+// Valid indicates whether the value is a known member of the AttestationErrorCode enum.
+func (e AttestationErrorCode) Valid() bool {
+	switch e {
+	case AttestationBusy:
+		return true
+	case AttestationUnavailable:
+		return true
+	case FeatureUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AttestationJWKSKeysAlg.
+const (
+	AttestationJWKSKeysAlgEd25519 AttestationJWKSKeysAlg = "Ed25519"
+)
+
+// Valid indicates whether the value is a known member of the AttestationJWKSKeysAlg enum.
+func (e AttestationJWKSKeysAlg) Valid() bool {
+	switch e {
+	case AttestationJWKSKeysAlgEd25519:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AttestationJWKSKeysCrv.
+const (
+	AttestationJWKSKeysCrvEd25519 AttestationJWKSKeysCrv = "Ed25519"
+)
+
+// Valid indicates whether the value is a known member of the AttestationJWKSKeysCrv enum.
+func (e AttestationJWKSKeysCrv) Valid() bool {
+	switch e {
+	case AttestationJWKSKeysCrvEd25519:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AttestationJWKSKeysKty.
+const (
+	OKP AttestationJWKSKeysKty = "OKP"
+)
+
+// Valid indicates whether the value is a known member of the AttestationJWKSKeysKty enum.
+func (e AttestationJWKSKeysKty) Valid() bool {
+	switch e {
+	case OKP:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AttestationJWKSKeysUse.
+const (
+	Sig AttestationJWKSKeysUse = "sig"
+)
+
+// Valid indicates whether the value is a known member of the AttestationJWKSKeysUse enum.
+func (e AttestationJWKSKeysUse) Valid() bool {
+	switch e {
+	case Sig:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AttestationProtectedHeaderAlg.
+const (
+	AttestationProtectedHeaderAlgEd25519 AttestationProtectedHeaderAlg = "Ed25519"
+)
+
+// Valid indicates whether the value is a known member of the AttestationProtectedHeaderAlg enum.
+func (e AttestationProtectedHeaderAlg) Valid() bool {
+	switch e {
+	case AttestationProtectedHeaderAlgEd25519:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AttestationProtectedHeaderTyp.
+const (
+	ApplicationvaultsmithRotationAttestationJson AttestationProtectedHeaderTyp = "application/vaultsmith-rotation-attestation+json"
+)
+
+// Valid indicates whether the value is a known member of the AttestationProtectedHeaderTyp enum.
+func (e AttestationProtectedHeaderTyp) Valid() bool {
+	switch e {
+	case ApplicationvaultsmithRotationAttestationJson:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AttestationVerificationReason.
+const (
+	BindingMismatch      AttestationVerificationReason = "binding_mismatch"
+	InputDigestMismatch  AttestationVerificationReason = "input_digest_mismatch"
+	IssuerMismatch       AttestationVerificationReason = "issuer_mismatch"
+	KeyRevoked           AttestationVerificationReason = "key_revoked"
+	OutputDigestMismatch AttestationVerificationReason = "output_digest_mismatch"
+	SignatureInvalid     AttestationVerificationReason = "signature_invalid"
+	UnknownKey           AttestationVerificationReason = "unknown_key"
+	UnsupportedVersion   AttestationVerificationReason = "unsupported_version"
+)
+
+// Valid indicates whether the value is a known member of the AttestationVerificationReason enum.
+func (e AttestationVerificationReason) Valid() bool {
+	switch e {
+	case BindingMismatch:
+		return true
+	case InputDigestMismatch:
+		return true
+	case IssuerMismatch:
+		return true
+	case KeyRevoked:
+		return true
+	case OutputDigestMismatch:
+		return true
+	case SignatureInvalid:
+		return true
+	case UnknownKey:
+		return true
+	case UnsupportedVersion:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DigestBindingAlgorithm.
+const (
+	Sha256 DigestBindingAlgorithm = "sha-256"
+)
+
+// Valid indicates whether the value is a known member of the DigestBindingAlgorithm enum.
+func (e DigestBindingAlgorithm) Valid() bool {
+	switch e {
+	case Sha256:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for LegacyDecryptRequestMode.
 const (
 	Decrypt LegacyDecryptRequestMode = "decrypt"
@@ -78,13 +241,28 @@ func (e LegacyEncryptRequestMode) Valid() bool {
 
 // Defines values for LegacyRotateRequestMode.
 const (
-	Rotate LegacyRotateRequestMode = "rotate"
+	LegacyRotateRequestModeRotate LegacyRotateRequestMode = "rotate"
 )
 
 // Valid indicates whether the value is a known member of the LegacyRotateRequestMode enum.
 func (e LegacyRotateRequestMode) Valid() bool {
 	switch e {
-	case Rotate:
+	case LegacyRotateRequestModeRotate:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RotationAttestationClaimsOperation.
+const (
+	RotationAttestationClaimsOperationRotate RotationAttestationClaimsOperation = "rotate"
+)
+
+// Valid indicates whether the value is a known member of the RotationAttestationClaimsOperation enum.
+func (e RotationAttestationClaimsOperation) Valid() bool {
+	switch e {
+	case RotationAttestationClaimsOperationRotate:
 		return true
 	default:
 		return false
@@ -103,6 +281,69 @@ type ApiError struct {
 // ApiErrorCode Stable machine-readable error code.
 type ApiErrorCode string
 
+// AttestationError defines model for AttestationError.
+type AttestationError struct {
+	Code    AttestationErrorCode `json:"code"`
+	Message string               `json:"message"`
+}
+
+// AttestationErrorCode defines model for AttestationError.Code.
+type AttestationErrorCode string
+
+// AttestationErrorResponse defines model for AttestationErrorResponse.
+type AttestationErrorResponse struct {
+	Error AttestationError `json:"error"`
+}
+
+// AttestationJWKS defines model for AttestationJWKS.
+type AttestationJWKS struct {
+	Keys []struct {
+		Alg AttestationJWKSKeysAlg `json:"alg"`
+		Crv AttestationJWKSKeysCrv `json:"crv"`
+		Kid string                 `json:"kid"`
+		Kty AttestationJWKSKeysKty `json:"kty"`
+		Use AttestationJWKSKeysUse `json:"use"`
+		X   string                 `json:"x"`
+	} `json:"keys"`
+}
+
+// AttestationJWKSKeysAlg defines model for AttestationJWKS.Keys.Alg.
+type AttestationJWKSKeysAlg string
+
+// AttestationJWKSKeysCrv defines model for AttestationJWKS.Keys.Crv.
+type AttestationJWKSKeysCrv string
+
+// AttestationJWKSKeysKty defines model for AttestationJWKS.Keys.Kty.
+type AttestationJWKSKeysKty string
+
+// AttestationJWKSKeysUse defines model for AttestationJWKS.Keys.Use.
+type AttestationJWKSKeysUse string
+
+// AttestationMetadata defines model for AttestationMetadata.
+type AttestationMetadata struct {
+	ActiveKid           string   `json:"activeKid"`
+	AttestationVersions []int    `json:"attestationVersions"`
+	Issuer              string   `json:"issuer"`
+	JwksUri             string   `json:"jwksUri"`
+	RevokedKids         []string `json:"revokedKids"`
+}
+
+// AttestationProtectedHeader defines model for AttestationProtectedHeader.
+type AttestationProtectedHeader struct {
+	Alg AttestationProtectedHeaderAlg `json:"alg"`
+	Kid string                        `json:"kid"`
+	Typ AttestationProtectedHeaderTyp `json:"typ"`
+}
+
+// AttestationProtectedHeaderAlg defines model for AttestationProtectedHeader.Alg.
+type AttestationProtectedHeaderAlg string
+
+// AttestationProtectedHeaderTyp defines model for AttestationProtectedHeader.Typ.
+type AttestationProtectedHeaderTyp string
+
+// AttestationVerificationReason defines model for AttestationVerificationReason.
+type AttestationVerificationReason string
+
 // DecryptRequest defines model for DecryptRequest.
 type DecryptRequest struct {
 	// VaultText UTF-8 Ansible Vault 1.1 or 1.2 text limited to 5 MiB by encoded bytes.
@@ -114,6 +355,15 @@ type DecryptResponse struct {
 	// Plaintext Valid UTF-8 plaintext limited to 1 MiB by encoded bytes.
 	Plaintext string `json:"plaintext"`
 }
+
+// DigestBinding defines model for DigestBinding.
+type DigestBinding struct {
+	Algorithm DigestBindingAlgorithm `json:"algorithm"`
+	Digest    string                 `json:"digest"`
+}
+
+// DigestBindingAlgorithm defines model for DigestBinding.Algorithm.
+type DigestBindingAlgorithm string
 
 // EncryptRequest defines model for EncryptRequest.
 type EncryptRequest struct {
@@ -215,6 +465,9 @@ type ProfilesResponse struct {
 
 // RotateRequest defines model for RotateRequest.
 type RotateRequest struct {
+	// Attestation Optional request to bind the rotation result to caller context.
+	Attestation *RotationAttestationRequest `json:"attestation,omitempty"`
+
 	// DestinationProfileId Examples: production
 	DestinationProfileId ProfileId `json:"destinationProfileId"`
 
@@ -227,9 +480,85 @@ type RotateRequest struct {
 
 // RotateResponse Secret-bearing response. Clients ignore unknown properties.
 type RotateResponse struct {
+	Attestation *RotationAttestation `json:"attestation,omitempty"`
+
 	// VaultText Ansible Vault 1.2/AES256 text labeled with the destination profile.
 	VaultText string `json:"vaultText"`
 }
+
+// RotationAttestation defines model for RotationAttestation.
+type RotationAttestation struct {
+	// Payload Unpadded base64url canonical JCS claims.
+	Payload string `json:"payload"`
+
+	// Protected Unpadded base64url protected JWS header.
+	Protected string `json:"protected"`
+
+	// Signature Unpadded base64url pure Ed25519 signature.
+	Signature string `json:"signature"`
+}
+
+// RotationAttestationClaims defines model for RotationAttestationClaims.
+type RotationAttestationClaims struct {
+	// Binding Partial exact-match binding. At least one field is required.
+	Binding *RotationBinding `json:"binding,omitempty"`
+
+	// DestinationProfileId Examples: production
+	DestinationProfileId ProfileId                          `json:"destinationProfileId"`
+	IssuedAt             time.Time                          `json:"issuedAt"`
+	Issuer               string                             `json:"issuer"`
+	Kid                  string                             `json:"kid"`
+	Operation            RotationAttestationClaimsOperation `json:"operation"`
+
+	// SourceProfileId Examples: production
+	SourceProfileId ProfileId `json:"sourceProfileId"`
+}
+
+// RotationAttestationClaimsOperation defines model for RotationAttestationClaims.Operation.
+type RotationAttestationClaimsOperation string
+
+// RotationAttestationRequest Optional request to bind the rotation result to caller context.
+type RotationAttestationRequest struct {
+	// Binding Partial exact-match binding. At least one field is required.
+	Binding *RotationBinding `json:"binding,omitempty"`
+}
+
+// RotationBinding Partial exact-match binding. At least one field is required.
+type RotationBinding struct {
+	Path       *string `json:"path,omitempty"`
+	Repository *string `json:"repository,omitempty"`
+	Revision   *string `json:"revision,omitempty"`
+	Selector   *string `json:"selector,omitempty"`
+}
+
+// SessionResponse defines model for SessionResponse.
+type SessionResponse struct {
+	AttestationEnabled bool    `json:"attestationEnabled"`
+	AuthRequired       bool    `json:"authRequired"`
+	Authenticated      bool    `json:"authenticated"`
+	CsrfToken          string  `json:"csrfToken"`
+	Email              *string `json:"email,omitempty"`
+}
+
+// VerifyAttestationRequest defines model for VerifyAttestationRequest.
+type VerifyAttestationRequest struct {
+	Attestation RotationAttestation `json:"attestation"`
+
+	// ExpectedBinding Partial exact-match binding. At least one field is required.
+	ExpectedBinding *RotationBinding `json:"expectedBinding,omitempty"`
+	InputVaultText  string           `json:"inputVaultText"`
+	OutputVaultText string           `json:"outputVaultText"`
+}
+
+// VerifyAttestationResponse defines model for VerifyAttestationResponse.
+type VerifyAttestationResponse struct {
+	Attestation *RotationAttestationClaims     `json:"attestation,omitempty"`
+	Reason      *AttestationVerificationReason `json:"reason,omitempty"`
+	Valid       bool                           `json:"valid"`
+}
+
+// AttestationServiceUnavailable defines model for AttestationServiceUnavailable.
+type AttestationServiceUnavailable = AttestationErrorResponse
 
 // Forbidden Safe API error envelope. Clients ignore unknown properties.
 type Forbidden = ErrorResponse
@@ -263,6 +592,9 @@ type UnauthorizedLegacy = ErrorResponse
 
 // UnsupportedMediaType Safe API error envelope. Clients ignore unknown properties.
 type UnsupportedMediaType = ErrorResponse
+
+// VerifyAttestationJSONRequestBody defines body for VerifyAttestation for application/json ContentType.
+type VerifyAttestationJSONRequestBody = VerifyAttestationRequest
 
 // LegacyOperationJSONRequestBody defines body for LegacyOperation for application/json ContentType.
 //

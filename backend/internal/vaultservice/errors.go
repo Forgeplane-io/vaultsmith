@@ -15,6 +15,9 @@ const (
 	CodeNotReady               Code = "not_ready"
 	CodeOperationFailed        Code = "operation_failed"
 	CodeTemporarilyUnavailable Code = "temporarily_unavailable"
+	CodeFeatureUnavailable     Code = "feature_unavailable"
+	CodeAttestationUnavailable Code = "attestation_unavailable"
+	CodeAttestationBusy        Code = "attestation_busy"
 )
 
 // Error contains only a stable classification and safe human text. It never
@@ -89,6 +92,14 @@ func invalidRequest(message string) error {
 	return errorWithCode(CodeInvalidRequest, message)
 }
 
+func invalidAttestationRequest(cause error) error {
+	return &Error{
+		code:    CodeInvalidRequest,
+		message: "invalid attestation verification request",
+		cause:   cause,
+	}
+}
+
 func tooLarge() error {
 	return errorWithCode(CodeTooLarge, "value is too large")
 }
@@ -124,4 +135,20 @@ func temporarilyUnavailable(cause ...error) error {
 		}
 	}
 	return &Error{code: CodeTemporarilyUnavailable, message: "service is temporarily unavailable", cause: safeCause}
+}
+
+func featureUnavailable() error {
+	return errorWithCode(CodeFeatureUnavailable, "rotation attestations are disabled")
+}
+
+func attestationUnavailable() error {
+	return errorWithCode(CodeAttestationUnavailable, "rotation attestation service is unavailable")
+}
+
+func attestationBusy() error {
+	return &Error{
+		code:    CodeAttestationBusy,
+		message: "rotation attestation verification is busy",
+		cause:   ErrVerifierAdmissionSaturated,
+	}
 }

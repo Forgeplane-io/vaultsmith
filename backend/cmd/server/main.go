@@ -117,12 +117,24 @@ func run() error {
 		address = defaultAddress
 	}
 	admission := vaultservice.NewRuntimeAdmission()
+	verifierAdmission := vaultservice.NewRuntimeVerifierAdmission()
 	log.Printf("vault operation admission capacity=%d basis=min(GOMAXPROCS,%d); saturation returns HTTP 503", admission.Capacity(), vaultservice.MaxRuntimeAdmissionCapacity)
+	log.Printf("attestation verifier admission capacity=%d basis=min(GOMAXPROCS,%d); saturation returns HTTP 503", verifierAdmission.Capacity(), vaultservice.MaxVerifierAdmissionCapacity)
+	serviceProfiles := make([]vaultservice.Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		serviceProfiles = append(serviceProfiles, vaultservice.Profile{ID: profile.ID, Label: profile.Label})
+	}
+	service := vaultservice.NewWithOptions(serviceProfiles, executorResolver{configured: loaded.Executor()}, authorizer, admission, vaultservice.ServiceOptions{
+		AttestationManager: keyringManager,
+		AttestationEnabled: proofsConfig.Enabled,
+		VerifierAdmission:  verifierAdmission,
+	})
 	api := httpapi.NewWithDependencies(publicProfiles, executorResolver{configured: loaded.Executor()}, httpapi.Dependencies{
 		Auth:       authenticator,
 		Authorizer: authorizer,
 		AuthConfig: authConfig,
 		Admission:  admission,
+		Service:    service,
 	})
 	serverHandler := httpapi.WrapSecurityWithOptions(api, authConfig, httpapi.SecurityOptions{Auth: authenticator, MCPEnabled: mcpConfig.Enabled})
 	server := &http.Server{

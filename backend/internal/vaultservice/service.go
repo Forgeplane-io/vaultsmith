@@ -2,7 +2,6 @@ package vaultservice
 
 import (
 	"context"
-	"strings"
 	"sync/atomic"
 	"unicode/utf8"
 
@@ -62,6 +61,7 @@ type Command struct {
 	SourceProfileID      string
 	DestinationProfileID string
 	Value                string
+	Attestation          *AttestationRequest
 }
 
 // ProfileExecutor is bound to one resolved profile. It never accepts a profile
@@ -86,61 +86,33 @@ type catalogEntry struct {
 }
 
 type Service struct {
-	profiles   []catalogEntry
-	byID       map[string]catalogEntry
-	authorizer Authorizer
-	admission  *Admission
-	ready      bool
+	profiles           []catalogEntry
+	byID               map[string]catalogEntry
+	authorizer         Authorizer
+	admission          *Admission
+	ready              bool
+	attestation        AttestationManager
+	attestationEnabled bool
+	verifierAdmission  *VerifierAdmission
 }
 
 type PreparedOperation struct {
-	service     *Service
-	lease       *Lease
-	context     context.Context
-	actor       caller.Caller
-	operation   Operation
-	value       string
-	source      ProfileExecutor
-	destination ProfileExecutor
-	started     *atomic.Bool
+	service       *Service
+	lease         *Lease
+	context       context.Context
+	actor         caller.Caller
+	operation     Operation
+	value         string
+	source        ProfileExecutor
+	destination   ProfileExecutor
+	sourceID      string
+	destinationID string
+	attestation   *AttestationRequest
+	started       *atomic.Bool
 }
 
 func New(profiles []Profile, executor Executor, authorizer Authorizer, admission *Admission) *Service {
-	if admission == nil {
-		admission = NewRuntimeAdmission()
-	}
-	entries := make([]catalogEntry, 0, len(profiles))
-	byID := make(map[string]catalogEntry, len(profiles))
-	ready := len(profiles) > 0 && executor != nil && admission != nil
-	for _, input := range profiles {
-		profile := Profile{ID: input.ID, Label: input.Label}
-		if !config.IsValidProfileID(profile.ID) || strings.TrimSpace(profile.Label) == "" {
-			ready = false
-		}
-		if _, duplicate := byID[profile.ID]; duplicate {
-			ready = false
-		}
-		var bound ProfileExecutor
-		if executor != nil {
-			resolved, err := executor.ForProfile(profile.ID)
-			if err == nil {
-				bound = resolved
-			}
-		}
-		if bound == nil {
-			ready = false
-		}
-		entry := catalogEntry{profile: profile, executor: bound}
-		entries = append(entries, entry)
-		byID[profile.ID] = entry
-	}
-	return &Service{
-		profiles:   entries,
-		byID:       byID,
-		authorizer: authorizer,
-		admission:  admission,
-		ready:      ready,
-	}
+	return NewWithOptions(profiles, executor, authorizer, admission, ServiceOptions{})
 }
 
 func (s *Service) Ready() bool {
@@ -254,6 +226,14 @@ func (s *Service) Prepare(ctx context.Context, actor caller.Caller, command Comm
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
+	if command.Attestation != nil {
+		if command.Operation != OperationRotate {
+			return nil, invalidRequest("attestation is only supported for rotation")
+		}
+		if err := s.attestationRequestAvailable(); err != nil {
+			return nil, err
+		}
+	}
 	if !s.Ready() {
 		return nil, notReady("service is not ready")
 	}
@@ -312,15 +292,18 @@ func (s *Service) Prepare(ctx context.Context, actor caller.Caller, command Comm
 		return nil, err
 	}
 	return &PreparedOperation{
-		service:     s,
-		lease:       lease,
-		context:     executionContext,
-		started:     &atomic.Bool{},
-		actor:       actor,
-		operation:   command.Operation,
-		value:       command.Value,
-		source:      resolved.source,
-		destination: resolved.destination,
+		service:       s,
+		lease:         lease,
+		context:       executionContext,
+		started:       &atomic.Bool{},
+		actor:         actor,
+		operation:     command.Operation,
+		value:         command.Value,
+		source:        resolved.source,
+		destination:   resolved.destination,
+		sourceID:      command.SourceProfileID,
+		destinationID: command.DestinationProfileID,
+		attestation:   cloneAttestationRequest(command.Attestation),
 	}, nil
 }
 
@@ -339,6 +322,29 @@ func (s *Service) Rotate(ctx context.Context, actor caller.Caller, sourceProfile
 		DestinationProfileID: destinationProfileID,
 		Value:                vaultText,
 	})
+}
+
+// RotateResult is the result-aware rotation entry point. A nil request retains
+// the legacy output-only behavior while still returning the additive result
+// type for callers that use one code path for both modes.
+func (s *Service) RotateResult(ctx context.Context, actor caller.Caller, sourceProfileID, destinationProfileID, vaultText string, request *AttestationRequest) (RotationResult, error) {
+	lease := leaseFromContext(ctx)
+	prepared, err := s.Prepare(ctx, actor, Command{
+		Operation:            OperationRotate,
+		SourceProfileID:      sourceProfileID,
+		DestinationProfileID: destinationProfileID,
+		Value:                vaultText,
+		Attestation:          request,
+	}, lease)
+	if err != nil {
+		return RotationResult{}, err
+	}
+	return prepared.RunResult(ctx)
+}
+
+// RotateWithAttestation is a descriptive alias for RotateResult.
+func (s *Service) RotateWithAttestation(ctx context.Context, actor caller.Caller, sourceProfileID, destinationProfileID, vaultText string, request *AttestationRequest) (RotationResult, error) {
+	return s.RotateResult(ctx, actor, sourceProfileID, destinationProfileID, vaultText, request)
 }
 
 func (s *Service) prepareAndRun(ctx context.Context, actor caller.Caller, command Command) (string, error) {
@@ -379,6 +385,9 @@ type resolvedCommand struct {
 func validateCommandShape(command Command) error {
 	switch command.Operation {
 	case OperationEncrypt, OperationDecrypt:
+		if command.Attestation != nil {
+			return invalidRequest("attestation is only valid for rotate")
+		}
 		if command.SourceProfileID != "" || command.DestinationProfileID != "" {
 			return invalidRequest("source and destination profiles are only valid for rotate")
 		}
@@ -391,6 +400,9 @@ func validateCommandShape(command Command) error {
 		}
 		if !config.IsValidProfileID(command.SourceProfileID) || !config.IsValidProfileID(command.DestinationProfileID) {
 			return invalidRequest("profile ID is invalid")
+		}
+		if err := validateAttestationRequest(command.Attestation); err != nil {
+			return err
 		}
 	default:
 		return invalidRequest("operation mode is invalid")
@@ -508,80 +520,113 @@ func (p ProfileCapabilities) any() bool {
 }
 
 func (p *PreparedOperation) Run(ctx context.Context) (string, error) {
+	if p != nil && p.attestation != nil {
+		// The legacy string-only API cannot carry the requested proof. Refuse
+		// before execution rather than silently dropping it or mutating Vault.
+		return "", invalidRequest("attested rotation requires a result-aware runner")
+	}
+	result, err := p.runResult(ctx)
+	if err != nil {
+		return "", err
+	}
+	return result.VaultText, nil
+}
+
+// RunResult executes a prepared operation and retains an optional rotation
+// attestation alongside the Vault output.
+func (p *PreparedOperation) RunResult(ctx context.Context) (RotationResult, error) {
+	return p.runResult(ctx)
+}
+
+// RunWithResult is an explicit alias for callers that prefer a verb-oriented
+// name while migrating from the legacy string-only Run method.
+func (p *PreparedOperation) RunWithResult(ctx context.Context) (RotationResult, error) {
+	return p.RunResult(ctx)
+}
+
+func (p *PreparedOperation) runResult(ctx context.Context) (RotationResult, error) {
 	if p == nil || p.service == nil || p.lease == nil || p.context == nil || p.started == nil || p.source == nil {
-		return "", notReady("prepared operation is not ready")
+		return RotationResult{}, notReady("prepared operation is not ready")
 	}
 	if !p.started.CompareAndSwap(false, true) {
-		return "", notReady("prepared operation is not ready")
+		return RotationResult{}, notReady("prepared operation is not ready")
 	}
 	if err := leaseBoundContextError(ctx, p.lease); err != nil {
-		return "", err
+		return RotationResult{}, err
 	}
 	if !p.lease.holdForContext(ctx, p.service.admission) {
 		if err := leaseBoundContextError(ctx, p.lease); err != nil {
-			return "", err
+			return RotationResult{}, err
 		}
-		return "", notReady("operation admission is not ready")
+		return RotationResult{}, notReady("operation admission is not ready")
 	}
 	defer p.lease.releaseHold()
 	executionContext, releaseExecutionContext := mergeCancellationContexts(p.context, ctx)
 	defer releaseExecutionContext()
 	if err := leaseMergedContextError(ctx, executionContext, p.lease); err != nil {
-		return "", err
+		return RotationResult{}, err
 	}
 
 	switch p.operation {
 	case OperationEncrypt:
 		result, err := p.source.Encrypt(executionContext, p.value)
 		if contextErr := leaseMergedContextError(ctx, executionContext, p.lease); contextErr != nil {
-			return "", contextErr
+			return RotationResult{}, contextErr
 		}
 		if err != nil {
-			return "", operationFailed()
+			return RotationResult{}, operationFailed()
 		}
 		if validationErr := p.validateResult(ctx, executionContext, result, MaxVaultTextBytes); validationErr != nil {
-			return "", validationErr
+			return RotationResult{}, validationErr
 		}
-		return result, nil
+		return RotationResult{VaultText: result}, nil
 	case OperationDecrypt:
 		result, err := p.source.Decrypt(executionContext, p.value)
 		if contextErr := leaseMergedContextError(ctx, executionContext, p.lease); contextErr != nil {
-			return "", contextErr
+			return RotationResult{}, contextErr
 		}
 		if err != nil {
-			return "", operationFailed()
+			return RotationResult{}, operationFailed()
 		}
 		if validationErr := p.validateResult(ctx, executionContext, result, MaxPlaintextBytes); validationErr != nil {
-			return "", validationErr
+			return RotationResult{}, validationErr
 		}
-		return result, nil
+		return RotationResult{VaultText: result}, nil
 	case OperationRotate:
 		if p.destination == nil {
-			return "", notReady("prepared operation is not ready")
+			return RotationResult{}, notReady("prepared operation is not ready")
 		}
 		plaintext, err := p.source.Decrypt(executionContext, p.value)
 		if contextErr := leaseMergedContextError(ctx, executionContext, p.lease); contextErr != nil {
-			return "", contextErr
+			return RotationResult{}, contextErr
 		}
 		if err != nil {
-			return "", operationFailed()
+			return RotationResult{}, operationFailed()
 		}
 		if validationErr := p.validateResult(ctx, executionContext, plaintext, MaxPlaintextBytes); validationErr != nil {
-			return "", validationErr
+			return RotationResult{}, validationErr
 		}
 		result, err := p.destination.Encrypt(executionContext, plaintext)
 		if contextErr := leaseMergedContextError(ctx, executionContext, p.lease); contextErr != nil {
-			return "", contextErr
+			return RotationResult{}, contextErr
 		}
 		if err != nil {
-			return "", operationFailed()
+			return RotationResult{}, operationFailed()
 		}
 		if validationErr := p.validateResult(ctx, executionContext, result, MaxVaultTextBytes); validationErr != nil {
-			return "", validationErr
+			return RotationResult{}, validationErr
 		}
-		return result, nil
+		rotation := RotationResult{VaultText: result}
+		if p.attestation != nil {
+			signed, issueErr := p.issueAttestation(ctx, executionContext, result)
+			if issueErr != nil {
+				return RotationResult{}, issueErr
+			}
+			rotation.Attestation = &signed
+		}
+		return rotation, nil
 	default:
-		return "", invalidRequest("operation mode is invalid")
+		return RotationResult{}, invalidRequest("operation mode is invalid")
 	}
 }
 
