@@ -48,6 +48,7 @@ func NewWithDependencies(profiles []Profile, executor Executor, dependencies Dep
 		service:    service,
 		auth:       dependencies.Auth,
 		authConfig: dependencies.AuthConfig,
+		metrics:    newMetricsRegistry(),
 	}
 }
 

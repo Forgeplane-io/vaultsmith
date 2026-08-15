@@ -294,8 +294,8 @@ func TestManagerReloadPreservesSnapshotAndHistoricalVerification(t *testing.T) {
 	if err := manager.Reload(); !errors.Is(err, ErrInvalidKeyring) {
 		t.Fatalf("invalid Reload() error = %v", err)
 	}
-	if manager.ReloadFailureCount() != 1 || !manager.Ready() || manager.Snapshot().ActiveKID() != active.id {
-		t.Fatalf("failed reload changed readiness/snapshot: failures=%d ready=%v active=%q", manager.ReloadFailureCount(), manager.Ready(), manager.Snapshot().ActiveKID())
+	if manager.ReloadFailureCount() != 1 || manager.ReloadSuccessCount() != 0 || !manager.Ready() || manager.Snapshot().ActiveKID() != active.id {
+		t.Fatalf("failed reload changed readiness/snapshot: failures=%d successes=%d ready=%v active=%q", manager.ReloadFailureCount(), manager.ReloadSuccessCount(), manager.Ready(), manager.Snapshot().ActiveKID())
 	}
 	if logs.String() != "attestation keyring reload rejected\n" {
 		t.Fatalf("reload log = %q", logs.String())
@@ -307,6 +307,16 @@ func TestManagerReloadPreservesSnapshotAndHistoricalVerification(t *testing.T) {
 	}
 	if manager.Snapshot().ActiveKID() != "rotation-2026-09" {
 		t.Fatalf("active after reload = %q", manager.Snapshot().ActiveKID())
+	}
+	if manager.ReloadSuccessCount() != 1 || manager.ReloadFailureCount() != 1 {
+		t.Fatalf("reload counters = success=%d failure=%d", manager.ReloadSuccessCount(), manager.ReloadFailureCount())
+	}
+	newSigned, err := manager.Sign(testClaims(testIssuer))
+	if err != nil {
+		t.Fatalf("replacement Sign() error = %v", err)
+	}
+	if _, err := attestation.Verify(newSigned, attestation.VerifyOptions{ExpectedIssuer: testIssuer, Resolver: manager}); err != nil {
+		t.Fatalf("replacement verification error = %v", err)
 	}
 	if _, err := attestation.Verify(oldSigned, attestation.VerifyOptions{ExpectedIssuer: testIssuer, Resolver: manager}); err != nil {
 		t.Fatalf("historical verification after reload error = %v", err)
@@ -337,10 +347,10 @@ func TestManagerRevocationAndPolling(t *testing.T) {
 	}
 
 	replacement := makeTestKey("rotation-2026-09", StateActive, 4)
-	revoked := active
-	revoked.state = StateRevoked
-	revoked.privateSeed = nil
-	replaceKeyring(t, path, makeKeyringJSON(replacement.id, revoked, replacement))
+	retired := active
+	retired.state = StateRetired
+	retired.privateSeed = nil
+	replaceKeyring(t, path, makeKeyringJSON(replacement.id, retired, replacement))
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := manager.start(ctx, 5*time.Millisecond); err != nil {
 		t.Fatalf("start() error = %v", err)
@@ -353,10 +363,30 @@ func TestManagerRevocationAndPolling(t *testing.T) {
 	if manager.Snapshot().ActiveKID() != replacement.id {
 		t.Fatalf("polling did not load replacement; active=%q", manager.Snapshot().ActiveKID())
 	}
+	newSigned, err := manager.Sign(testClaims(testIssuer))
+	if err != nil {
+		t.Fatalf("replacement Sign() error = %v", err)
+	}
+	if _, err := attestation.Verify(newSigned, attestation.VerifyOptions{ExpectedIssuer: testIssuer, Resolver: manager}); err != nil {
+		t.Fatalf("replacement verification error = %v", err)
+	}
+	if _, err := attestation.Verify(oldSigned, attestation.VerifyOptions{ExpectedIssuer: testIssuer, Resolver: manager}); err != nil {
+		t.Fatalf("retired historical verification error = %v", err)
+	}
+
+	revoked := retired
+	revoked.state = StateRevoked
+	replaceKeyring(t, path, makeKeyringJSON(replacement.id, revoked, replacement))
+	if err := manager.Reload(); err != nil {
+		t.Fatalf("revocation Reload() error = %v", err)
+	}
 	_, err = attestation.Verify(oldSigned, attestation.VerifyOptions{ExpectedIssuer: testIssuer, Resolver: manager})
 	var verificationErr *attestation.VerificationError
 	if !errors.As(err, &verificationErr) || verificationErr.Reason() != attestation.KeyRevoked {
 		t.Fatalf("revoked verification error = %v, want key_revoked", err)
+	}
+	if _, err := attestation.Verify(newSigned, attestation.VerifyOptions{ExpectedIssuer: testIssuer, Resolver: manager}); err != nil {
+		t.Fatalf("active replacement verification after revocation error = %v", err)
 	}
 	if err := manager.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)

@@ -39,6 +39,8 @@ helm upgrade --install vaultsmith \
 
 Use `auth.mode: native` for a deployed instance. The chart includes the official Valkey chart and generates its password Secret by default, so you do not need to provision Redis or Valkey separately. Native mode still requires OIDC, a CSRF Secret, a Casbin policy, and profile-password Secrets. If NetworkPolicy is enabled, allow DNS and OIDC egress explicitly; the chart adds egress to the bundled Valkey pods. Set `valkey.enabled: false` only when using an external Redis-compatible service, then configure `auth.redis.address` and its credentials.
 
+Proofs are disabled by default. To enable them, create a Secret managed by your secret workflow with the fixed `keyring.json` data key, then set only `proofs.enabled: true` and `proofs.existingSecret`. The chart mounts the keyring read-only at a fixed path; `PUBLIC_BASE_URL` remains the issuer source. See [`docs/attestations.md`](docs/attestations.md) for the key lifecycle and operator runbook.
+
 The chart creates `ClusterIP` Services for Vaultsmith and Valkey. Ingress and NetworkPolicy are disabled by default. Put a maintained TLS and authentication edge in front of Vaultsmith. NetworkPolicy does not authenticate HTTP callers.
 
 For the complete values example, policy format, edge boundary, verification steps, and rollback guidance, see [`docs/deployment.md`](docs/deployment.md).
@@ -63,6 +65,7 @@ Native mode uses the verified `(iss, sub)` pair as identity. Browser users authe
 The bundled UI uses the canonical REST API. The deprecated legacy operation endpoint remains for v1 compatibility only. Canonical REST and the legacy endpoint share the same service behavior, limits, no-store responses, request IDs, 30-second application deadline, and admission limit. Configured CORS origins are explicit.
 
 - [Static REST API reference](docs/api-reference.md)
+- [Rotation attestation operator runbook](docs/attestations.md)
 - [Authentication and authorization](docs/authentication.md)
 - [Safe REST and MCP client examples](docs/api-clients.md)
 - [Deployment and gateway controls](docs/deployment.md)
@@ -75,10 +78,13 @@ The bundled UI uses the canonical REST API. The deprecated legacy operation endp
 | `GET /api/v1/profiles` | Canonical profile discovery. |
 | `POST /api/v1/profiles/{profileId}/encrypt` | Canonical Encrypt API. |
 | `POST /api/v1/profiles/{profileId}/decrypt` | Canonical Decrypt API. |
-| `POST /api/v1/rotations` | Canonical Rotate API (re-key in the UI). |
+| `POST /api/v1/rotations` | Canonical Rotate API (re-key in the UI), with optional attestation issuance. |
+| `POST /api/v1/attestations/verify` | Verify a rotation attestation against supplied envelopes and binding. |
+| `GET /.well-known/vaultsmith-attestation` | Public attestation metadata when proofs are enabled. |
+| `GET /.well-known/vaultsmith-attestation/jwks.json` | Public attestation keys when proofs are enabled. |
 | `GET /.well-known/oauth-protected-resource` | Native-mode protected-resource metadata. |
 | `POST /mcp` | MCP Streamable HTTP endpoint when `MCP_ENABLED=true`. |
-| `GET /metrics` | Private admission capacity, current use, and rejection counters. |
+| `GET /metrics` | Private bounded operation, attestation, keyring, and admission metrics. |
 | `GET /auth/login` | Start native OIDC login. |
 | `GET /auth/callback` | Complete native OIDC login. |
 | `POST /auth/logout` | CSRF-protected logout. |
@@ -87,7 +93,7 @@ The bundled UI uses the canonical REST API. The deprecated legacy operation endp
 
 `POST /api/v1/operations` is the deprecated legacy operation endpoint. It remains only for existing v1 compatibility callers. New clients and the bundled UI must use the canonical REST API above.
 
-Operation modes are `encrypt`, `decrypt`, and `rotate` (the API name for re-key). A re-key request names `sourceProfileId` and `destinationProfileId`. In native mode, session mutations require the CSRF token returned by `/api/v1/session`; Bearer requests do not use sessions or CSRF and require the exact operation scope. MCP is disabled by default with `mcp.enabled: false` / `MCP_ENABLED=false`.
+Operation modes are `encrypt`, `decrypt`, and `rotate` (the API name for re-key). A re-key request names `sourceProfileId` and `destinationProfileId`. In native mode, session mutations require the CSRF token returned by `/api/v1/session`; Bearer requests do not use sessions or CSRF and require the exact operation scope. Attestation verification uses `vaultsmith.attestation.verify`; issuance uses the rotate path and does not create a new operation scope. MCP is disabled by default with `mcp.enabled: false` / `MCP_ENABLED=false`. Proofs are disabled by default with `proofs.enabled: false`; normal Vault operations remain available when proofs are disabled.
 
 Keep plaintext, ciphertext, passwords, cookies, and tokens out of shell history, logs, screenshots, tickets, and pull requests.
 

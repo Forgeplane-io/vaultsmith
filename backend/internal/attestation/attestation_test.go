@@ -428,8 +428,6 @@ func withBinding(options VerifyOptions, binding *Binding) VerifyOptions {
 	return options
 }
 
-func falseErr() bool { return false }
-
 func mutateSignature(t *testing.T, signed Signed) Signed {
 	t.Helper()
 	signature := mustDecode(t, signed.Signature)

@@ -235,7 +235,7 @@ func TestProtectedResourceMetadataNativeOnly(t *testing.T) {
 	}
 }
 
-func TestAdmissionMetricsAreBoundedAndUnlabeled(t *testing.T) {
+func TestMetricsAreBoundedAndDoNotExposeSensitiveLabels(t *testing.T) {
 	admission, err := vaultservice.NewAdmission(2)
 	if err != nil {
 		t.Fatal(err)
@@ -254,13 +254,19 @@ func TestAdmissionMetricsAreBoundedAndUnlabeled(t *testing.T) {
 		"vaultsmith_operation_admission_capacity 2\n",
 		"vaultsmith_operation_admission_in_use 0\n",
 		"vaultsmith_operation_admission_rejections_total 0\n",
+		"vaultsmith_operation_requests_total{operation=\"rotate\",outcome=\"success\"} 0\n",
+		"vaultsmith_attestation_issued_total{outcome=\"success\"} 0\n",
+		"vaultsmith_attestation_verify_total{outcome=\"success\"} 0\n",
+		"vaultsmith_attestation_keyring_loaded 0\n",
 	} {
 		if !strings.Contains(body, line) {
 			t.Fatalf("metrics body = %q, want line %q", body, line)
 		}
 	}
-	if strings.Contains(body, "{") {
-		t.Fatalf("metrics contain labels: %q", body)
+	for _, forbidden := range []string{"profile", "kid", "issuer", "subject", "repository", "revision", "path", "selector", "ciphertext"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("metrics contain forbidden label or value %q: %q", forbidden, body)
+		}
 	}
 }
 

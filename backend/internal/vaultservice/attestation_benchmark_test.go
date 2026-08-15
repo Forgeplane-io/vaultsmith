@@ -8,6 +8,29 @@ import (
 	"github.com/forgeplane-io/vaultsmith/backend/internal/attestation"
 )
 
+func BenchmarkIssueAttestation(b *testing.B) {
+	manager := newSyntheticAttestationManager("https://vaultsmith.synthetic.test")
+	claims := attestation.RotationClaims{
+		Version:              attestation.SupportedVersion,
+		Issuer:               manager.issuer,
+		IssuedAt:             "2026-08-15T00:00:00Z",
+		Operation:            "rotate",
+		SourceProfileID:      "dev",
+		DestinationProfileID: "prod",
+		Input:                attestation.Digest{Algorithm: "sha-256", Value: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		Output:               attestation.Digest{Algorithm: "sha-256", Value: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+		Binding:              syntheticBinding(),
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := manager.Sign(claims); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkVerifyAttestation(b *testing.B) {
 	input, err := ansiblevault.Encrypt([]byte("synthetic input"), []byte("synthetic source password"), "dev")
 	if err != nil {

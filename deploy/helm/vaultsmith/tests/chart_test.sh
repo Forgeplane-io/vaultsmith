@@ -79,9 +79,28 @@ fi
 grep -Fq 'automountServiceAccountToken: false' "$TMP_DIR/off-default-render.yaml" || fail 'service token automount is not disabled'
 grep -Fq 'containerPort: 8080' "$TMP_DIR/off-default-render.yaml" || fail 'container port is not canonical 8080'
 assert_contains_block "$TMP_DIR/off-default-render.yaml" $'- name: MCP_ENABLED\n              value: "false"' 'MCP_ENABLED default false env is missing'
+assert_contains_block "$TMP_DIR/off-default-render.yaml" $'- name: PROOFS_ENABLED\n              value: "false"' 'PROOFS_ENABLED default false env is missing'
 if grep -Fq 'name: CSRF_SECRET' "$TMP_DIR/off-default-render.yaml"; then
   fail 'explicit off render unexpectedly contains a CSRF Secret reference'
 fi
+if grep -Fq 'PROOFS_KEYRING_FILE' "$TMP_DIR/off-default-render.yaml" || grep -Fq 'name: attestation-keyring' "$TMP_DIR/off-default-render.yaml"; then
+  fail 'proofs-disabled render unexpectedly contains keyring wiring'
+fi
+
+cat > "$TMP_DIR/proofs-enabled.yaml" <<'VALUES'
+auth:
+  mode: "off"
+proofs:
+  enabled: true
+  existingSecret: vaultsmith-attestation
+VALUES
+helm lint "$CHART_DIR" -f "$TMP_DIR/proofs-enabled.yaml" >/dev/null
+render -f "$TMP_DIR/proofs-enabled.yaml" > "$TMP_DIR/proofs-enabled-render.yaml"
+assert_contains_block "$TMP_DIR/proofs-enabled-render.yaml" $'- name: PROOFS_ENABLED\n              value: "true"' 'proofs.enabled=true was not wired into PROOFS_ENABLED'
+assert_contains_block "$TMP_DIR/proofs-enabled-render.yaml" $'- name: PROOFS_KEYRING_FILE\n              value: /etc/vaultsmith/attestation/keyring.json' 'proofs keyring file path is not canonical'
+assert_contains_block "$TMP_DIR/proofs-enabled-render.yaml" $'- name: attestation-keyring\n          secret:\n            secretName: "vaultsmith-attestation"\n            items:\n              - key: keyring.json\n                path: keyring.json\n            optional: false' 'proofs Secret key contract is not wired'
+assert_contains_block "$TMP_DIR/proofs-enabled-render.yaml" $'- name: attestation-keyring\n              mountPath: /etc/vaultsmith/attestation\n              readOnly: true' 'proofs keyring is not mounted read-only'
+assert_render_fails_with 'proofs.existingSecret is required when proofs.enabled is true' --skip-schema-validation -f "$TMP_DIR/off-default.yaml" --set proofs.enabled=true
 render -f "$TMP_DIR/off-default.yaml" --set valkey.enabled=false > "$TMP_DIR/mcp-disabled-render.yaml"
 render -f "$TMP_DIR/off-default.yaml" --set valkey.enabled=false --set mcp.enabled=true > "$TMP_DIR/mcp-enabled-render.yaml"
 assert_contains_block "$TMP_DIR/mcp-enabled-render.yaml" $'- name: MCP_ENABLED\n              value: "true"' 'mcp.enabled=true was not wired into MCP_ENABLED'

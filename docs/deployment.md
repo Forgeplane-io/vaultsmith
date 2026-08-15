@@ -9,7 +9,7 @@ This guide covers the application, Helm chart, and required edge boundary. It do
 Prepare these resources outside the chart:
 
 - An OIDC client with exactly one redirect URI: `OIDC_REDIRECT_URL`.
-- Secrets containing the CSRF secret, OIDC client secret, Redis password when used, and profile passwords.
+- Secrets containing the CSRF secret, OIDC client secret, Redis password when used, profile passwords, and (when proofs are enabled) the versioned attestation keyring under the fixed `keyring.json` key.
 - Redis for login transactions, sessions, refresh state, and refresh locks.
 - A Casbin policy, supplied inline or through an external ConfigMap.
 - An edge gateway or reverse proxy that terminates TLS and applies the deployment's access policy.
@@ -33,13 +33,13 @@ Vaultsmith uses the verified OIDC `(iss, sub)` pair as identity. The default gro
 
 If the issuer uses a private CA, mount a PEM bundle and set `OIDC_CA_FILE`. Do not disable TLS verification.
 
-Machine clients use RFC 9068 JWT Bearer access tokens issued by the same configured issuer. The required audience is the `PUBLIC_BASE_URL` HTTPS origin, not the browser client ID. Bearer requests do not load or write Redis sessions, do not receive CSRF cookies, and require exact operation scopes: `vaultsmith.profile.read`, `vaultsmith.encrypt`, `vaultsmith.decrypt`, and `vaultsmith.rotate`.
+Machine clients use RFC 9068 JWT Bearer access tokens issued by the same configured issuer. The required audience is the `PUBLIC_BASE_URL` HTTPS origin, not the browser client ID. Bearer requests do not load or write Redis sessions, do not receive CSRF cookies, and require exact operation scopes: `vaultsmith.profile.read`, `vaultsmith.encrypt`, `vaultsmith.decrypt`, `vaultsmith.rotate`, and (for standalone verification) `vaultsmith.attestation.verify`.
 
 ## Helm chart
 
 The chart creates `ClusterIP` Services for Vaultsmith and the bundled official Valkey chart. Valkey is enabled by default, uses a generated password Secret, and does not require a separately provisioned Redis service. The bundled chart requests a 1 GiB PVC by default; set `valkey.dataStorage.className` for a specific storage class or disable it for ephemeral test deployments. The bundled standalone Valkey uses a `Recreate` rollout to avoid concurrent pods sharing a `ReadWriteOnce` claim; the strategy remains fixed for every standalone backing mode. The chart does not create the OIDC, CSRF, or profile-password Secrets. Ingress and NetworkPolicy are disabled by default.
 
-The only MCP chart value is `mcp.enabled`, which defaults to `false` and maps to `MCP_ENABLED`. It does not create another Service, listener, port, or TLS mode. `MCPGODEBUG` must be unset or empty; any non-empty value fails startup.
+The only MCP chart value is `mcp.enabled`, which defaults to `false` and maps to `MCP_ENABLED`. Proofs expose only `proofs.enabled` and `proofs.existingSecret`; both default to disabled/empty. When enabled, the chart requires a Secret containing the fixed `keyring.json` key and mounts it read-only at `/etc/vaultsmith/attestation/keyring.json`. The chart does not parse keyring internals or expose signing, issuer, reload, KMS, policy, or verification values. `MCPGODEBUG` must be unset or empty; any non-empty value fails startup.
 
 ### Published chart
 
@@ -93,6 +93,28 @@ secret:
 
 Create the referenced application Secret and policy ConfigMap before installing. Each `passwordSecretKey` must exist in `secret.existingSecret`. The bundled Valkey service and password Secret are created by the chart. Set `valkey.enabled: false` and configure `auth.redis.address` and its credentials when using an external Redis-compatible service.
 
+### Proof values and keyring Secret
+
+Proofs remain disabled unless explicitly enabled:
+
+```yaml
+proofs:
+  enabled: false
+  existingSecret: ""
+```
+
+For an enabled deployment, create the Secret outside Helm with the application-owned versioned keyring under the fixed `keyring.json` data key, then add only:
+
+```yaml
+proofs:
+  enabled: true
+  existingSecret: vaultsmith-attestation
+```
+
+The keyring is mounted read-only at `/etc/vaultsmith/attestation/keyring.json`. `PUBLIC_BASE_URL` remains the issuer source. Do not put private key material in Helm values, environment variables, a ConfigMap, a container argument, or Git. See [`attestations.md`](attestations.md) for the keyring schema, active-to-retired rotation, revocation, backup, reload, and rollback procedure.
+
+When proofs are disabled, the Secret is not required, no signing-key startup dependency is added, and normal encrypt, decrypt, and rotate behavior remains available. Attestation-specific routes retain their stable feature-unavailable behavior.
+
 ### Casbin policy
 
 Provide exactly one policy source: `auth.policy.data` or `auth.policy.existingConfigMap`. Helm rejects both together. The policy file must map the verified OIDC groups claim to roles and grant the operations needed for the configured profile IDs.
@@ -117,6 +139,8 @@ For native mode, if `networkPolicy.enabled` is true, provide `networkPolicy.allo
 - Cluster DNS over UDP and TCP port 53.
 - The OIDC issuer over TCP port 443.
 - Redis on its configured port, commonly TCP 6379. The bundled Valkey egress rule is added automatically; provide this rule when `valkey.enabled: false`.
+
+Proofs add no egress, Kubernetes API access, or self-JWKS request. Verification uses the local loaded keyring.
 
 The chart rejects native mode with an enabled NetworkPolicy and an empty egress list. Disabling NetworkPolicy is explicit unrestricted egress; otherwise use destination selectors or narrow CIDRs for the actual OIDC and Redis endpoints. Do not copy a broad placeholder CIDR into production.
 

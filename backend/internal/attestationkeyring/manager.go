@@ -26,8 +26,9 @@ type Manager struct {
 	issuer string
 	logger Logger
 
-	current        atomic.Pointer[Snapshot]
-	reloadFailures atomic.Uint64
+	current         atomic.Pointer[Snapshot]
+	reloadSuccesses atomic.Uint64
+	reloadFailures  atomic.Uint64
 
 	mu       sync.Mutex
 	reloadMu sync.Mutex
@@ -130,6 +131,16 @@ func (m *Manager) ReloadFailureCount() uint64 {
 	return m.reloadFailures.Load()
 }
 
+// ReloadSuccessCount returns the bounded in-process count of accepted
+// replacements. The initial load is represented by the loaded gauge, not a
+// reload event.
+func (m *Manager) ReloadSuccessCount() uint64 {
+	if m == nil {
+		return 0
+	}
+	return m.reloadSuccesses.Load()
+}
+
 // Reload reads, validates, and atomically swaps a changed keyring. A failed
 // replacement leaves the prior snapshot active and Ready.
 func (m *Manager) Reload() error {
@@ -164,6 +175,7 @@ func (m *Manager) Reload() error {
 		return ErrClosed
 	}
 	m.current.Store(next)
+	m.reloadSuccesses.Add(1)
 	m.mu.Unlock()
 	return nil
 }

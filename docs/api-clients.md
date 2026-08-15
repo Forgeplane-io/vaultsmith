@@ -116,6 +116,53 @@ jq -Rs \
 
 Rotation is randomized. **Do not retry it automatically.** A timeout can occur after a new ciphertext was produced.
 
+## Rotate with an attestation
+
+Add a synthetic or protected binding to the canonical rotation request. The
+response contains both the rotated Vault text and the signed attestation, so
+store it in a protected artifact file instead of printing it:
+
+```sh
+jq -Rs \
+  --arg source "$SOURCE_PROFILE_ID" \
+  --arg destination "$DESTINATION_PROFILE_ID" \
+  --slurpfile binding synthetic-binding.json \
+  '{sourceProfileId: $source, destinationProfileId: $destination, vaultText: ., attestation: {binding: $binding[0]}}' \
+  <synthetic.vault \
+  | curl --fail-with-body --silent --show-error \
+      --config "$vaultsmith_curl_config" \
+      --header 'Accept: application/json' \
+      --header 'Content-Type: application/json' \
+      --data-binary @- \
+      "$VAULTSMITH_URL/api/v1/rotations" \
+  >rotation-result.json
+```
+
+Verify from protected files. The verifier recomputes the canonical envelope
+digests and compares the requested binding:
+
+```sh
+jq -n \
+  --slurpfile attestation attestation.json \
+  --rawfile input synthetic-input.vault \
+  --rawfile output synthetic-output.vault \
+  --slurpfile binding synthetic-binding.json \
+  '{attestation: $attestation[0], inputVaultText: $input, outputVaultText: $output, expectedBinding: $binding[0]}' \
+  | curl --fail-with-body --silent --show-error \
+      --config "$vaultsmith_curl_config" \
+      --header 'Accept: application/json' \
+      --header 'Content-Type: application/json' \
+      --data-binary @- \
+      "$VAULTSMITH_URL/api/v1/attestations/verify" \
+  >verification-result.json
+```
+
+A semantic mismatch returns `valid: false` with a bounded reason such as
+`input_digest_mismatch`, `output_digest_mismatch`, `binding_mismatch`, or
+`key_revoked`. Do not automatically retry a failed rotation; verification can
+be retried only with the exact protected artifacts and an operator-approved
+policy.
+
 ## MCP over Streamable HTTP
 
 MCP is disabled by default. Operators must set `MCP_ENABLED=true` or Helm `mcp.enabled: true`.
@@ -168,6 +215,35 @@ jq -cn \
 
 The literal synthetic plaintext is visible in this example command by design. For a real value, read standard input and use `jq -Rs` as in the REST encrypt example.
 
+### Call `verify_rotation_attestation`
+
+The MCP verifier accepts the attestation, input envelope, output envelope, and
+optional expected binding as structured arguments. Keep all four values in
+protected files and do not enable MCP client request logging for this call:
+
+```sh
+jq -n \
+  --slurpfile attestation attestation.json \
+  --rawfile input synthetic-input.vault \
+  --rawfile output synthetic-output.vault \
+  --slurpfile binding synthetic-binding.json \
+  '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"verify_rotation_attestation",arguments:{attestation:$attestation[0],inputVaultText:$input,outputVaultText:$output,expectedBinding:$binding[0]},_meta:{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' \
+  | curl --fail-with-body --silent --show-error \
+      --config "$vaultsmith_curl_config" \
+      --header 'Accept: application/json, text/event-stream' \
+      --header 'Content-Type: application/json' \
+      --header 'MCP-Protocol-Version: 2026-07-28' \
+      --header 'Mcp-Method: tools/call' \
+      --header 'Mcp-Name: verify_rotation_attestation' \
+      --data-binary @- \
+      "$VAULTSMITH_URL/mcp" \
+  >verification-mcp-result.json
+```
+
+A verify-only native Bearer client needs `vaultsmith.attestation.verify`. It
+does not need profile-read, rotate, or profile Casbin access. When proofs are
+disabled, the tool returns a stable feature-unavailable result.
+
 ## Limits and validation
 
 | Limit | Value | What happens when exceeded |
@@ -181,6 +257,24 @@ The literal synthetic plaintext is visible in this example command by design. Fo
 Limits count bytes, not Unicode characters. Bodies and operation strings must be valid UTF-8. Compressed request bodies are not accepted.
 
 The admission cap of 16 is the compiled ceiling selected against the exact 2 GiB Linux/amd64 release benchmark. The running process can use a smaller capacity when `GOMAXPROCS` is smaller. Operators can inspect `/metrics` for capacity, current use, and cumulative saturation rejections. To revise the ceiling, rerun the benchmark matrix and commit a new receipt before changing the constant.
+
+## Metrics and logging
+
+Keep `/metrics` on a private probe path. In addition to admission metrics, the
+endpoint exposes bounded operation and attestation metrics:
+
+- `vaultsmith_operation_requests_total{operation,outcome}`;
+- `vaultsmith_operation_duration_seconds{operation}`;
+- `vaultsmith_attestation_issued_total{outcome}`;
+- `vaultsmith_attestation_verify_total{outcome}`;
+- `vaultsmith_attestation_keyring_reload_total{outcome}`;
+- `vaultsmith_attestation_keyring_loaded`.
+
+The label values are closed vocabularies. Never add profile IDs, key IDs,
+issuer, subject, caller, repository, revision, path, selector, or ciphertext
+size as labels. Structured logs may contain only generic operation and reload
+outcomes. Request bodies, Vault values, proofs, bindings, keys, tokens, and
+cookies must remain out of logs and traces.
 
 ## Error handling
 

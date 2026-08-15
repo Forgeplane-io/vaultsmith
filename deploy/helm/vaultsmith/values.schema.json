@@ -23,6 +23,15 @@
         "enabled": { "type": "boolean" }
       }
     },
+    "proofs": {
+      "type": "object",
+      "required": ["enabled", "existingSecret"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "existingSecret": { "type": "string" }
+      }
+    },
     "profiles": {
       "type": "array",
       "items": {

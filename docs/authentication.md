@@ -24,6 +24,7 @@ Use a Bearer access token for canonical REST and MCP machine clients:
 - `POST /api/v1/profiles/{profileId}/encrypt`
 - `POST /api/v1/profiles/{profileId}/decrypt`
 - `POST /api/v1/rotations`
+- `POST /api/v1/attestations/verify`
 - `POST /mcp` when enabled
 
 Bearer requests do not load or update Redis sessions. They do not use CSRF and do not receive cookies. The deprecated `POST /api/v1/operations` legacy operation endpoint stays session-only in native mode for compatibility callers.
@@ -70,6 +71,7 @@ Scopes are case-sensitive.
 | `vaultsmith.encrypt` | Encrypt | `encrypt` |
 | `vaultsmith.decrypt` | Decrypt | `decrypt` |
 | `vaultsmith.rotate` | Rotate between profiles | `rotate` |
+| `vaultsmith.attestation.verify` | Verify a rotation attestation | `verify_rotation_attestation` |
 
 A scope permits a class of operation. It does not grant access to a profile. Casbin must also permit the verified caller's groups to use the requested profile. Rotation requires decrypt policy on the source and encrypt policy on the destination.
 
@@ -128,7 +130,7 @@ Providers differ in how they express `resource`, audience mappers, service-accou
 
 ## `auth.mode: off`
 
-Off mode removes authentication, sessions, CSRF, token validation, and Casbin policy checks. Every caller that can reach Vaultsmith can list profiles, encrypt, decrypt, rotate, and use enabled MCP tools.
+Off mode removes authentication, sessions, CSRF, token validation, and Casbin policy checks. Every caller that can reach Vaultsmith can list profiles, encrypt, decrypt, rotate, and use enabled MCP tools. Proofs are controlled separately by `proofs.enabled`: when disabled, no keyring Secret is required and attestation issuance and verification return stable feature-unavailable responses. Normal encrypt, decrypt, and rotate behavior remains available.
 
 Consequences:
 
@@ -142,6 +144,7 @@ Do not use off mode as an authentication migration step, outage workaround, or r
 
 ## Related documents
 
+- [Rotation attestation operator runbook](attestations.md)
 - [Static REST API reference](api-reference.md)
 - [Safe REST and MCP client examples](api-clients.md)
 - [Deployment and gateway controls](deployment.md)

@@ -126,6 +126,15 @@ func (s *Service) Admission() *Admission {
 	return s.admission
 }
 
+// AttestationManager exposes the transport-independent proof lifecycle seam
+// to observability code without exposing key material or mutable snapshots.
+func (s *Service) AttestationManager() AttestationManager {
+	if s == nil {
+		return nil
+	}
+	return s.attestation
+}
+
 func (s *Service) PreflightProfiles(ctx context.Context, actor caller.Caller) error {
 	if err := contextError(ctx); err != nil {
 		return err

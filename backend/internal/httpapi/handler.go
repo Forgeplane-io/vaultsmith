@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/apimodels"
@@ -47,6 +48,7 @@ type Handler struct {
 	service    *vaultservice.Service
 	auth       *authn.Authenticator
 	authConfig config.AuthConfig
+	metrics    *metricsRegistry
 }
 
 type operationRequest struct {
@@ -78,6 +80,16 @@ type sessionResponse struct {
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ensureRequestID(w)
+	operation := metricOperationForRequest(r)
+	started := time.Now()
+	var recorder *statusRecordingResponseWriter
+	if h.metrics != nil && operation != "" {
+		recorder = &statusRecordingResponseWriter{ResponseWriter: w}
+		w = recorder
+		defer func() {
+			h.metrics.observeOperation(operation, recorder.statusCode(), time.Since(started))
+		}()
+	}
 	switch r.URL.Path {
 	case "/api/v1/profiles":
 		h.serveProfiles(w, r)
@@ -199,21 +211,6 @@ func (h *Handler) serveCanonicalDecrypt(w http.ResponseWriter, r *http.Request, 
 		return vaultservice.Command{Operation: vaultservice.OperationDecrypt, ProfileID: profileID, Value: request.VaultText}, nil
 	}, func(output string) any {
 		return decryptResponse{Plaintext: output}
-	})
-}
-
-func (h *Handler) serveCanonicalRotate(w http.ResponseWriter, r *http.Request) {
-	h.serveCanonicalOperation(w, r, vaultservice.OperationRotate, func(fields map[string]string) (vaultservice.Command, error) {
-		source, sourceOK := fields["sourceProfileId"]
-		destination, destinationOK := fields["destinationProfileId"]
-		vaultText, vaultOK := fields["vaultText"]
-		if !sourceOK || !destinationOK || !vaultOK {
-			return vaultservice.Command{}, errors.New("required request field is missing")
-		}
-		request := apimodels.RotateRequest{SourceProfileId: source, DestinationProfileId: destination, VaultText: vaultText}
-		return vaultservice.Command{Operation: vaultservice.OperationRotate, SourceProfileID: request.SourceProfileId, DestinationProfileID: request.DestinationProfileId, Value: request.VaultText}, nil
-	}, func(output string) any {
-		return rotateResponse{VaultText: output}
 	})
 }
 
@@ -466,9 +463,14 @@ func (h *Handler) serveMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	ensureRequestID(w)
 	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, "vaultsmith_operation_admission_capacity %d\n", admission.Capacity())
-	_, _ = fmt.Fprintf(w, "vaultsmith_operation_admission_in_use %d\n", admission.InUse())
-	_, _ = fmt.Fprintf(w, "vaultsmith_operation_admission_rejections_total %d\n", admission.Rejections())
+	if admission != nil {
+		_, _ = fmt.Fprintf(w, "vaultsmith_operation_admission_capacity %d\n", admission.Capacity())
+		_, _ = fmt.Fprintf(w, "vaultsmith_operation_admission_in_use %d\n", admission.InUse())
+		_, _ = fmt.Fprintf(w, "vaultsmith_operation_admission_rejections_total %d\n", admission.Rejections())
+	}
+	if h.metrics != nil {
+		h.metrics.write(w, h.service)
+	}
 }
 
 var errBodyTooLarge = errors.New("request body too large")

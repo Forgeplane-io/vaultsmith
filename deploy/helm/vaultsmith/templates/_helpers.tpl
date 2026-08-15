@@ -87,7 +87,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "vaultsmith.validate" -}}
 {{- $seenIDs := dict -}}
 {{- $seenEnvs := dict -}}
-{{- $reservedEnvs := list "VAULT_PROFILES_JSON" "HTTP_ADDR" "AUTH_MODE" "CSRF_SECRET" "OIDC_ISSUER_URL" "OIDC_CLIENT_ID" "OIDC_CLIENT_SECRET" "OIDC_CA_FILE" "OIDC_REDIRECT_URL" "PUBLIC_BASE_URL" "OIDC_GROUPS_CLAIM" "OIDC_SCOPES" "AUTHZ_POLICY_FILE" "REDIS_ADDR" "REDIS_USERNAME" "REDIS_PASSWORD" "REDIS_DB" "REDIS_TLS" "REDIS_CONNECT_TIMEOUT" "REDIS_READ_TIMEOUT" "REDIS_WRITE_TIMEOUT" "REDIS_POOL_SIZE" "REDIS_REFRESH_LOCK_TTL" "REDIS_REFRESH_LOCK_WAIT" "REDIS_REFRESH_LOCK_RETRY" "REDIS_PROVIDER_TIMEOUT" "REDIS_KEY_PREFIX" "COOKIE_SECURE" "COOKIE_SAME_SITE" "SESSION_ABSOLUTE_LIFETIME" "SESSION_IDLE_LIFETIME" "CORS_ALLOWED_ORIGINS" "MCP_ENABLED" "MCPGODEBUG" -}}
+{{- $reservedEnvs := list "VAULT_PROFILES_JSON" "HTTP_ADDR" "AUTH_MODE" "CSRF_SECRET" "OIDC_ISSUER_URL" "OIDC_CLIENT_ID" "OIDC_CLIENT_SECRET" "OIDC_CA_FILE" "OIDC_REDIRECT_URL" "PUBLIC_BASE_URL" "OIDC_GROUPS_CLAIM" "OIDC_SCOPES" "AUTHZ_POLICY_FILE" "REDIS_ADDR" "REDIS_USERNAME" "REDIS_PASSWORD" "REDIS_DB" "REDIS_TLS" "REDIS_CONNECT_TIMEOUT" "REDIS_READ_TIMEOUT" "REDIS_WRITE_TIMEOUT" "REDIS_POOL_SIZE" "REDIS_REFRESH_LOCK_TTL" "REDIS_REFRESH_LOCK_WAIT" "REDIS_REFRESH_LOCK_RETRY" "REDIS_PROVIDER_TIMEOUT" "REDIS_KEY_PREFIX" "COOKIE_SECURE" "COOKIE_SAME_SITE" "SESSION_ABSOLUTE_LIFETIME" "SESSION_IDLE_LIFETIME" "CORS_ALLOWED_ORIGINS" "MCP_ENABLED" "PROOFS_ENABLED" "PROOFS_KEYRING_FILE" "MCPGODEBUG" -}}
 {{- range .Values.profiles }}
 {{- if hasKey $seenIDs .id }}{{ fail (printf "profiles contains duplicate id %q" .id) }}{{ end }}
 {{- $_ := set $seenIDs .id true }}
@@ -97,6 +97,9 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- if gt (len .Values.profiles) 0 }}
 {{- $_ := required "secret.existingSecret is required when profiles are configured" .Values.secret.existingSecret }}
+{{- end }}
+{{- if .Values.proofs.enabled }}
+{{- $_ := required "proofs.existingSecret is required when proofs.enabled is true" .Values.proofs.existingSecret }}
 {{- end }}
 {{- $mode := required "auth.mode must be explicitly set to native or off" .Values.auth.mode -}}
 {{- if not (has $mode (list "off" "native")) }}{{ fail (printf "auth.mode must be off or native, got %q" $mode) }}{{ end }}

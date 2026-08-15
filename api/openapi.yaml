@@ -340,8 +340,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AttestationMetadata"
-        "404":
-          $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowedGet"
         "503":
@@ -365,8 +363,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AttestationJWKS"
-        "404":
-          $ref: "#/components/responses/NotFound"
         "405":
           $ref: "#/components/responses/MethodNotAllowedGet"
         "503":
