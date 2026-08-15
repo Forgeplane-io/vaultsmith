@@ -63,6 +63,18 @@ type verifiedAttestationClaims struct {
 }
 
 func (h *Handler) serveCanonicalRotateWithAttestation(w http.ResponseWriter, r *http.Request) {
+	attestationRequested := false
+	attestationIssued := false
+	defer func() {
+		if !attestationRequested || h.metrics == nil {
+			return
+		}
+		if attestationIssued {
+			h.metrics.observeAttestationIssued("success")
+			return
+		}
+		h.metrics.observeAttestationIssued(attestationOutcomeFromResponse(w))
+	}()
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w, http.MethodPost)
 		return
@@ -126,6 +138,7 @@ func (h *Handler) serveCanonicalRotateWithAttestation(w http.ResponseWriter, r *
 	}
 	var serviceAttestation *vaultservice.AttestationRequest
 	if request.Attestation != nil {
+		attestationRequested = true
 		serviceAttestation = &vaultservice.AttestationRequest{Binding: request.Attestation.Binding}
 	}
 	command := vaultservice.Command{
@@ -145,6 +158,7 @@ func (h *Handler) serveCanonicalRotateWithAttestation(w http.ResponseWriter, r *
 		writeServiceError(w, err)
 		return
 	}
+	attestationIssued = result.Attestation != nil
 	writeJSON(w, http.StatusOK, rotationResponseWithAttestation{VaultText: result.VaultText, Attestation: result.Attestation})
 }
 
@@ -204,6 +218,12 @@ func parseRotationAttestationRequest(raw json.RawMessage) (*rotationAttestationR
 }
 
 func (h *Handler) serveAttestationVerify(w http.ResponseWriter, r *http.Request) {
+	verifyOutcome := "failed"
+	defer func() {
+		if h.metrics != nil {
+			h.metrics.observeAttestationVerify(verifyOutcome)
+		}
+	}()
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w, http.MethodPost)
 		return
@@ -217,6 +237,7 @@ func (h *Handler) serveAttestationVerify(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if h.service == nil {
+		verifyOutcome = "unavailable"
 		writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeAttestationUnavailable), "rotation attestation service is unavailable")
 		return
 	}
@@ -226,6 +247,7 @@ func (h *Handler) serveAttestationVerify(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := h.service.PreflightAttestationVerify(r.Context(), actor); err != nil {
+		verifyOutcome = attestationOutcomeFromError(err)
 		if actor.Kind() == caller.KindBearer && vaultservice.HasCode(err, vaultservice.CodeForbidden) {
 			writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", vaultservice.ScopeAttestationVerify, protectedResourceMetadataURL(h.authConfig))
 		} else {
@@ -234,6 +256,7 @@ func (h *Handler) serveAttestationVerify(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if h.service == nil || !h.service.AttestationEnabled() {
+		verifyOutcome = "feature_unavailable"
 		writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeFeatureUnavailable), "rotation attestations are disabled")
 		return
 	}
@@ -241,9 +264,11 @@ func (h *Handler) serveAttestationVerify(w http.ResponseWriter, r *http.Request)
 	lease, err := admission.TryAcquire(r.Context())
 	if err != nil {
 		if errors.Is(err, vaultservice.ErrVerifierAdmissionSaturated) {
+			verifyOutcome = "busy"
 			w.Header().Set("Retry-After", "1")
 			writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeAttestationBusy), "rotation attestation verification is busy")
 		} else {
+			verifyOutcome = "unavailable"
 			writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeAttestationUnavailable), "rotation attestation service is unavailable")
 		}
 		return
@@ -255,25 +280,31 @@ func (h *Handler) serveAttestationVerify(w http.ResponseWriter, r *http.Request)
 	raw, err := readRequestBody(r.Context(), r.Body)
 	if err != nil {
 		if isMaxBytesError(err) {
+			verifyOutcome = "invalid"
 			writeError(w, http.StatusRequestEntityTooLarge, "invalid_request", "request is too large")
 		} else if isContextError(err) {
+			verifyOutcome = "unavailable"
 			writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
 		} else {
+			verifyOutcome = "invalid"
 			writeError(w, http.StatusBadRequest, "invalid_request", "invalid attestation verification request")
 		}
 		return
 	}
 	if isContextError(r.Context().Err()) {
+		verifyOutcome = "unavailable"
 		writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
 		return
 	}
 	request, err := parseVerifyAttestationRequest(raw)
 	if err != nil {
+		verifyOutcome = "invalid"
 		writeError(w, http.StatusBadRequest, "invalid_request", "invalid attestation verification request")
 		return
 	}
 	claims, err := h.service.VerifyAttestation(leaseContext, request.Attestation, request.InputVaultText, request.OutputVaultText, request.ExpectedBinding)
 	if reason, ok := attestation.VerificationReasonOf(err); ok {
+		verifyOutcome = "invalid"
 		response := verifyAttestationResponse{Valid: false, Reason: reason}
 		if claims.Issuer != "" && reason != attestation.SignatureInvalid && reason != attestation.UnknownKey && reason != attestation.IssuerMismatch {
 			response.Attestation = h.safeClaimsResponse(request.Attestation, claims)
@@ -282,6 +313,7 @@ func (h *Handler) serveAttestationVerify(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err != nil {
+		verifyOutcome = attestationOutcomeFromError(err)
 		if vaultservice.HasCode(err, vaultservice.CodeInvalidRequest) || errors.Is(err, attestation.ErrMalformed) {
 			writeError(w, http.StatusBadRequest, "invalid_request", "invalid attestation verification request")
 		} else {
@@ -290,6 +322,7 @@ func (h *Handler) serveAttestationVerify(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, verifyAttestationResponse{Valid: true, Attestation: h.safeClaimsResponse(request.Attestation, claims)})
+	verifyOutcome = "success"
 }
 
 func parseVerifyAttestationRequest(raw []byte) (verifyAttestationRequest, error) {
@@ -432,13 +465,13 @@ func (h *Handler) serveAttestationMetadata(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if h.service == nil {
-		writeError(w, http.StatusNotFound, "not_found", "resource was not found")
+		writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeAttestationUnavailable), "rotation attestation service is unavailable")
 		return
 	}
 	raw, err := h.service.MetadataJSON()
 	if err != nil {
 		if vaultservice.HasCode(err, vaultservice.CodeFeatureUnavailable) {
-			writeError(w, http.StatusNotFound, "not_found", "resource was not found")
+			writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeFeatureUnavailable), "rotation attestations are disabled")
 			return
 		}
 		writeServiceError(w, err)
@@ -453,13 +486,13 @@ func (h *Handler) serveAttestationJWKS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.service == nil {
-		writeError(w, http.StatusNotFound, "not_found", "resource was not found")
+		writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeAttestationUnavailable), "rotation attestation service is unavailable")
 		return
 	}
 	raw, err := h.service.JWKSJSON()
 	if err != nil {
 		if vaultservice.HasCode(err, vaultservice.CodeFeatureUnavailable) {
-			writeError(w, http.StatusNotFound, "not_found", "resource was not found")
+			writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeFeatureUnavailable), "rotation attestations are disabled")
 			return
 		}
 		writeServiceError(w, err)

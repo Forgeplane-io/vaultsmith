@@ -2,6 +2,14 @@
 
 All notable changes to Vaultsmith are documented here. Release Please maintains this file from Conventional Commits.
 
+## Unreleased
+
+### Installation and Upgrading
+
+- Proofs are disabled by default. To enable rotation attestations, provision a Secret with the fixed `keyring.json` data key and set `proofs.enabled` plus `proofs.existingSecret`; do not put key material in Helm values or environment variables.
+- Proofs use `PUBLIC_BASE_URL` as the issuer and reload a valid changed keyring without restart. A malformed replacement keeps the previous valid keyring active.
+- When proofs are disabled, normal encrypt, decrypt, and rotate behavior remains available and no signing Secret is required.
+
 ## [0.6.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.5.0...v0.6.0) (2026-08-15)
 
 

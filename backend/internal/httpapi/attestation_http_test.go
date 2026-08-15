@@ -227,6 +227,65 @@ func TestAttestationVerifyHTTPReturnsSemanticResult(t *testing.T) {
 	}
 }
 
+func TestMetricsRecordAttestationAndOperationOutcomes(t *testing.T) {
+	manager := newHTTPSyntheticAttestationManager("https://vaultsmith.synthetic.test")
+	service, executor := newHTTPAttestationService(t, manager, true, 1)
+	handler := attestationHTTPHandler(t, service)
+	input := httpSyntheticVaultText(t, "synthetic input", "synthetic source password", "source")
+	output := httpSyntheticVaultText(t, "synthetic output", "synthetic destination password", "destination")
+	executor.decryptedValue = "synthetic plaintext"
+	executor.value = output
+	binding := &attestation.Binding{Repository: "synthetic/repository", Revision: strings.Repeat("a", 40), Path: "synthetic/path"}
+
+	rotateBody := `{"sourceProfileId":"source","destinationProfileId":"destination","vaultText":` + mustJSON(t, input) + `,"attestation":{"binding":` + mustJSON(t, binding) + `}}`
+	rotateRequest := httptest.NewRequest(http.MethodPost, "/api/v1/rotations", strings.NewReader(rotateBody))
+	rotateRequest.Header.Set("Content-Type", "application/json")
+	rotateResponse := httptest.NewRecorder()
+	handler.ServeHTTP(rotateResponse, rotateRequest)
+	if rotateResponse.Code != http.StatusOK {
+		t.Fatalf("rotation status = %d: %s", rotateResponse.Code, rotateResponse.Body.String())
+	}
+	rotation := decodeJSONBody[rotationResponseWithAttestation](t, rotateResponse)
+	if rotation.Attestation == nil {
+		t.Fatal("rotation response did not contain an attestation")
+	}
+
+	verifyBody, err := json.Marshal(httpVerifyRequest{
+		Attestation:     *rotation.Attestation,
+		InputVaultText:  input,
+		OutputVaultText: output,
+		ExpectedBinding: binding,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifyRequest := httptest.NewRequest(http.MethodPost, "/api/v1/attestations/verify", strings.NewReader(string(verifyBody)))
+	verifyRequest.Header.Set("Content-Type", "application/json")
+	verifyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(verifyResponse, verifyRequest)
+	if verifyResponse.Code != http.StatusOK {
+		t.Fatalf("verify status = %d: %s", verifyResponse.Code, verifyResponse.Body.String())
+	}
+
+	metricsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(metricsResponse, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if metricsResponse.Code != http.StatusOK {
+		t.Fatalf("metrics status = %d: %s", metricsResponse.Code, metricsResponse.Body.String())
+	}
+	body := metricsResponse.Body.String()
+	for _, line := range []string{
+		"vaultsmith_operation_requests_total{operation=\"rotate\",outcome=\"success\"} 1\n",
+		"vaultsmith_operation_requests_total{operation=\"verify\",outcome=\"success\"} 1\n",
+		"vaultsmith_attestation_issued_total{outcome=\"success\"} 1\n",
+		"vaultsmith_attestation_verify_total{outcome=\"success\"} 1\n",
+		"vaultsmith_attestation_keyring_loaded 1\n",
+	} {
+		if !strings.Contains(body, line) {
+			t.Fatalf("metrics body = %q, want line %q", body, line)
+		}
+	}
+}
+
 func TestDisabledAttestationRequestStopsBeforeExecutor(t *testing.T) {
 	service, executor := newHTTPAttestationService(t, nil, false, 1)
 	body := `{"sourceProfileId":"missing","destinationProfileId":"also-missing","vaultText":"not-read-by-vault","attestation":{"binding":{"path":"synthetic"}}}`
@@ -253,8 +312,11 @@ func TestDisabledMetadataAndVerification(t *testing.T) {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
-		if response.Code != http.StatusNotFound {
-			t.Fatalf("%s status = %d, want 404: %s", path, response.Code, response.Body.String())
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s status = %d, want 503: %s", path, response.Code, response.Body.String())
+		}
+		if !strings.Contains(response.Body.String(), `"code":"feature_unavailable"`) {
+			t.Fatalf("%s body = %s", path, response.Body.String())
 		}
 	}
 	reader := &trackingReader{}

@@ -160,7 +160,8 @@ jobs:
           kubectl create namespace "$NAMESPACE"
           kubectl create secret generic vaultsmith-passwords \
             --namespace "$NAMESPACE" \
-            --from-literal='dev=fixture-password'
+            --from-literal='dev=fixture-password' \
+            --from-literal='prod=fixture-destination-password'
           helm upgrade --install "$RELEASE_NAME" deploy/helm/vaultsmith \
             --namespace "$NAMESPACE" \
             --values deploy/helm/vaultsmith/tests/values-kind.yaml \
@@ -171,6 +172,132 @@ jobs:
             --for=condition=available \
             deployment/"$RELEASE_NAME" \
             --timeout=120s
+          printf '%s' '{"version":1,"active":"synthetic-key","keys":[{"id":"synthetic-key","state":"active","publicKey":"iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w","privateKey":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"}]}' > "$RUNNER_TEMP/vaultsmith-keyring.json"
+          kubectl create secret generic vaultsmith-attestation \
+            --namespace "$NAMESPACE" \
+            --from-file=keyring.json="$RUNNER_TEMP/vaultsmith-keyring.json"
+          helm upgrade "$RELEASE_NAME" deploy/helm/vaultsmith \
+            --namespace "$NAMESPACE" \
+            --reuse-values \
+            --set auth.oidc.publicBaseURL=https://vaultsmith.example.test \
+            --set proofs.enabled=true \
+            --set proofs.existingSecret=vaultsmith-attestation \
+            --wait \
+            --timeout 180s
+          proof_deployment="$(kubectl get deployment "$RELEASE_NAME" --namespace "$NAMESPACE" -o json)"
+          jq -e '
+            any(.spec.template.spec.containers[0].env[]; .name == "PROOFS_ENABLED" and .value == "true") and
+            any(.spec.template.spec.containers[0].env[]; .name == "PROOFS_KEYRING_FILE" and .value == "/etc/vaultsmith/attestation/keyring.json") and
+            any(.spec.template.spec.volumes[]; .name == "attestation-keyring" and .secret.secretName == "vaultsmith-attestation" and .secret.optional == false) and
+            any(.spec.template.spec.containers[0].volumeMounts[]; .name == "attestation-keyring" and .mountPath == "/etc/vaultsmith/attestation" and .readOnly == true)
+          ' <<< "$proof_deployment" >/dev/null
+
+          probe_name=vaultsmith-attestation-probe
+          kubectl run "$probe_name" \
+            --namespace "$NAMESPACE" \
+            --image=curlimages/curl:8.12.1 \
+            --restart=Never \
+            --command -- sleep 300
+          kubectl wait \
+            --namespace "$NAMESPACE" \
+            --for=condition=Ready \
+            pod/"$probe_name" \
+            --timeout=120s
+          trap 'kubectl delete pod "$probe_name" --namespace "$NAMESPACE" --ignore-not-found --wait=false' EXIT
+
+          printf '%s' '{"version":1,"active":"synthetic-key-b","keys":[{"id":"synthetic-key","state":"retired","publicKey":"iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"},{"id":"synthetic-key-b","state":"active","publicKey":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q","privateKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI"}]}' > "$RUNNER_TEMP/vaultsmith-keyring-b.json"
+          printf '%s' '{"version":1,"active":"synthetic-key-b","keys":' > "$RUNNER_TEMP/vaultsmith-keyring-malformed.json"
+          printf '%s' '{"version":1,"active":"synthetic-key-b","keys":[{"id":"synthetic-key","state":"revoked","publicKey":"iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w"},{"id":"synthetic-key-b","state":"active","publicKey":"gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q","privateKey":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI"}]}' > "$RUNNER_TEMP/vaultsmith-keyring-b-revoked.json"
+
+          wait_for_metric() {
+            metric="$1"
+            description="$2"
+            for _ in $(seq 1 90); do
+              metrics="$(kubectl exec "$probe_name" --namespace "$NAMESPACE" -- curl --fail --silent --show-error http://vaultsmith:8080/metrics || true)"
+              if grep -Fq "$metric" <<< "$metrics"; then
+                return 0
+              fi
+              sleep 2
+            done
+            echo "$description" >&2
+            exit 1
+          }
+
+          request_from_probe() {
+            local body="$1"
+            local path="$2"
+            kubectl exec -i "$probe_name" --namespace "$NAMESPACE" -- curl \
+              --fail-with-body \
+              --silent \
+              --show-error \
+              --header 'Content-Type: application/json' \
+              --data-binary @- \
+              "http://vaultsmith:8080${path}" <<< "$body"
+          }
+
+          input_response="$(request_from_probe '{"plaintext":"synthetic-kind-input"}' '/api/v1/profiles/dev/encrypt')"
+          input_vault="$(jq -r '.vaultText' <<< "$input_response")"
+          test -n "$input_vault"
+          rotation_request="$(jq -cn \
+            --arg vault "$input_vault" \
+            '{sourceProfileId:"dev",destinationProfileId:"prod",vaultText:$vault,attestation:{binding:{repository:"synthetic/project",revision:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",path:"synthetic/path",selector:"synthetic"}}}')"
+          rotation_a="$(request_from_probe "$rotation_request" '/api/v1/rotations')"
+          output_a="$(jq -r '.vaultText' <<< "$rotation_a")"
+          proof_a="$(jq -c '.attestation' <<< "$rotation_a")"
+          test -n "$output_a"
+          test "$proof_a" != null
+          verify_request="$(jq -cn \
+            --argjson attestation "$proof_a" \
+            --arg input "$input_vault" \
+            --arg output "$output_a" \
+            '{attestation:$attestation,inputVaultText:$input,outputVaultText:$output,expectedBinding:{repository:"synthetic/project",revision:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",path:"synthetic/path",selector:"synthetic"}}')"
+          verify_a="$(request_from_probe "$verify_request" '/api/v1/attestations/verify')"
+          jq -e '.valid == true and .attestation.kid == "synthetic-key"' <<< "$verify_a" >/dev/null
+
+          kubectl create secret generic vaultsmith-attestation \
+            --namespace "$NAMESPACE" \
+            --from-file=keyring.json="$RUNNER_TEMP/vaultsmith-keyring-b.json" \
+            --dry-run=client \
+            -o yaml | kubectl apply -f -
+          wait_for_metric 'vaultsmith_attestation_keyring_reload_total{outcome="success"} 1' 'valid projected Secret replacement did not reload'
+          wait_for_metric 'vaultsmith_attestation_keyring_loaded 1' 'keyring was not loaded after valid replacement'
+          rotation_b="$(request_from_probe "$rotation_request" '/api/v1/rotations')"
+          output_b="$(jq -r '.vaultText' <<< "$rotation_b")"
+          proof_b="$(jq -c '.attestation' <<< "$rotation_b")"
+          test -n "$output_b"
+          test "$proof_b" != null
+          verify_b_request="$(jq -cn \
+            --argjson attestation "$proof_b" \
+            --arg input "$input_vault" \
+            --arg output "$output_b" \
+            '{attestation:$attestation,inputVaultText:$input,outputVaultText:$output,expectedBinding:{repository:"synthetic/project",revision:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",path:"synthetic/path",selector:"synthetic"}}')"
+          verify_b="$(request_from_probe "$verify_b_request" '/api/v1/attestations/verify')"
+          jq -e '.valid == true and .attestation.kid == "synthetic-key-b"' <<< "$verify_b" >/dev/null
+          verify_a_after_rotation="$(request_from_probe "$verify_request" '/api/v1/attestations/verify')"
+          jq -e '.valid == true and .attestation.kid == "synthetic-key"' <<< "$verify_a_after_rotation" >/dev/null
+
+          kubectl create secret generic vaultsmith-attestation \
+            --namespace "$NAMESPACE" \
+            --from-file=keyring.json="$RUNNER_TEMP/vaultsmith-keyring-malformed.json" \
+            --dry-run=client \
+            -o yaml | kubectl apply -f -
+          wait_for_metric 'vaultsmith_attestation_keyring_reload_total{outcome="failed"} 1' 'malformed projected Secret replacement was not rejected'
+          wait_for_metric 'vaultsmith_attestation_keyring_reload_total{outcome="success"} 1' 'previous valid keyring was not retained after malformed replacement'
+          wait_for_metric 'vaultsmith_attestation_keyring_loaded 1' 'keyring readiness was lost after malformed replacement'
+          verify_b_after_malformed="$(request_from_probe "$verify_b_request" '/api/v1/attestations/verify')"
+          jq -e '.valid == true and .attestation.kid == "synthetic-key-b"' <<< "$verify_b_after_malformed" >/dev/null
+
+          kubectl create secret generic vaultsmith-attestation \
+            --namespace "$NAMESPACE" \
+            --from-file=keyring.json="$RUNNER_TEMP/vaultsmith-keyring-b-revoked.json" \
+            --dry-run=client \
+            -o yaml | kubectl apply -f -
+          wait_for_metric 'vaultsmith_attestation_keyring_reload_total{outcome="success"} 2' 'valid keyring was not restored after malformed replacement'
+          verify_a_after_revoke="$(request_from_probe "$verify_request" '/api/v1/attestations/verify')"
+          jq -e '.valid == false and .reason == "key_revoked"' <<< "$verify_a_after_revoke" >/dev/null
+          verify_b_after_revoke="$(request_from_probe "$verify_b_request" '/api/v1/attestations/verify')"
+          jq -e '.valid == true and .attestation.kid == "synthetic-key-b"' <<< "$verify_b_after_revoke" >/dev/null
+
           helm test "$RELEASE_NAME" \
             --namespace "$NAMESPACE" \
             --logs \
@@ -311,6 +438,41 @@ jobs:
           cache: true
       - name: Run smoke test
         run: make smoke
+
+  attestation-smoke:
+    name: Attestation qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run attestation qualification smoke test
+        run: make smoke-attestation
+
+  attestation-fuzz:
+    name: Attestation fuzz smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run bounded attestation fuzz targets
+        run: |
+          set -euo pipefail
+          go test ./backend/internal/attestation -run=^$ -fuzz=FuzzParseJWS -fuzztime=2s
+          go test ./backend/internal/attestation -run=^$ -fuzz=FuzzStrictClaims -fuzztime=2s
+          go test ./backend/internal/attestation -run=^$ -fuzz=FuzzCanonicalEnvelope -fuzztime=2s
+          go test ./backend/internal/attestationkeyring -run=^$ -fuzz=FuzzParseNeverPanics -fuzztime=2s
 
   native-integration:
     name: Native authentication integration

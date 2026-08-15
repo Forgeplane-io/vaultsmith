@@ -33,7 +33,6 @@ This is the static reference for the released REST contract. The canonical sourc
 | Status | Meaning | Body |
 | --- | --- | --- |
 | `200` | Deterministic non-secret local attestation metadata. | `application/json` [AttestationMetadata](#schema-attestationmetadata) |
-| `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
 | `405` | The resource accepts GET only. | [MethodNotAllowedGet](#response-methodnotallowedget) |
 | `503` | The rotation-attestation subsystem is disabled, unavailable, or saturated. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
 
@@ -48,7 +47,6 @@ This is the static reference for the released REST contract. The canonical sourc
 | Status | Meaning | Body |
 | --- | --- | --- |
 | `200` | Deterministic public-only Ed25519 JWKS. | `application/json` [AttestationJWKS](#schema-attestationjwks) |
-| `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
 | `405` | The resource accepts GET only. | [MethodNotAllowedGet](#response-methodnotallowedget) |
 | `503` | The rotation-attestation subsystem is disabled, unavailable, or saturated. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
 

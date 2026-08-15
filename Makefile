@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: test typecheck build smoke compatibility helm-lint chart-test admission-benchmark admission-receipt-check docker release-check release-snapshot generate-api api-compat api-contract-test api-check
+.PHONY: test typecheck build smoke smoke-attestation compatibility helm-lint chart-test admission-benchmark admission-receipt-check docker release-check release-snapshot generate-api api-compat api-contract-test api-check
 
 test:
 	go test ./...
@@ -33,6 +33,9 @@ api-check: api-contract-test api-compat
 
 smoke:
 	./scripts/smoke.sh
+
+smoke-attestation:
+	./scripts/smoke-attestation.sh
 
 helm-lint:
 	helm lint deploy/helm/vaultsmith -f deploy/helm/vaultsmith/tests/values-off.yaml

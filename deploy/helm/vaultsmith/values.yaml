@@ -65,6 +65,12 @@ auth:
 mcp:
   enabled: false
 
+# Proofs are disabled by default. When enabled, existingSecret must contain
+# the application-owned versioned keyring under the fixed key `keyring.json`.
+proofs:
+  enabled: false
+  existingSecret: ""
+
 # The official Valkey chart is included by default. Set enabled to false only
 # when auth.redis.address points to an externally managed Valkey/Redis service.
 valkey:

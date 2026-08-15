@@ -883,7 +883,6 @@ export interface operations {
                     "application/json": components["schemas"]["AttestationMetadata"];
                 };
             };
-            404: components["responses"]["NotFound"];
             405: components["responses"]["MethodNotAllowedGet"];
             503: components["responses"]["AttestationServiceUnavailable"];
         };
@@ -908,7 +907,6 @@ export interface operations {
                     "application/json": components["schemas"]["AttestationJWKS"];
                 };
             };
-            404: components["responses"]["NotFound"];
             405: components["responses"]["MethodNotAllowedGet"];
             503: components["responses"]["AttestationServiceUnavailable"];
         };

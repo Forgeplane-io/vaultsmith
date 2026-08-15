@@ -23,16 +23,8 @@ type Signed struct {
 // MarshalJSON emits the outer flattened object with JCS member ordering.
 // Verification intentionally accepts any outer-member order through Parse.
 func (s Signed) MarshalJSON() ([]byte, error) {
-	type wire struct {
-		Protected string `json:"protected"`
-		Payload   string `json:"payload"`
-		Signature string `json:"signature"`
-	}
-	raw, err := json.Marshal(wire{
-		Protected: s.Protected,
-		Payload:   s.Payload,
-		Signature: s.Signature,
-	})
+	type wire Signed
+	raw, err := json.Marshal(wire(s))
 	if err != nil {
 		return nil, ErrMalformed
 	}

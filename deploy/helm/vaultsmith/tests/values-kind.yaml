@@ -11,6 +11,10 @@ profiles:
     label: Development
     passwordEnv: VAULT_PASSWORD_DEV
     passwordSecretKey: dev
+  - id: prod
+    label: Production
+    passwordEnv: VAULT_PASSWORD_PROD
+    passwordSecretKey: prod
 
 secret:
   existingSecret: vaultsmith-passwords

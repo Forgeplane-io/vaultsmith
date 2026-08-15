@@ -29,7 +29,7 @@ spec:
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- if or .Values.auth.policy.existingConfigMap .Values.auth.policy.data .Values.auth.oidc.ca.existingConfigMap }}
+      {{- if or .Values.auth.policy.existingConfigMap .Values.auth.policy.data .Values.auth.oidc.ca.existingConfigMap .Values.proofs.enabled }}
       volumes:
         {{- if or .Values.auth.policy.existingConfigMap .Values.auth.policy.data }}
         - name: policy
@@ -46,6 +46,15 @@ spec:
             items:
               - key: {{ .Values.auth.oidc.ca.key | quote }}
                 path: ca.crt
+        {{- end }}
+        {{- if .Values.proofs.enabled }}
+        - name: attestation-keyring
+          secret:
+            secretName: {{ .Values.proofs.existingSecret | quote }}
+            items:
+              - key: keyring.json
+                path: keyring.json
+            optional: false
         {{- end }}
       {{- end }}
       containers:
@@ -115,6 +124,12 @@ spec:
               value: {{ join "," .Values.auth.cors.allowedOrigins | quote }}
             - name: MCP_ENABLED
               value: {{ .Values.mcp.enabled | quote }}
+            - name: PROOFS_ENABLED
+              value: {{ .Values.proofs.enabled | quote }}
+            {{- if .Values.proofs.enabled }}
+            - name: PROOFS_KEYRING_FILE
+              value: /etc/vaultsmith/attestation/keyring.json
+            {{- end }}
             {{- if .Values.auth.csrf.existingSecret }}
             - name: CSRF_SECRET
               valueFrom:
@@ -161,6 +176,11 @@ spec:
             {{- if .Values.auth.oidc.ca.existingConfigMap }}
             - name: oidc-ca
               mountPath: /etc/vaultsmith/oidc-ca
+              readOnly: true
+            {{- end }}
+            {{- if .Values.proofs.enabled }}
+            - name: attestation-keyring
+              mountPath: /etc/vaultsmith/attestation
               readOnly: true
             {{- end }}
           ports:
