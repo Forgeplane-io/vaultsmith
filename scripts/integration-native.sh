@@ -55,6 +55,13 @@ CSRF_SECRET="$(random_secret)"
 VAULT_PASSWORD_DEV="$(random_secret)"
 VAULT_PASSWORD_PROD="$(random_secret)"
 
+# This keyring is deterministic, disposable test material. It is never used
+# outside this integration stack and is removed by cleanup().
+cat > "$TMP_DIR/keyring.json" <<'KEYRING'
+{"version":1,"active":"synthetic-key","keys":[{"id":"synthetic-key","state":"active","publicKey":"iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w","privateKey":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"}]}
+KEYRING
+chmod 600 "$TMP_DIR/keyring.json"
+
 # The integration topology uses fixed ports throughout; do not let caller exports override its Compose env file.
 unset REDIS_PORT KEYCLOAK_PORT KEYCLOAK_ADMIN_PORT EDGE_PORT
 
@@ -159,7 +166,7 @@ kc create users -r vaultsmith \
 kc set-password -r vaultsmith --username integration-denied --new-password "$DENIED_USER_PASSWORD" >/dev/null
 kc update "users/$USER_ID/groups/$GROUP_ID" -r vaultsmith >/dev/null
 
-for scope in vaultsmith.profile.read vaultsmith.encrypt vaultsmith.decrypt vaultsmith.rotate; do
+for scope in vaultsmith.profile.read vaultsmith.encrypt vaultsmith.decrypt vaultsmith.rotate vaultsmith.attestation.verify; do
   scope_id="$(kc create client-scopes -r vaultsmith -i -b "{\"name\":\"$scope\",\"protocol\":\"openid-connect\",\"attributes\":{\"include.in.token.scope\":\"true\",\"display.on.consent.screen\":\"false\"}}")"
   kc update "clients/$CLIENT_ID/optional-client-scopes/$scope_id" -r vaultsmith >/dev/null
   kc update "clients/$MACHINE_CLIENT_ID/optional-client-scopes/$scope_id" -r vaultsmith >/dev/null
@@ -197,8 +204,9 @@ g, group:vaultsmith-operators, role:operator
 p, role:operator, profiles, profiles:list, allow
 p, role:operator, profile:dev, encrypt, allow
 p, role:operator, profile:dev, decrypt, allow
+p, role:operator, profile:prod, encrypt, allow
 POLICY
-  PROFILES_JSON='[{"id":"dev","label":"Development","passwordEnv":"VAULT_PASSWORD_DEV"}]'
+  PROFILES_JSON='[{"id":"dev","label":"Development","passwordEnv":"VAULT_PASSWORD_DEV"},{"id":"prod","label":"Production","passwordEnv":"VAULT_PASSWORD_PROD"}]'
 fi
 
 go build -o "$TMP_DIR/vaultsmith" ./backend/cmd/server
@@ -216,6 +224,8 @@ go build -o "$TMP_DIR/vaultsmith" ./backend/cmd/server
   AUTHZ_POLICY_FILE="$TMP_DIR/policy.csv" \
   COOKIE_SECURE=true \
   MCP_ENABLED=true \
+  PROOFS_ENABLED=true \
+  PROOFS_KEYRING_FILE="$TMP_DIR/keyring.json" \
   VAULT_PROFILES_JSON="$PROFILES_JSON" \
   VAULT_PASSWORD_DEV="$VAULT_PASSWORD_DEV" \
   VAULT_PASSWORD_PROD="$VAULT_PASSWORD_PROD" \
@@ -419,16 +429,28 @@ login("integration-user", user_password)
 session = json_response(request("/api/v1/session"))
 assert session["authenticated"] is True and session["email"] == "integration-user@example.test"
 profiles = json_response(request("/api/v1/profiles"))["profiles"]
-assert profiles == [{
-    "id": "dev",
-    "label": "Development",
-    "capabilities": {
-        "encrypt": True,
-        "decrypt": True,
-        "rotateSource": True,
-        "rotateDestination": True,
+assert profiles == [
+    {
+        "id": "dev",
+        "label": "Development",
+        "capabilities": {
+            "encrypt": True,
+            "decrypt": True,
+            "rotateSource": True,
+            "rotateDestination": True,
+        },
     },
-}], profiles
+    {
+        "id": "prod",
+        "label": "Production",
+        "capabilities": {
+            "encrypt": True,
+            "decrypt": False,
+            "rotateSource": False,
+            "rotateDestination": True,
+        },
+    },
+], profiles
 
 body = json.dumps({"profileId": "dev", "mode": "encrypt", "value": "integration"}).encode("utf-8")
 operation = json_response(request("/api/v1/operations", body, {
@@ -441,16 +463,28 @@ assert isinstance(operation.get("value"), str) and operation["value"], operation
 
 delegated = delegated_access_token("integration-user", user_password, "vaultsmith.profile.read vaultsmith.encrypt")
 bearer_profiles = json_response(bearer_request("/api/v1/profiles", delegated, headers={"X-Forwarded-User": "spoofed", "X-Remote-Groups": "admins"}))["profiles"]
-scoped_profiles = [{
-    "id": "dev",
-    "label": "Development",
-    "capabilities": {
-        "encrypt": True,
-        "decrypt": False,
-        "rotateSource": False,
-        "rotateDestination": False,
+scoped_profiles = [
+    {
+        "id": "dev",
+        "label": "Development",
+        "capabilities": {
+            "encrypt": True,
+            "decrypt": False,
+            "rotateSource": False,
+            "rotateDestination": False,
+        },
     },
-}]
+    {
+        "id": "prod",
+        "label": "Production",
+        "capabilities": {
+            "encrypt": True,
+            "decrypt": False,
+            "rotateSource": False,
+            "rotateDestination": False,
+        },
+    },
+]
 assert bearer_profiles == scoped_profiles, bearer_profiles
 bearer_encrypt = json_response(bearer_request(
     "/api/v1/profiles/dev/encrypt",
@@ -463,6 +497,62 @@ assert bearer_encrypt["vaultText"].startswith("$ANSIBLE_VAULT;1.2;AES256;dev"), 
 machine = client_credentials_access_token("vaultsmith.profile.read vaultsmith.encrypt")
 machine_profiles = json_response(bearer_request("/api/v1/profiles", machine))["profiles"]
 assert machine_profiles == scoped_profiles, machine_profiles
+
+# Exercise attestation through both native bearer paths. The verify-only
+# tokens intentionally omit profile.read to prove verification is keyring-only.
+binding = {
+    "repository": "synthetic/native-integration",
+    "revision": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "path": "synthetic/path",
+    "selector": "synthetic",
+}
+
+def attested_rotation(token):
+    body = json.dumps({
+        "sourceProfileId": "dev",
+        "destinationProfileId": "prod",
+        "vaultText": operation["value"],
+        "attestation": {"binding": binding},
+    }).encode("utf-8")
+    return json_response(bearer_request(
+        "/api/v1/rotations",
+        token,
+        body,
+        {"Content-Type": "application/json"},
+    ))
+
+def verify_attestation(token, rotation):
+    body = json.dumps({
+        "attestation": rotation["attestation"],
+        "inputVaultText": operation["value"],
+        "outputVaultText": rotation["vaultText"],
+        "expectedBinding": binding,
+    }).encode("utf-8")
+    return json_response(bearer_request(
+        "/api/v1/attestations/verify",
+        token,
+        body,
+        {"Content-Type": "application/json"},
+    ))
+
+delegated_rotate = delegated_access_token("integration-user", user_password, "vaultsmith.rotate")
+delegated_rotation = attested_rotation(delegated_rotate)
+assert delegated_rotation.get("attestation") and delegated_rotation.get("vaultText"), delegated_rotation
+delegated_verify = delegated_access_token("integration-user", user_password, "vaultsmith.attestation.verify")
+assert verify_attestation(delegated_verify, delegated_rotation)["valid"] is True
+
+machine_rotate = client_credentials_access_token("vaultsmith.rotate")
+machine_rotation = attested_rotation(machine_rotate)
+assert machine_rotation.get("attestation") and machine_rotation.get("vaultText"), machine_rotation
+machine_verify = client_credentials_access_token("vaultsmith.attestation.verify")
+assert verify_attestation(machine_verify, machine_rotation)["valid"] is True
+
+try:
+    verify_attestation(machine, delegated_rotation)
+except urllib.error.HTTPError as error:
+    assert error.code == 403 and "insufficient_scope" in error.headers.get("WWW-Authenticate", ""), error.headers
+else:
+    raise AssertionError("attestation verification without its scope unexpectedly succeeded")
 
 denied_scope = client_credentials_access_token("vaultsmith.profile.read")
 try:
@@ -525,7 +615,7 @@ for private_path in ("/healthz", "/readyz"):
 
 with open(server_log, encoding="utf-8") as log_file:
     log_text = log_file.read()
-for secret_value in (delegated, machine, denied_scope, denied_group, user_password, denied_password, oidc_client_secret, machine_client_secret, oversized_marker, "delegated-integration", "scope-denied", "group-denied"):
+for secret_value in (delegated, machine, delegated_rotate, delegated_verify, machine_rotate, machine_verify, denied_scope, denied_group, user_password, denied_password, oidc_client_secret, machine_client_secret, oversized_marker, "delegated-integration", "scope-denied", "group-denied"):
     assert secret_value not in log_text, "server log exposed a token, secret, or submitted body marker"
 
 logout(session)
@@ -555,5 +645,5 @@ else:
 logout(session)
 session = json_response(request("/api/v1/session"))
 assert session["authenticated"] is False, session
-print("native integration: ok (session, delegated-user bearer, client credentials, scopes, groups, MCP, edge, body/log safety)")
+print("native integration: ok (session, delegated-user bearer attestation, client-credentials attestation, scopes, groups, MCP, edge, body/log safety)")
 PY
