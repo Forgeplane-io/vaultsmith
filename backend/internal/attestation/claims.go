@@ -95,6 +95,16 @@ func validateClaims(claims RotationClaims) error {
 	return nil
 }
 
+func validateSigningClaims(claims RotationClaims) error {
+	if err := validateClaims(claims); err != nil {
+		return err
+	}
+	if claims.Version != SupportedVersion {
+		return errMalformed
+	}
+	return nil
+}
+
 func validateDigest(digest Digest) error {
 	if digest.Algorithm != "sha-256" || !validLowerHexDigest(digest.Value) {
 		return errMalformed
