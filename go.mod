@@ -15,6 +15,8 @@ require (
 	golang.org/x/oauth2 v0.36.0
 )
 
+require github.com/gowebpki/jcs v1.0.1 // Apache-2.0
+
 require (
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/modelcontextprotocol/go-sdk v1.7.0

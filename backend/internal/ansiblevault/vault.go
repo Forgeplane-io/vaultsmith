@@ -26,6 +26,7 @@ const (
 	ivSize            = 16
 	lineWidth         = 80
 	MaxPlaintextBytes = 1 << 20
+	MaxVaultTextBytes = 5 << 20
 )
 
 var (
@@ -112,69 +113,124 @@ func Decrypt(vaultText string, password []byte) ([]byte, error) {
 	if len(password) == 0 {
 		return nil, ErrInvalidPassword
 	}
-	if vaultText == "" {
-		return nil, ErrInvalidVault
-	}
-	vaultText = strings.ReplaceAll(vaultText, "\r\n", "\n")
-	if strings.ContainsRune(vaultText, '\r') {
-		return nil, ErrInvalidVault
-	}
-	vaultText = strings.TrimSuffix(vaultText, "\n")
-	lines := strings.Split(vaultText, "\n")
-	if len(lines) < 2 || !isSupportedHeader(lines[0]) {
-		return nil, ErrInvalidVault
-	}
-
-	var body strings.Builder
-	for _, line := range lines[1:] {
-		if len(line) == 0 || len(line) > lineWidth || !isHex(line) {
-			return nil, ErrInvalidVault
-		}
-		body.WriteString(line)
-	}
-	payload, err := hex.DecodeString(body.String())
+	envelope, err := parseEnvelope(vaultText)
 	if err != nil {
 		return nil, ErrInvalidVault
 	}
-	fields := strings.Split(string(payload), "\n")
-	if len(fields) != 3 || fields[0] == "" || fields[1] == "" || fields[2] == "" {
-		return nil, ErrInvalidVault
-	}
 
-	salt, err := hex.DecodeString(fields[0])
-	if err != nil || len(salt) != saltSize {
-		return nil, ErrInvalidVault
-	}
-	expectedMAC, err := hex.DecodeString(fields[1])
-	if err != nil || len(expectedMAC) != macSize {
-		return nil, ErrInvalidVault
-	}
-	ciphertext, err := hex.DecodeString(fields[2])
-	if err != nil || len(ciphertext) == 0 || len(ciphertext)%aes.BlockSize != 0 {
-		return nil, ErrInvalidVault
-	}
-
-	keyMaterial := derive(password, salt)
+	keyMaterial := derive(password, envelope.salt)
 	key := keyMaterial[:keySize]
 	macKey := keyMaterial[keySize : keySize+macSize]
 	iv := keyMaterial[keySize+macSize : keySize+macSize+ivSize]
 	mac := hmac.New(sha256.New, macKey)
-	_, _ = mac.Write(ciphertext)
-	if !hmac.Equal(expectedMAC, mac.Sum(nil)) {
+	_, _ = mac.Write(envelope.ciphertext)
+	if !hmac.Equal(envelope.expectedMAC, mac.Sum(nil)) {
 		return nil, ErrInvalidVault
 	}
 
-	plaintext := make([]byte, len(ciphertext))
+	plaintext := make([]byte, len(envelope.ciphertext))
 	stream, err := newCTR(key, iv)
 	if err != nil {
 		return nil, ErrInvalidVault
 	}
-	stream.XORKeyStream(plaintext, ciphertext)
+	stream.XORKeyStream(plaintext, envelope.ciphertext)
 	plaintext, ok := pkcs7Unpad(plaintext, aes.BlockSize)
 	if !ok {
 		return nil, ErrInvalidVault
 	}
 	return plaintext, nil
+}
+
+// CanonicalEnvelope validates and serializes an Ansible Vault envelope without
+// decrypting it. The returned representation uses LF line endings, lowercase
+// hexadecimal body text wrapped at 80 bytes, and exactly one trailing LF.
+//
+// The parser used here is also the parser used by Decrypt. This keeps the
+// canonical representation tied to the accepted Vault 1.1/1.2 syntax rather
+// than maintaining a second format policy in another package.
+func CanonicalEnvelope(text string) ([]byte, error) {
+	if len(text) > MaxVaultTextBytes || !utf8.ValidString(text) {
+		return nil, ErrInvalidVault
+	}
+	envelope, err := parseEnvelope(text)
+	if err != nil {
+		return nil, err
+	}
+
+	body := strings.ToLower(envelope.body)
+	var canonical strings.Builder
+	canonical.Grow(len(envelope.header) + 1 + len(body) + len(body)/lineWidth + 1)
+	canonical.WriteString(envelope.header)
+	canonical.WriteByte('\n')
+	for len(body) > lineWidth {
+		canonical.WriteString(body[:lineWidth])
+		canonical.WriteByte('\n')
+		body = body[lineWidth:]
+	}
+	canonical.WriteString(body)
+	canonical.WriteByte('\n')
+	return []byte(canonical.String()), nil
+}
+
+// parsedEnvelope contains only the encoded Vault envelope fields needed by
+// the format parser and decryptor. It deliberately contains no plaintext.
+type parsedEnvelope struct {
+	header      string
+	body        string
+	salt        []byte
+	expectedMAC []byte
+	ciphertext  []byte
+}
+
+func parseEnvelope(vaultText string) (parsedEnvelope, error) {
+	if vaultText == "" {
+		return parsedEnvelope{}, ErrInvalidVault
+	}
+	vaultText = strings.ReplaceAll(vaultText, "\r\n", "\n")
+	if strings.ContainsRune(vaultText, '\r') {
+		return parsedEnvelope{}, ErrInvalidVault
+	}
+	vaultText = strings.TrimSuffix(vaultText, "\n")
+	lines := strings.Split(vaultText, "\n")
+	if len(lines) < 2 || !isSupportedHeader(lines[0]) {
+		return parsedEnvelope{}, ErrInvalidVault
+	}
+
+	var body strings.Builder
+	for _, line := range lines[1:] {
+		if len(line) == 0 || len(line) > lineWidth || !isHex(line) {
+			return parsedEnvelope{}, ErrInvalidVault
+		}
+		body.WriteString(line)
+	}
+	payload, err := hex.DecodeString(body.String())
+	if err != nil {
+		return parsedEnvelope{}, ErrInvalidVault
+	}
+	fields := strings.Split(string(payload), "\n")
+	if len(fields) != 3 || fields[0] == "" || fields[1] == "" || fields[2] == "" {
+		return parsedEnvelope{}, ErrInvalidVault
+	}
+
+	salt, err := hex.DecodeString(fields[0])
+	if err != nil || len(salt) != saltSize {
+		return parsedEnvelope{}, ErrInvalidVault
+	}
+	expectedMAC, err := hex.DecodeString(fields[1])
+	if err != nil || len(expectedMAC) != macSize {
+		return parsedEnvelope{}, ErrInvalidVault
+	}
+	ciphertext, err := hex.DecodeString(fields[2])
+	if err != nil || len(ciphertext) == 0 || len(ciphertext)%aes.BlockSize != 0 {
+		return parsedEnvelope{}, ErrInvalidVault
+	}
+	return parsedEnvelope{
+		header:      lines[0],
+		body:        body.String(),
+		salt:        salt,
+		expectedMAC: expectedMAC,
+		ciphertext:  ciphertext,
+	}, nil
 }
 
 // Reencrypt decrypts a Vault value with the source password and encrypts it
