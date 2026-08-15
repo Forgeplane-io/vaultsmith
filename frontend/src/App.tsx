@@ -837,6 +837,57 @@ export default function App() {
     setModeNotice('')
   }
 
+  function renderModeSwitch(verificationView: boolean) {
+    const operationDisabled = (available: boolean) => verificationView
+      ? workbenchLocked
+      : workbenchLocked || !profileSnapshotReady || !available
+
+    return (
+      <div className="mode-switch">
+        <button
+          type="button"
+          className={!verificationView && mode === 'encrypt' ? 'mode-button active' : 'mode-button'}
+          aria-label="Set encrypt mode"
+          aria-pressed={!verificationView && mode === 'encrypt'}
+          onClick={() => changeMode('encrypt')}
+          disabled={operationDisabled(encryptAvailable)}
+        >
+          Encrypt
+        </button>
+        <button
+          type="button"
+          className={!verificationView && mode === 'decrypt' ? 'mode-button active' : 'mode-button'}
+          aria-label="Set decrypt mode"
+          aria-pressed={!verificationView && mode === 'decrypt'}
+          onClick={() => changeMode('decrypt')}
+          disabled={operationDisabled(decryptAvailable)}
+        >
+          Decrypt
+        </button>
+        <button
+          type="button"
+          className={!verificationView && mode === 'rotate' ? 'mode-button active' : 'mode-button'}
+          aria-label="Set re-key mode"
+          aria-pressed={!verificationView && mode === 'rotate'}
+          onClick={() => changeMode('rotate')}
+          disabled={operationDisabled(rotateAvailable)}
+        >
+          Re-key
+        </button>
+        <button
+          type="button"
+          className={verificationView ? 'mode-button active' : 'mode-button'}
+          aria-label="Set verify mode"
+          aria-pressed={verificationView}
+          onClick={changeVerifyMode}
+          disabled={workbenchLocked || !proofAvailable}
+        >
+          Verify
+        </button>
+      </div>
+    )
+  }
+
   if (signedOut) {
     return (
       <div className="console-app signed-out-view">
@@ -915,11 +966,8 @@ export default function App() {
                   <div className="operation-controls">
                     <fieldset className="mode-fieldset">
                       <legend>Operation</legend>
-                      <div className="mode-switch">
-                        <button type="button" className="mode-button active" aria-label="Set verify mode" aria-pressed="true" onClick={changeVerifyMode} disabled={workbenchLocked}>Verify</button>
-                      </div>
+                      {renderModeSwitch(true)}
                     </fieldset>
-                    <button type="button" className="quiet-button" onClick={leaveVerifyMode} disabled={workbenchLocked}>Back to operations</button>
                   </div>
                 </div>
               ) : (
@@ -977,13 +1025,8 @@ export default function App() {
                   <div className="operation-controls">
                     <fieldset className="mode-fieldset">
                       <legend>Operation</legend>
-                      <div className="mode-switch">
-                        <button type="button" className={mode === 'encrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set encrypt mode" aria-pressed={mode === 'encrypt'} onClick={() => changeMode('encrypt')} disabled={workbenchLocked || !profileSnapshotReady || !encryptAvailable}>Encrypt</button>
-                        <button type="button" className={mode === 'decrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set decrypt mode" aria-pressed={mode === 'decrypt'} onClick={() => changeMode('decrypt')} disabled={workbenchLocked || !profileSnapshotReady || !decryptAvailable}>Decrypt</button>
-                        <button type="button" className={mode === 'rotate' ? 'mode-button active' : 'mode-button'} aria-label="Set re-key mode" aria-pressed={mode === 'rotate'} onClick={() => changeMode('rotate')} disabled={workbenchLocked || !profileSnapshotReady || !rotateAvailable}>Re-key</button>
-                      </div>
+                      {renderModeSwitch(false)}
                     </fieldset>
-                    {proofAvailable && <button type="button" className="mode-button verify-mode-button" aria-label="Set verify mode" aria-pressed="false" onClick={changeVerifyMode} disabled={workbenchLocked}>Verify</button>}
                     <div className="mode-availability-list" aria-label="Operation availability">
                       {profileSnapshotReady && (!encryptAvailable || !decryptAvailable || !rotateAvailable)
                         ? (
@@ -1001,47 +1044,51 @@ export default function App() {
             </div>
 
             {!verifyMode && mode === 'rotate' && proofAvailable && (
-              <fieldset className="attestation-options">
-                <legend>Rotation attestation</legend>
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={issueAttestation}
-                    onChange={(event) => {
-                      setIssueAttestation(event.target.checked)
-                      setAttestation(null)
-                      setAttestationCopyFeedback(null)
-                      setVerificationResult(null)
-                    }}
-                    disabled={workbenchLocked}
-                  />
-                  <span>Issue attestation</span>
-                </label>
-                {issueAttestation && (
-                  <div className="binding-fields">
-                    {(['repository', 'revision', 'path', 'selector'] as const).map((field) => (
-                      <div className="field-label" key={field}>
-                        <label htmlFor={`attestation-${field}`}>{field[0].toUpperCase() + field.slice(1)}</label>
-                        <input
-                          id={`attestation-${field}`}
-                          value={attestationBinding[field]}
-                          onChange={(event) => {
-                            setAttestationBinding((current) => ({ ...current, [field]: event.target.value }))
-                            setAttestation(null)
-                            setAttestationCopyFeedback(null)
-                          }}
-                          disabled={workbenchLocked}
-                          autoComplete="off"
-                          spellCheck={false}
-                          autoCapitalize="off"
-                          autoCorrect="off"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <span className="field-help">Context is caller-supplied. Vaultsmith does not infer repository, revision, path, or selector values.</span>
-              </fieldset>
+              <div className="attestation-options" role="group" aria-labelledby="rotation-attestation-heading">
+                <div className="attestation-options-header">
+                  <h2 id="rotation-attestation-heading">Rotation attestation</h2>
+                </div>
+                <div className="attestation-options-body">
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={issueAttestation}
+                      onChange={(event) => {
+                        setIssueAttestation(event.target.checked)
+                        setAttestation(null)
+                        setAttestationCopyFeedback(null)
+                        setVerificationResult(null)
+                      }}
+                      disabled={workbenchLocked}
+                    />
+                    <span>Issue attestation</span>
+                  </label>
+                  {issueAttestation && (
+                    <div className="binding-fields">
+                      {(['repository', 'revision', 'path', 'selector'] as const).map((field) => (
+                        <div className="field-label" key={field}>
+                          <label htmlFor={`attestation-${field}`}>{field[0].toUpperCase() + field.slice(1)}</label>
+                          <input
+                            id={`attestation-${field}`}
+                            value={attestationBinding[field]}
+                            onChange={(event) => {
+                              setAttestationBinding((current) => ({ ...current, [field]: event.target.value }))
+                              setAttestation(null)
+                              setAttestationCopyFeedback(null)
+                            }}
+                            disabled={workbenchLocked}
+                            autoComplete="off"
+                            spellCheck={false}
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <span className="field-help">Context is caller-supplied. Vaultsmith does not infer repository, revision, path, or selector values.</span>
+                </div>
+              </div>
             )}
 
             <div className="mode-notice-slot">
@@ -1330,27 +1377,31 @@ function VerificationWorkbench({
           </section>
         </div>
       </div>
-      <fieldset className="attestation-options verification-binding-options">
-        <legend>Expected binding (optional)</legend>
-        <div className="binding-fields">
-          {(['repository', 'revision', 'path', 'selector'] as const).map((field) => (
-            <div className="field-label" key={field}>
-              <label htmlFor={`expected-binding-${field}`}>{field[0].toUpperCase() + field.slice(1)}</label>
-              <input
-                id={`expected-binding-${field}`}
-                value={expectedBinding[field]}
-                onChange={(event) => onBindingChange(field, event.target.value)}
-                disabled={disabled}
-                autoComplete="off"
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-              />
-            </div>
-          ))}
+      <div className="attestation-options verification-binding-options" role="group" aria-labelledby="expected-binding-heading">
+        <div className="attestation-options-header">
+          <h2 id="expected-binding-heading">Expected binding (optional)</h2>
         </div>
-        <span className="field-help">Leave fields empty to verify without an expected caller binding.</span>
-      </fieldset>
+        <div className="attestation-options-body">
+          <div className="binding-fields">
+            {(['repository', 'revision', 'path', 'selector'] as const).map((field) => (
+              <div className="field-label" key={field}>
+                <label htmlFor={`expected-binding-${field}`}>{field[0].toUpperCase() + field.slice(1)}</label>
+                <input
+                  id={`expected-binding-${field}`}
+                  value={expectedBinding[field]}
+                  onChange={(event) => onBindingChange(field, event.target.value)}
+                  disabled={disabled}
+                  autoComplete="off"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                />
+              </div>
+            ))}
+          </div>
+          <span className="field-help">Leave fields empty to verify without an expected caller binding.</span>
+        </div>
+      </div>
       <div className="panel-actions verification-actions">
         <button className="primary-button" type="submit" disabled={submitDisabled || busy}>
           {busy ? 'Verifying…' : 'Verify'}
