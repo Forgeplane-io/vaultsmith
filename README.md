@@ -28,7 +28,7 @@ Application limits:
 The public OCI chart command below uses the release-managed chart version:
 
 ```sh
-VAULTSMITH_CHART_VERSION=0.5.0 # x-release-please-version
+VAULTSMITH_CHART_VERSION=0.6.0 # x-release-please-version
 helm upgrade --install vaultsmith \
   oci://ghcr.io/forgeplane-io/charts/vaultsmith \
   --version "$VAULTSMITH_CHART_VERSION" \
