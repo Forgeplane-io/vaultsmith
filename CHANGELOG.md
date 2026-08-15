@@ -2,6 +2,25 @@
 
 All notable changes to Vaultsmith are documented here. Release Please maintains this file from Conventional Commits.
 
+## [0.6.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.5.0...v0.6.0) (2026-08-15)
+
+
+### Features
+
+* **attestation:** add keyring lifecycle ([43b1b85](https://github.com/Forgeplane-io/vaultsmith/commit/43b1b85335adc0b877d80f702631d282dea5bf06))
+* **attestation:** add MCP and bundled UI integration ([22907db](https://github.com/Forgeplane-io/vaultsmith/commit/22907db1086b9fe700890e71c1be158c403129db))
+* **attestation:** add REST service integration ([82ac6c6](https://github.com/Forgeplane-io/vaultsmith/commit/82ac6c60986e85e7d7422ecb204c482b0a699726))
+* **attestation:** add rotation attestation core ([8719f8d](https://github.com/Forgeplane-io/vaultsmith/commit/8719f8d59bcc10bd8a3d82c0849400026f9faf8d))
+
+
+### Bug Fixes
+
+* **attestation:** restrict signing to v1 ([d98c770](https://github.com/Forgeplane-io/vaultsmith/commit/d98c770bd9ccb406dbc98976bf0768862c7f7e8e))
+* **attestation:** use fully specified Ed25519 alg ([4305c2e](https://github.com/Forgeplane-io/vaultsmith/commit/4305c2e519ef53c21dd7c1ebc4138ee9ef149f7b))
+* **ui:** refresh embedded frontend entrypoint ([c9cbc06](https://github.com/Forgeplane-io/vaultsmith/commit/c9cbc065579469771999310b88cbe25ce34884cd))
+* **ui:** sync embedded frontend entrypoint ([bfc828c](https://github.com/Forgeplane-io/vaultsmith/commit/bfc828cb19ee3ad8e4eb9573458d288f969021a5))
+* **ui:** unify Verify navigation ([cd81943](https://github.com/Forgeplane-io/vaultsmith/commit/cd819437b0176164767cecf6243df803523f6631))
+
 ## [0.5.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.4.0...v0.5.0) (2026-08-14)
 
 
