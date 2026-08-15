@@ -22,7 +22,8 @@ const (
 	// by the JSON/ECMAScript number model used by RFC 8785.
 	MaxJCSSafeInteger int64 = 9007199254740991
 
-	attestationType = "application/vaultsmith-rotation-attestation+json"
+	attestationAlgorithm = "Ed25519"
+	attestationType      = "application/vaultsmith-rotation-attestation+json"
 )
 
 // Digest is a domain-separated SHA-256 digest reference in a claim.
