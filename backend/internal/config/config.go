@@ -20,10 +20,12 @@ var (
 	profileIDPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 	passwordEnvPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 	reservedEnvNames   = map[string]struct{}{
-		profilesEnv:   {},
-		"HTTP_ADDR":   {},
-		"MCP_ENABLED": {},
-		"MCPGODEBUG":  {},
+		profilesEnv:           {},
+		"HTTP_ADDR":           {},
+		"MCP_ENABLED":         {},
+		"MCPGODEBUG":          {},
+		"PROOFS_ENABLED":      {},
+		"PROOFS_KEYRING_FILE": {},
 	}
 )
 
@@ -47,11 +49,20 @@ type Config struct {
 	profiles []profile
 	executor *executor
 	auth     AuthConfig
+	proofs   ProofsConfig
 	mcp      MCPConfig
 }
 
 type MCPConfig struct {
 	Enabled bool
+}
+
+// ProofsConfig is the transport-independent signing-key lifecycle seam. The
+// issuer is derived from PUBLIC_BASE_URL and is not independently configurable.
+type ProofsConfig struct {
+	Enabled     bool
+	KeyringFile string
+	Issuer      string
 }
 
 type ProfileExecutor interface {
@@ -82,22 +93,41 @@ func LoadFromEnv() (*Config, error) {
 }
 
 func LoadApplicationFromEnv() (*Config, error) {
-	if err := RejectMCPGoDebug(os.LookupEnv); err != nil {
+	return loadApplication(os.LookupEnv)
+}
+
+func loadApplication(lookup EnvLookup) (*Config, error) {
+	if lookup == nil {
+		lookup = os.LookupEnv
+	}
+	if err := RejectMCPGoDebug(lookup); err != nil {
 		return nil, err
 	}
-	loaded, err := LoadFromEnv()
+	profilesJSON, ok := lookup(profilesEnv)
+	if !ok || strings.TrimSpace(profilesJSON) == "" {
+		return nil, fmt.Errorf("%s is required", profilesEnv)
+	}
+	loaded, err := LoadJSON(profilesJSON, lookup)
 	if err != nil {
 		return nil, err
 	}
-	auth, err := LoadAuth(os.LookupEnv)
+	auth, err := LoadAuth(lookup)
 	if err != nil {
 		return nil, err
 	}
-	mcpEnabled, err := LoadMCPEnabled(os.LookupEnv)
+	proofs, err := LoadProofs(lookup)
+	if err != nil {
+		return nil, err
+	}
+	if proofs.Enabled {
+		auth.OIDC.PublicBaseURL = proofs.Issuer
+	}
+	mcpEnabled, err := LoadMCPEnabled(lookup)
 	if err != nil {
 		return nil, err
 	}
 	loaded.auth = *auth
+	loaded.proofs = proofs
 	loaded.mcp = MCPConfig{Enabled: mcpEnabled}
 	return loaded, nil
 }
@@ -184,6 +214,10 @@ func (c *Config) Auth() AuthConfig {
 
 func (c *Config) MCP() MCPConfig {
 	return c.mcp
+}
+
+func (c *Config) Proofs() ProofsConfig {
+	return c.proofs
 }
 
 func (c *Config) Executor() Executor {
