@@ -68,7 +68,7 @@ func TestCaseVariantTypIsAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sign() error = %v", err)
 	}
-	variant := []byte(`{"alg":"EdDSA","kid":"rotation-2026-08","typ":"APPLICATION/VAULTSMITH-ROTATION-ATTESTATION+JSON"}`)
+	variant := []byte(`{"alg":"Ed25519","kid":"rotation-2026-08","typ":"APPLICATION/VAULTSMITH-ROTATION-ATTESTATION+JSON"}`)
 	signed = resignWithProtected(t, signed, variant, privateKey)
 	_, err = Verify(signed, VerifyOptions{
 		ExpectedIssuer:       testIssuer,
@@ -165,7 +165,7 @@ func TestMalformedJWSAndStrictJSON(t *testing.T) {
 		t.Fatalf("duplicate outer error = %v, want ErrMalformed", err)
 	}
 	duplicateHeader := append([]byte(nil), mustDecode(t, signed.Protected)...)
-	duplicateHeader = append(duplicateHeader[:len(duplicateHeader)-1], []byte(`,"alg":"EdDSA"}`)...)
+	duplicateHeader = append(duplicateHeader[:len(duplicateHeader)-1], []byte(`,"alg":"Ed25519"}`)...)
 	badHeader := resignWithProtected(t, signed, duplicateHeader, privateKey)
 	if _, err := Verify(badHeader, validOptions(claims, privateKey)); !errors.Is(err, ErrMalformed) {
 		t.Fatalf("duplicate header error = %v, want ErrMalformed", err)
@@ -241,16 +241,16 @@ func TestHeaderAndEncodingRejections(t *testing.T) {
 		protected string
 	}{
 		{
-			name:      "wrong algorithm",
-			protected: `{"alg":"Ed25519","kid":"rotation-2026-08","typ":"application/vaultsmith-rotation-attestation+json"}`,
+			name:      "deprecated polymorphic algorithm",
+			protected: `{"alg":"EdDSA","kid":"rotation-2026-08","typ":"application/vaultsmith-rotation-attestation+json"}`,
 		},
 		{
 			name:      "type parameter",
-			protected: `{"alg":"EdDSA","kid":"rotation-2026-08","typ":"application/vaultsmith-rotation-attestation+json;v=1"}`,
+			protected: `{"alg":"Ed25519","kid":"rotation-2026-08","typ":"application/vaultsmith-rotation-attestation+json;v=1"}`,
 		},
 		{
 			name:      "forbidden crit",
-			protected: `{"alg":"EdDSA","crit":[],"kid":"rotation-2026-08","typ":"application/vaultsmith-rotation-attestation+json"}`,
+			protected: `{"alg":"Ed25519","crit":[],"kid":"rotation-2026-08","typ":"application/vaultsmith-rotation-attestation+json"}`,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -440,7 +440,7 @@ func mutateSignature(t *testing.T, signed Signed) Signed {
 
 func signClaimsForTest(t *testing.T, claims RotationClaims, kid string, privateKey ed25519.PrivateKey) Signed {
 	t.Helper()
-	protected, err := canonicalProtectedHeader(protectedHeader{Alg: "EdDSA", Kid: kid, Typ: attestationType})
+	protected, err := canonicalProtectedHeader(protectedHeader{Alg: attestationAlgorithm, Kid: kid, Typ: attestationType})
 	if err != nil {
 		t.Fatalf("canonical test header: %v", err)
 	}

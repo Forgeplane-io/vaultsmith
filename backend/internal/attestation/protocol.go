@@ -64,7 +64,7 @@ var protectedMembers = map[string]struct{}{
 	"alg": {}, "kid": {}, "typ": {},
 }
 
-// Sign validates v1 typed claims and emits a flattened EdDSA JWS. Future
+// Sign validates v1 typed claims and emits a flattened Ed25519 JWS. Future
 // versions remain verifiable through test-only/raw construction so Verify can
 // report unsupported_version, but the public v1 signer cannot mint them.
 func Sign(claims RotationClaims, kid string, privateKey ed25519.PrivateKey) (Signed, error) {
@@ -79,7 +79,7 @@ func Sign(claims RotationClaims, kid string, privateKey ed25519.PrivateKey) (Sig
 	}
 
 	protectedBytes, err := canonicalProtectedHeader(protectedHeader{
-		Alg: "EdDSA",
+		Alg: attestationAlgorithm,
 		Kid: kid,
 		Typ: attestationType,
 	})
@@ -247,7 +247,7 @@ func parseCanonicalProtected(data []byte) (protectedHeader, error) {
 	if err != nil || typ == "" || !stringsEqualFoldASCII(typ, attestationType) {
 		return protectedHeader{}, errMalformed
 	}
-	if alg != "EdDSA" {
+	if alg != attestationAlgorithm {
 		return protectedHeader{}, errMalformed
 	}
 	canonical, err := jcs.Transform(data)
