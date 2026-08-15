@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/apimodels"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/attestation"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/caller"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/version"
@@ -23,7 +24,8 @@ import (
 )
 
 const (
-	mcpProtocolVersion = "2026-07-28"
+	mcpProtocolVersion    = "2026-07-28"
+	maxMCPVerifyBodyBytes = maxAttestationVerifyBodyBytes
 
 	mcpErrorParse                 = -32700
 	mcpErrorInvalidRequest        = -32600
@@ -111,41 +113,90 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, status, code)
 		return
 	}
+	verifyCall := headerMethod == "tools/call" && headerToolName == "verify_rotation_attestation"
+	var verifyPreflightErr error
 	if actor.Kind() == caller.KindBearer {
-		var preflightErr error
-		if mcpHeaderRequiredScope(headerMethod, headerToolName) == vaultservice.ScopeProfileRead {
-			preflightErr = h.preflightProfiles(r.Context(), actor)
+		if verifyCall {
+			verifyPreflightErr = h.service.PreflightAttestationVerify(r.Context(), actor)
+		} else if (headerMethod == "server/discover" || headerMethod == "tools/list") && actor.HasScope(vaultservice.ScopeAttestationVerify) {
+			// A verify-only bearer may discover the verification tool without
+			// profile-read or profile Casbin access.
+		} else if mcpHeaderRequiredScope(headerMethod, headerToolName) == vaultservice.ScopeProfileRead {
+			verifyPreflightErr = h.preflightProfiles(r.Context(), actor)
 		} else if headerMethod == "tools/call" {
-			preflightErr = h.preflightOperation(r.Context(), actor, vaultservice.Operation(headerToolName))
+			verifyPreflightErr = h.preflightOperation(r.Context(), actor, vaultservice.Operation(headerToolName))
 		}
-		if preflightErr != nil {
+		if verifyPreflightErr != nil && !(verifyCall &&
+			(vaultservice.HasCode(verifyPreflightErr, vaultservice.CodeFeatureUnavailable) ||
+				vaultservice.HasCode(verifyPreflightErr, vaultservice.CodeAttestationUnavailable))) {
 			scope := mcpHeaderRequiredScope(headerMethod, headerToolName)
-			if vaultservice.HasCode(preflightErr, vaultservice.CodeForbidden) {
+			if vaultservice.HasCode(verifyPreflightErr, vaultservice.CodeForbidden) {
 				writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", scope, protectedResourceMetadataURL(h.authConfig))
-			} else if errors.Is(preflightErr, context.Canceled) || errors.Is(preflightErr, context.DeadlineExceeded) {
+			} else if errors.Is(verifyPreflightErr, context.Canceled) || errors.Is(verifyPreflightErr, context.DeadlineExceeded) {
 				writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
 			} else {
-				writeServiceError(w, preflightErr)
+				writeServiceError(w, verifyPreflightErr)
 			}
 			return
 		}
 	}
 
-	lease, err := h.service.Admission().TryAcquire(r.Context())
-	if err != nil {
-		if errors.Is(err, vaultservice.ErrAdmissionSaturated) {
-			writeAdmissionSaturated(w, h.service.Admission())
-		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
-		} else {
-			writeServiceError(w, err)
+	var lease *vaultservice.Lease
+	var err error
+	var leaseContext context.Context
+	if verifyCall {
+		if verifyPreflightErr == nil && actor.Kind() != caller.KindBearer {
+			verifyPreflightErr = h.service.PreflightAttestationVerify(r.Context(), actor)
 		}
-		return
+		if verifyPreflightErr != nil && !vaultservice.HasCode(verifyPreflightErr, vaultservice.CodeFeatureUnavailable) && !vaultservice.HasCode(verifyPreflightErr, vaultservice.CodeAttestationUnavailable) {
+			if vaultservice.HasCode(verifyPreflightErr, vaultservice.CodeForbidden) && actor.Kind() == caller.KindBearer {
+				writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", vaultservice.ScopeAttestationVerify, protectedResourceMetadataURL(h.authConfig))
+			} else {
+				writeServiceError(w, verifyPreflightErr)
+			}
+			return
+		}
+		if verifyPreflightErr == nil {
+			lease, err = h.service.VerifierAdmission().TryAcquire(r.Context())
+			if err != nil {
+				if errors.Is(err, vaultservice.ErrVerifierAdmissionSaturated) || errors.Is(err, vaultservice.ErrAdmissionSaturated) {
+					w.Header().Set("Retry-After", "1")
+					writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeAttestationBusy), "rotation attestation verification is busy")
+				} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
+				} else {
+					writeServiceError(w, err)
+				}
+				return
+			}
+			defer lease.Release()
+			leaseContext = lease.Context(r.Context())
+		} else {
+			leaseContext = r.Context()
+		}
+	} else {
+		lease, err = h.service.Admission().TryAcquire(r.Context())
+		if err != nil {
+			if errors.Is(err, vaultservice.ErrAdmissionSaturated) {
+				writeAdmissionSaturated(w, h.service.Admission())
+			} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
+			} else {
+				writeServiceError(w, err)
+			}
+			return
+		}
+		defer lease.Release()
+		leaseContext = lease.Context(r.Context())
 	}
-	defer lease.Release()
-	leaseContext := lease.Context(r.Context())
 
-	raw, err := readMCPBody(w, r)
+	readBody := readMCPBody
+	if verifyCall {
+		readBody = func(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+			return readMCPBodyLimit(w, r, maxMCPVerifyBodyBytes)
+		}
+	}
+	raw, err := readBody(w, r)
 	if err != nil {
 		if errors.Is(err, errBodyTooLarge) {
 			mcpWriteHTTPError(w, http.StatusRequestEntityTooLarge, nil, mcpErrorInvalidRequest, "request is too large", nil)
@@ -187,13 +238,13 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 			mcpWriteMCPValidationError(w, request.id, err)
 			return
 		}
-		h.serveMCPListTools(w, request.id, request.sdk.Params)
+		h.serveMCPListTools(w, request.id, request.sdk.Params, actor)
 	case "tools/call":
 		if err := validateMCPMeta(request.sdk.Params, headerVersion); err != nil {
 			mcpWriteMCPValidationError(w, request.id, err)
 			return
 		}
-		h.serveMCPToolCall(w, r, request.id, request.sdk.Params, headerToolName, actor, lease, leaseContext)
+		h.serveMCPToolCall(w, r, request.id, request.sdk.Params, headerToolName, actor, lease, leaseContext, verifyPreflightErr)
 	default:
 		mcpWriteHTTPError(w, http.StatusNotFound, &request.id, mcpErrorMethodNotFound, "method not found", nil)
 	}
@@ -214,7 +265,7 @@ func (h *Handler) serveMCPDiscover(w http.ResponseWriter, id json.RawMessage, pa
 	})
 }
 
-func (h *Handler) serveMCPListTools(w http.ResponseWriter, id json.RawMessage, params json.RawMessage) {
+func (h *Handler) serveMCPListTools(w http.ResponseWriter, id json.RawMessage, params json.RawMessage, actor caller.Caller) {
 	fields, err := decodeStrictObject(params, map[string]struct{}{"_meta": {}, "cursor": {}})
 	if err != nil {
 		mcpWriteHTTPError(w, http.StatusBadRequest, &id, mcpErrorInvalidParams, "invalid params", nil)
@@ -232,11 +283,11 @@ func (h *Handler) serveMCPListTools(w http.ResponseWriter, id json.RawMessage, p
 		ResultType: "complete",
 		TTLMs:      0,
 		CacheScope: "private",
-		Tools:      mcpTools(),
+		Tools:      h.mcpTools(actor),
 	})
 }
 
-func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id json.RawMessage, params json.RawMessage, headerToolName string, actor caller.Caller, lease *vaultservice.Lease, leaseContext context.Context) {
+func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id json.RawMessage, params json.RawMessage, headerToolName string, actor caller.Caller, lease *vaultservice.Lease, leaseContext context.Context, verifyPreflightErr error) {
 	call, arguments, err := decodeMCPCallParams(params)
 	if err != nil {
 		if errors.Is(err, errMCPToolArguments) {
@@ -283,6 +334,53 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 			})
 		}
 		mcpWriteResult(w, id, mcpCallResult(profilesResponse{Profiles: public}, false))
+	case "verify_rotation_attestation":
+		if lease == nil {
+			code := vaultservice.CodeAttestationUnavailable
+			if vaultservice.HasCode(verifyPreflightErr, vaultservice.CodeFeatureUnavailable) {
+				code = vaultservice.CodeFeatureUnavailable
+			}
+			mcpWriteStructuredToolError(w, id, code, "")
+			return
+		}
+		verifyRaw := map[string]json.RawMessage{
+			"attestation":     json.RawMessage(arguments["attestation"]),
+			"inputVaultText":  json.RawMessage(strconv.Quote(arguments["inputVaultText"])),
+			"outputVaultText": json.RawMessage(strconv.Quote(arguments["outputVaultText"])),
+		}
+		if expected := strings.TrimSpace(arguments["expectedBinding"]); expected != "" {
+			verifyRaw["expectedBinding"] = json.RawMessage(expected)
+		}
+		verifyRequestBytes, marshalErr := json.Marshal(verifyRaw)
+		if marshalErr != nil {
+			mcpWriteToolError(w, id, mcpTextInvalidToolArguments)
+			return
+		}
+		request, parseErr := parseVerifyAttestationRequest(verifyRequestBytes)
+		if parseErr != nil {
+			mcpWriteToolError(w, id, mcpTextInvalidToolArguments)
+			return
+		}
+		claims, verifyErr := h.service.VerifyAttestation(leaseContext, request.Attestation, request.InputVaultText, request.OutputVaultText, request.ExpectedBinding)
+		if reason, ok := attestation.VerificationReasonOf(verifyErr); ok {
+			response := verifyAttestationResponse{Valid: false, Reason: reason}
+			if claims.Issuer != "" && reason != attestation.SignatureInvalid && reason != attestation.UnknownKey && reason != attestation.IssuerMismatch {
+				response.Attestation = h.safeClaimsResponse(request.Attestation, claims)
+			}
+			mcpWriteResult(w, id, mcpCallResult(response, false))
+			return
+		}
+		if verifyErr != nil {
+			if vaultservice.HasCode(verifyErr, vaultservice.CodeInvalidRequest) || errors.Is(verifyErr, attestation.ErrMalformed) {
+				mcpWriteToolError(w, id, mcpTextInvalidToolArguments)
+			} else if code, ok := mcpAttestationErrorCode(verifyErr); ok {
+				mcpWriteStructuredToolError(w, id, code, "")
+			} else {
+				mcpWriteStructuredToolError(w, id, vaultservice.CodeTemporarilyUnavailable, "service is temporarily unavailable")
+			}
+			return
+		}
+		mcpWriteResult(w, id, mcpCallResult(verifyAttestationResponse{Valid: true, Attestation: h.safeClaimsResponse(request.Attestation, claims)}, false))
 	case "encrypt", "decrypt", "rotate":
 		command, response, ok := mcpCommand(call.Name, arguments)
 		if !ok {
@@ -291,6 +389,10 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 		}
 		prepared, err := h.service.Prepare(leaseContext, actor, command, lease)
 		if err != nil {
+			if code, ok := mcpAttestationErrorCode(err); ok {
+				mcpWriteStructuredToolError(w, id, code, "")
+				return
+			}
 			if mcpServiceUnavailable(err) {
 				mcpWriteServiceUnavailable(w, err)
 				return
@@ -302,10 +404,27 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 			mcpWriteToolError(w, id, mcpTextToolFailure)
 			return
 		}
-		output, err := prepared.Run(leaseContext)
-		if err != nil {
-			if mcpServiceUnavailable(err) {
-				mcpWriteServiceUnavailable(w, err)
+		if call.Name == "rotate" {
+			result, runErr := prepared.RunResult(leaseContext)
+			if runErr != nil {
+				if code, ok := mcpAttestationErrorCode(runErr); ok {
+					mcpWriteStructuredToolError(w, id, code, "")
+					return
+				}
+				if mcpServiceUnavailable(runErr) {
+					mcpWriteServiceUnavailable(w, runErr)
+					return
+				}
+				mcpWriteToolError(w, id, mcpTextToolFailure)
+				return
+			}
+			mcpWriteResult(w, id, mcpCallResult(rotationResponseWithAttestation{VaultText: result.VaultText, Attestation: result.Attestation}, false))
+			return
+		}
+		output, runErr := prepared.Run(leaseContext)
+		if runErr != nil {
+			if mcpServiceUnavailable(runErr) {
+				mcpWriteServiceUnavailable(w, runErr)
 				return
 			}
 			mcpWriteToolError(w, id, mcpTextToolFailure)
@@ -664,7 +783,9 @@ func decodeMCPCallParams(params json.RawMessage) (mcp.CallToolParamsRaw, map[str
 	case "decrypt":
 		arguments, err = decodeMCPStringArguments(argsRaw, map[string]struct{}{"profileId": {}, "vaultText": {}})
 	case "rotate":
-		arguments, err = decodeMCPStringArguments(argsRaw, map[string]struct{}{"sourceProfileId": {}, "destinationProfileId": {}, "vaultText": {}})
+		arguments, err = decodeMCPMixedArguments(argsRaw, map[string]struct{}{"sourceProfileId": {}, "destinationProfileId": {}, "vaultText": {}}, map[string]struct{}{"attestation": {}})
+	case "verify_rotation_attestation":
+		arguments, err = decodeMCPMixedArguments(argsRaw, map[string]struct{}{"attestation": {}, "inputVaultText": {}, "outputVaultText": {}}, map[string]struct{}{"attestation": {}, "expectedBinding": {}})
 	default:
 		return mcp.CallToolParamsRaw{Name: name, Arguments: argsRaw}, nil, errors.New("unknown tool")
 	}
@@ -672,6 +793,41 @@ func decodeMCPCallParams(params json.RawMessage) (mcp.CallToolParamsRaw, map[str
 		return mcp.CallToolParamsRaw{Name: name, Arguments: argsRaw}, nil, errMCPToolArguments
 	}
 	return mcp.CallToolParamsRaw{Name: name, Arguments: argsRaw}, arguments, nil
+}
+
+func decodeMCPMixedArguments(raw json.RawMessage, required, objectFields map[string]struct{}) (map[string]string, error) {
+	allowed := make(map[string]struct{}, len(required)+len(objectFields))
+	for key := range required {
+		allowed[key] = struct{}{}
+	}
+	for key := range objectFields {
+		allowed[key] = struct{}{}
+	}
+	fields, err := decodeStrictObject(raw, allowed)
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]string, len(fields))
+	for key, value := range fields {
+		if _, isObject := objectFields[key]; isObject {
+			if !jsonObject(value) {
+				return nil, errors.New("object argument is invalid")
+			}
+			values[key] = string(value)
+			continue
+		}
+		decoded, err := decodeOperationString(value)
+		if err != nil {
+			return nil, err
+		}
+		values[key] = decoded
+	}
+	for key := range required {
+		if _, ok := values[key]; !ok {
+			return nil, errors.New("missing required argument")
+		}
+	}
+	return values, nil
 }
 
 func decodeMCPStringArguments(raw json.RawMessage, allowed map[string]struct{}) (map[string]string, error) {
@@ -707,7 +863,15 @@ func mcpCommand(name string, arguments map[string]string) (vaultservice.Command,
 		source, sourceOK := arguments["sourceProfileId"]
 		destination, destinationOK := arguments["destinationProfileId"]
 		vaultText, vaultOK := arguments["vaultText"]
-		return vaultservice.Command{Operation: vaultservice.OperationRotate, SourceProfileID: source, DestinationProfileID: destination, Value: vaultText}, func(output string) any { return rotateResponse{VaultText: output} }, sourceOK && destinationOK && vaultOK
+		command := vaultservice.Command{Operation: vaultservice.OperationRotate, SourceProfileID: source, DestinationProfileID: destination, Value: vaultText}
+		if raw, attestationOK := arguments["attestation"]; attestationOK {
+			request, err := parseRotationAttestationRequest(json.RawMessage(raw))
+			if err != nil {
+				return vaultservice.Command{}, nil, false
+			}
+			command.Attestation = &vaultservice.AttestationRequest{Binding: request.Binding}
+		}
+		return command, func(output string) any { return rotateResponse{VaultText: output} }, sourceOK && destinationOK && vaultOK
 	default:
 		return vaultservice.Command{}, nil, false
 	}
@@ -740,6 +904,38 @@ func mcpWriteToolError(w http.ResponseWriter, id json.RawMessage, message string
 	})
 }
 
+func mcpAttestationErrorCode(err error) (vaultservice.Code, bool) {
+	for _, code := range []vaultservice.Code{
+		vaultservice.CodeFeatureUnavailable,
+		vaultservice.CodeAttestationUnavailable,
+		vaultservice.CodeAttestationBusy,
+	} {
+		if vaultservice.HasCode(err, code) {
+			return code, true
+		}
+	}
+	return "", false
+}
+
+func mcpWriteStructuredToolError(w http.ResponseWriter, id json.RawMessage, code vaultservice.Code, message string) {
+	if message == "" {
+		switch code {
+		case vaultservice.CodeFeatureUnavailable:
+			message = "rotation attestations are disabled"
+		case vaultservice.CodeAttestationUnavailable:
+			message = "rotation attestation service is unavailable"
+		case vaultservice.CodeAttestationBusy:
+			message = "rotation attestation verification is busy"
+		default:
+			message = "service is temporarily unavailable"
+		}
+	}
+	structured := map[string]any{"error": map[string]string{"code": string(code), "message": message}}
+	result := mcpCallResult(structured, true)
+	result.StructuredContent = structured
+	mcpWriteResult(w, id, result)
+}
+
 func mcpServiceUnavailable(err error) bool {
 	return vaultservice.HasCode(err, vaultservice.CodeNotReady) ||
 		vaultservice.HasCode(err, vaultservice.CodeTemporarilyUnavailable) ||
@@ -755,13 +951,74 @@ func mcpWriteServiceUnavailable(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
 }
 
-func mcpTools() []*mcp.Tool {
-	return []*mcp.Tool{
-		{Name: "list_profiles", Description: "List visible Vault profiles.", InputSchema: mcpObjectSchema(nil, nil), OutputSchema: mcpObjectSchema([]string{"profiles"}, map[string]any{"profiles": map[string]any{"type": "array"}})},
-		{Name: "encrypt", Description: "Encrypt UTF-8 plaintext with a Vaultsmith profile.", InputSchema: mcpObjectSchema([]string{"profileId", "plaintext"}, map[string]any{"profileId": mcpStringSchema(), "plaintext": mcpStringSchema()}), OutputSchema: mcpObjectSchema([]string{"vaultText"}, map[string]any{"vaultText": mcpStringSchema()})},
-		{Name: "decrypt", Description: "Decrypt Ansible Vault text with a Vaultsmith profile.", InputSchema: mcpObjectSchema([]string{"profileId", "vaultText"}, map[string]any{"profileId": mcpStringSchema(), "vaultText": mcpStringSchema()}), OutputSchema: mcpObjectSchema([]string{"plaintext"}, map[string]any{"plaintext": mcpStringSchema()})},
-		{Name: "rotate", Description: "Rotate Vault text from one profile to another.", InputSchema: mcpObjectSchema([]string{"sourceProfileId", "destinationProfileId", "vaultText"}, map[string]any{"sourceProfileId": mcpStringSchema(), "destinationProfileId": mcpStringSchema(), "vaultText": mcpStringSchema()}), OutputSchema: mcpObjectSchema([]string{"vaultText"}, map[string]any{"vaultText": mcpStringSchema()})},
+func (h *Handler) mcpTools(actor caller.Caller) []*mcp.Tool {
+	tools := make([]*mcp.Tool, 0, 5)
+	bindingSchema := mcpObjectSchema(nil, map[string]any{
+		"repository": mcpStringSchema(), "revision": mcpStringSchema(), "path": mcpStringSchema(), "selector": mcpStringSchema(),
+	})
+	encryptScope, _ := vaultservice.RequiredScope(vaultservice.OperationEncrypt)
+	decryptScope, _ := vaultservice.RequiredScope(vaultservice.OperationDecrypt)
+	rotateScope, _ := vaultservice.RequiredScope(vaultservice.OperationRotate)
+	if mcpToolVisible(actor, vaultservice.ScopeProfileRead) {
+		tools = append(tools, &mcp.Tool{
+			Name: "list_profiles", Description: "List visible Vault profiles.",
+			InputSchema:  mcpObjectSchema(nil, nil),
+			OutputSchema: mcpObjectSchema([]string{"profiles"}, map[string]any{"profiles": map[string]any{"type": "array"}}),
+		})
 	}
+	if mcpToolVisible(actor, encryptScope) {
+		tools = append(tools, &mcp.Tool{
+			Name: "encrypt", Description: "Encrypt UTF-8 plaintext with a Vaultsmith profile.",
+			InputSchema:  mcpObjectSchema([]string{"profileId", "plaintext"}, map[string]any{"profileId": mcpStringSchema(), "plaintext": mcpStringSchema()}),
+			OutputSchema: mcpObjectSchema([]string{"vaultText"}, map[string]any{"vaultText": mcpStringSchema()}),
+		})
+	}
+	if mcpToolVisible(actor, decryptScope) {
+		tools = append(tools, &mcp.Tool{
+			Name: "decrypt", Description: "Decrypt Ansible Vault text with a Vaultsmith profile.",
+			InputSchema:  mcpObjectSchema([]string{"profileId", "vaultText"}, map[string]any{"profileId": mcpStringSchema(), "vaultText": mcpStringSchema()}),
+			OutputSchema: mcpObjectSchema([]string{"plaintext"}, map[string]any{"plaintext": mcpStringSchema()}),
+		})
+	}
+	if mcpToolVisible(actor, rotateScope) {
+		tools = append(tools, &mcp.Tool{
+			Name:        "rotate",
+			Description: "Rotate Vault text from one profile to another. An optional attestation authenticates the rotation statement; it is not an independent plaintext-equality proof.",
+			InputSchema: mcpObjectSchema([]string{"sourceProfileId", "destinationProfileId", "vaultText"}, map[string]any{
+				"sourceProfileId": mcpStringSchema(), "destinationProfileId": mcpStringSchema(), "vaultText": mcpStringSchema(),
+				"attestation": mcpObjectSchema(nil, map[string]any{"binding": bindingSchema}),
+			}),
+			OutputSchema: mcpObjectSchema([]string{"vaultText"}, map[string]any{"vaultText": mcpStringSchema(), "attestation": mcpObjectSchema([]string{"protected", "payload", "signature"}, map[string]any{"protected": mcpStringSchema(), "payload": mcpStringSchema(), "signature": mcpStringSchema()})}),
+		})
+	}
+	if h.service != nil && h.service.AttestationEnabled() && mcpToolVisible(actor, vaultservice.ScopeAttestationVerify) {
+		tools = append(tools, &mcp.Tool{
+			Name:        "verify_rotation_attestation",
+			Description: "Verify a rotation attestation against supplied Vault envelopes. valid:true authenticates the attested rotation statement, not plaintext equality.",
+			InputSchema: mcpObjectSchema([]string{"attestation", "inputVaultText", "outputVaultText"}, map[string]any{
+				"attestation":    mcpObjectSchema([]string{"protected", "payload", "signature"}, map[string]any{"protected": mcpStringSchema(), "payload": mcpStringSchema(), "signature": mcpStringSchema()}),
+				"inputVaultText": mcpStringSchema(), "outputVaultText": mcpStringSchema(), "expectedBinding": bindingSchema,
+			}),
+			OutputSchema: mcpObjectSchema([]string{"valid"}, map[string]any{
+				"valid":  map[string]any{"type": "boolean"},
+				"reason": mcpStringSchema(),
+				"attestation": mcpObjectSchema([]string{"issuer", "issuedAt", "operation", "sourceProfileId", "destinationProfileId", "kid"}, map[string]any{
+					"issuer":               mcpStringSchema(),
+					"issuedAt":             mcpStringSchema(),
+					"operation":            mcpStringSchema(),
+					"sourceProfileId":      mcpStringSchema(),
+					"destinationProfileId": mcpStringSchema(),
+					"kid":                  mcpStringSchema(),
+					"binding":              bindingSchema,
+				}),
+			}),
+		})
+	}
+	return tools
+}
+
+func mcpToolVisible(actor caller.Caller, scope string) bool {
+	return actor.Kind() != caller.KindBearer || actor.HasScope(scope)
 }
 
 func mcpObjectSchema(required []string, properties map[string]any) map[string]any {
@@ -805,6 +1062,8 @@ func mcpHeaderRequiredScope(method, toolName string) string {
 		case "rotate":
 			scope, _ := vaultservice.RequiredScope(vaultservice.OperationRotate)
 			return scope
+		case "verify_rotation_attestation":
+			return vaultservice.ScopeAttestationVerify
 		default:
 			return ""
 		}
@@ -949,7 +1208,11 @@ func positiveHTTPMediaQuality(parameters map[string]string) bool {
 }
 
 func readMCPBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes)
+	return readMCPBodyLimit(w, r, MaxRequestBodyBytes)
+}
+
+func readMCPBodyLimit(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	defer r.Body.Close()
 	raw, err := readRequestBody(r.Context(), r.Body)
 	if err != nil {

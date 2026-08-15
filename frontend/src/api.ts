@@ -2,6 +2,12 @@ import type { components } from './generated/api'
 
 export type OperationMode = 'encrypt' | 'decrypt' | 'rotate'
 
+export type AttestationBinding = components['schemas']['RotationBinding']
+export type SignedAttestation = components['schemas']['RotationAttestation']
+export type AttestationClaims = components['schemas']['RotationAttestationClaims']
+export type VerificationReason = components['schemas']['AttestationVerificationReason']
+export type VerificationResult = components['schemas']['VerifyAttestationResponse']
+
 export type Profile = components['schemas']['Profile']
 
 type EncryptRequest = components['schemas']['EncryptRequest']
@@ -13,6 +19,7 @@ export type Session = {
   authRequired: boolean
   email?: string
   csrfToken: string
+  attestationEnabled?: boolean
 }
 
 export type SingleProfileOperationRequest = {
@@ -26,9 +33,19 @@ export type RotateOperationRequest = {
   sourceProfileId: string
   destinationProfileId: string
   value: string
+  attestation?: {
+    binding?: AttestationBinding
+  }
 }
 
 export type OperationRequest = SingleProfileOperationRequest | RotateOperationRequest
+
+export type VerifyAttestationRequest = components['schemas']['VerifyAttestationRequest']
+
+export type RotationResult = {
+  vaultText: string
+  attestation?: SignedAttestation
+}
 
 export const MAX_PLAINTEXT_BYTES = 1 << 20
 export const MAX_VAULT_TEXT_BYTES = 5 << 20
@@ -157,7 +174,11 @@ async function requestSession(signal: AbortSignal): Promise<Session> {
   if (!isSessionEnvelope(payload)) {
     throw new ApiError('The service returned an invalid session response', 'invalid_response')
   }
-  return payload
+  return {
+    ...payload,
+    // Older servers did not expose this additive capability field.
+    attestationEnabled: payload.attestationEnabled === true,
+  }
 }
 
 export async function fetchSession(signal?: AbortSignal): Promise<Session> {
@@ -217,7 +238,7 @@ export async function logout(signal?: AbortSignal): Promise<void> {
   csrfToken = ''
 }
 
-export async function runOperation(request: OperationRequest, signal?: AbortSignal): Promise<string> {
+export async function runOperation(request: OperationRequest, signal?: AbortSignal): Promise<string | RotationResult> {
   const operation = request.mode === 'rotate'
     ? {
       path: '/api/v1/rotations',
@@ -225,6 +246,7 @@ export async function runOperation(request: OperationRequest, signal?: AbortSign
         sourceProfileId: request.sourceProfileId,
         destinationProfileId: request.destinationProfileId,
         vaultText: request.value,
+        ...(request.attestation ? { attestation: request.attestation } : {}),
       } satisfies RotateRequest,
       responseField: 'vaultText' as const,
     }
@@ -244,7 +266,27 @@ export async function runOperation(request: OperationRequest, signal?: AbortSign
   if (!isOperationResponse(payload, operation.responseField)) {
     throw new ApiError('The service returned an invalid operation response', 'invalid_response')
   }
-  return payload[operation.responseField]
+  if (request.mode !== 'rotate') return payload[operation.responseField]
+  const candidate = payload as { vaultText: string; attestation?: unknown }
+  if (candidate.attestation !== undefined && !isSignedAttestation(candidate.attestation)) {
+    throw new ApiError('The service returned an invalid attestation response', 'invalid_response')
+  }
+  return candidate.attestation
+    ? { vaultText: candidate.vaultText, attestation: candidate.attestation }
+    : candidate.vaultText
+}
+
+export async function verifyAttestation(request: VerifyAttestationRequest, signal?: AbortSignal): Promise<VerificationResult> {
+  const payload = await requestJSON('/api/v1/attestations/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+    signal,
+  })
+  if (!isVerificationResult(payload)) {
+    throw new ApiError('The service returned an invalid verification response', 'invalid_response')
+  }
+  return payload
 }
 
 export function utf8ByteLength(value: string): number {
@@ -268,6 +310,7 @@ function isSessionEnvelope(value: unknown): value is Session {
     && typeof candidate.authRequired === 'boolean'
     && typeof candidate.csrfToken === 'string'
     && (candidate.email === undefined || typeof candidate.email === 'string')
+    && (candidate.attestationEnabled === undefined || typeof candidate.attestationEnabled === 'boolean')
 }
 
 function isProfileEnvelope(value: unknown): value is { profiles: Profile[] } {
@@ -295,4 +338,45 @@ function isOperationResponse(
 ): value is Record<typeof field, string> {
   if (!value || typeof value !== 'object' || !(field in value)) return false
   return typeof (value as Record<string, unknown>)[field] === 'string'
+}
+
+function isSignedAttestation(value: unknown): value is SignedAttestation {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<SignedAttestation>
+  return typeof candidate.protected === 'string'
+    && typeof candidate.payload === 'string'
+    && typeof candidate.signature === 'string'
+}
+
+function isAttestationBinding(value: unknown): value is AttestationBinding {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<AttestationBinding>
+  return (candidate.repository === undefined || typeof candidate.repository === 'string')
+    && (candidate.revision === undefined || typeof candidate.revision === 'string')
+    && (candidate.path === undefined || typeof candidate.path === 'string')
+    && (candidate.selector === undefined || typeof candidate.selector === 'string')
+}
+
+function isAttestationClaims(value: unknown): value is AttestationClaims {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<AttestationClaims>
+  return typeof candidate.issuer === 'string'
+    && typeof candidate.issuedAt === 'string'
+    && candidate.operation === 'rotate'
+    && typeof candidate.sourceProfileId === 'string'
+    && typeof candidate.destinationProfileId === 'string'
+    && typeof candidate.kid === 'string'
+    && (candidate.binding === undefined || isAttestationBinding(candidate.binding))
+}
+
+function isVerificationResult(value: unknown): value is VerificationResult {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<VerificationResult>
+  const reasons: VerificationReason[] = [
+    'signature_invalid', 'unknown_key', 'key_revoked', 'issuer_mismatch',
+    'unsupported_version', 'input_digest_mismatch', 'output_digest_mismatch', 'binding_mismatch',
+  ]
+  return typeof candidate.valid === 'boolean'
+    && (candidate.reason === undefined || reasons.includes(candidate.reason))
+    && (candidate.attestation === undefined || isAttestationClaims(candidate.attestation))
 }

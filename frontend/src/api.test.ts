@@ -159,6 +159,64 @@ describe('API client', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ sourceProfileId: 'dev', destinationProfileId: 'prod', vaultText: 'vault-input' })
   })
 
+  it('sends a canonical rotate request with an optional attestation binding', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      vaultText: 'rotated-vault-output',
+      attestation: { protected: 'header', payload: 'claims', signature: 'signature' },
+    }))
+
+    await expect(api.runOperation({
+      mode: 'rotate',
+      sourceProfileId: 'dev',
+      destinationProfileId: 'prod',
+      value: 'vault-input',
+      attestation: { binding: { repository: 'repo', revision: 'rev', path: 'group_vars/app.yml' } },
+    })).resolves.toEqual({
+      vaultText: 'rotated-vault-output',
+      attestation: { protected: 'header', payload: 'claims', signature: 'signature' },
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      sourceProfileId: 'dev',
+      destinationProfileId: 'prod',
+      vaultText: 'vault-input',
+      attestation: { binding: { repository: 'repo', revision: 'rev', path: 'group_vars/app.yml' } },
+    })
+  })
+
+  it('posts verification to the canonical REST endpoint and validates the response', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      valid: true,
+      attestation: {
+        issuer: 'https://vaultsmith.example.test',
+        issuedAt: '2026-08-15T12:00:00Z',
+        operation: 'rotate',
+        sourceProfileId: 'dev',
+        destinationProfileId: 'prod',
+        kid: 'kid-fixture',
+      },
+    }))
+    const request = {
+      attestation: { protected: 'header', payload: 'claims', signature: 'signature' },
+      inputVaultText: 'input-vault',
+      outputVaultText: 'output-vault',
+      expectedBinding: { repository: 'repo' },
+    }
+
+    await expect(api.verifyAttestation(request)).resolves.toMatchObject({ valid: true })
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/attestations/verify', expect.objectContaining({ method: 'POST' }))
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(request)
+  })
+
+  it('normalizes a missing additive attestation capability to false', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      authenticated: false,
+      authRequired: false,
+      csrfToken: '',
+    }))
+
+    await expect(api.fetchSession()).resolves.toMatchObject({ attestationEnabled: false })
+  })
+
   it('URL-encodes profile IDs in canonical operation paths', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ vaultText: 'vault-output' }))
 

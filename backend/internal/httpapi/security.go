@@ -382,17 +382,29 @@ func preflightMCPBearerRoute(w http.ResponseWriter, r *http.Request, next http.H
 		return false
 	}
 	scope := mcpHeaderRequiredScope(headers.method, headers.toolName)
+	if headers.method == "server/discover" || headers.method == "tools/list" {
+		if actor.HasScope(vaultservice.ScopeAttestationVerify) {
+			return true
+		}
+	}
 	if scope == "" {
 		return true
 	}
 	var err error
-	if scope == vaultservice.ScopeProfileRead {
+	if headers.method == "tools/call" && headers.toolName == "verify_rotation_attestation" {
+		scope = vaultservice.ScopeAttestationVerify
+		err = handler.service.PreflightAttestationVerify(r.Context(), actor)
+	} else if scope == vaultservice.ScopeProfileRead {
 		err = handler.preflightProfiles(r.Context(), actor)
 	} else {
 		operation := vaultservice.Operation(headers.toolName)
 		err = handler.preflightOperation(r.Context(), actor, operation)
 	}
 	if err == nil {
+		return true
+	}
+	if headers.method == "tools/call" && headers.toolName == "verify_rotation_attestation" &&
+		(vaultservice.HasCode(err, vaultservice.CodeFeatureUnavailable) || vaultservice.HasCode(err, vaultservice.CodeAttestationUnavailable)) {
 		return true
 	}
 	if vaultservice.HasCode(err, vaultservice.CodeForbidden) {

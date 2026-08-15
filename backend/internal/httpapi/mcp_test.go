@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/apimodels"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/attestation"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/caller"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/version"
@@ -760,5 +762,187 @@ func TestCanonicalBearerScopePreflightOccursBeforeHandler(t *testing.T) {
 	}
 	if !strings.Contains(response.Header().Get("WWW-Authenticate"), `scope="vaultsmith.encrypt"`) {
 		t.Fatalf("WWW-Authenticate = %q", response.Header().Get("WWW-Authenticate"))
+	}
+}
+
+type mcpReadyAttestationManager struct{}
+
+func (mcpReadyAttestationManager) Ready() bool { return true }
+
+func (mcpReadyAttestationManager) Issuer() string { return "https://issuer.example.test" }
+
+func (mcpReadyAttestationManager) Sign(attestation.RotationClaims) (attestation.Signed, error) {
+	return attestation.Signed{Protected: "synthetic", Payload: "synthetic", Signature: "synthetic"}, nil
+}
+
+func (mcpReadyAttestationManager) Resolve(string, string) (attestation.KeyResolution, error) {
+	return attestation.KeyResolution{}, nil
+}
+
+func TestMCPVerifyArgumentsAcceptAttestationObject(t *testing.T) {
+	_, arguments, err := decodeMCPCallParams(json.RawMessage(`{"name":"verify_rotation_attestation","arguments":{"attestation":{"protected":"synthetic","payload":"synthetic","signature":"synthetic"},"inputVaultText":"synthetic","outputVaultText":"synthetic"}}`))
+	if err != nil {
+		t.Fatalf("decodeMCPCallParams() error = %v", err)
+	}
+	if !json.Valid([]byte(arguments["attestation"])) || !jsonObject(json.RawMessage(arguments["attestation"])) {
+		t.Fatalf("attestation argument = %q, want JSON object", arguments["attestation"])
+	}
+}
+
+func TestMCPVerifyOnlyBearerToolSurfaceIsFilteredAndSchemaIsSafe(t *testing.T) {
+	service := vaultservice.NewWithOptions(
+		[]vaultservice.Profile{{ID: "dev", Label: "Development"}},
+		&fakeExecutor{},
+		nil,
+		nil,
+		vaultservice.ServiceOptions{AttestationManager: mcpReadyAttestationManager{}, AttestationEnabled: true},
+	)
+	handler := &Handler{service: service}
+	actor, err := caller.NewBearer("https://issuer.example.test", "synthetic-subject", nil, []string{vaultservice.ScopeAttestationVerify})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := handler.mcpTools(actor)
+	if len(tools) != 1 || tools[0].Name != "verify_rotation_attestation" {
+		t.Fatalf("verify-only tools = %#v, want only verify_rotation_attestation", tools)
+	}
+	schema, err := json.Marshal(tools[0].OutputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"\"attestation\"", "\"sourceProfileId\"", "\"destinationProfileId\""} {
+		if !strings.Contains(string(schema), field) {
+			t.Fatalf("verify output schema missing %s: %s", field, schema)
+		}
+	}
+}
+
+func TestMCPBearerToolSurfaceFiltersEachRequiredScope(t *testing.T) {
+	service := vaultservice.NewWithOptions(
+		[]vaultservice.Profile{{ID: "dev", Label: "Development"}},
+		&fakeExecutor{},
+		nil,
+		nil,
+		vaultservice.ServiceOptions{AttestationManager: mcpReadyAttestationManager{}, AttestationEnabled: true},
+	)
+	handler := &Handler{service: service}
+	tests := []struct {
+		name   string
+		scopes []string
+		want   []string
+	}{
+		{name: "profile read only", scopes: []string{vaultservice.ScopeProfileRead}, want: []string{"list_profiles"}},
+		{name: "profile read and encrypt", scopes: []string{vaultservice.ScopeProfileRead, vaultservice.ScopeEncrypt}, want: []string{"list_profiles", "encrypt"}},
+		{name: "profile read decrypt and rotate", scopes: []string{vaultservice.ScopeProfileRead, vaultservice.ScopeDecrypt, vaultservice.ScopeRotate}, want: []string{"list_profiles", "decrypt", "rotate"}},
+		{name: "profile read and verify", scopes: []string{vaultservice.ScopeProfileRead, vaultservice.ScopeAttestationVerify}, want: []string{"list_profiles", "verify_rotation_attestation"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actor, err := caller.NewBearer("https://issuer.example.test", "synthetic-subject", nil, test.scopes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tools := handler.mcpTools(actor)
+			names := make([]string, 0, len(tools))
+			for _, tool := range tools {
+				names = append(names, tool.Name)
+			}
+			if got, want := strings.Join(names, ","), strings.Join(test.want, ","); got != want {
+				t.Fatalf("tools = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestMCPDisabledVerifyReturnsStructuredFeatureErrorWithoutVaultWork(t *testing.T) {
+	executor := &fakeExecutor{}
+	cfg := config.AuthConfig{Mode: config.AuthModeOff}
+	api := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}}, executor, Dependencies{AuthConfig: cfg})
+	handler := WrapSecurityWithOptions(api, cfg, SecurityOptions{MCPEnabled: true})
+	body := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"verify_rotation_attestation","arguments":{"attestation":{"protected":"synthetic","payload":"synthetic","signature":"synthetic"},"inputVaultText":"synthetic","outputVaultText":"synthetic"},` + mcpMeta + `}}`
+	request := newMCPRequest("tools/call", body)
+	request.Header.Set("Mcp-Name", "verify_rotation_attestation")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	result, ok := envelope["result"].(map[string]any)
+	if !ok || result["isError"] != true {
+		t.Fatalf("result = %#v, want structured tool error", envelope["result"])
+	}
+	structured, ok := result["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("structuredContent = %#v, want object", result["structuredContent"])
+	}
+	errObject, ok := structured["error"].(map[string]any)
+	if !ok || errObject["code"] != string(vaultservice.CodeFeatureUnavailable) {
+		t.Fatalf("structured error = %#v, want feature_unavailable", structured["error"])
+	}
+	if len(executor.calls) != 0 {
+		t.Fatal("executor was called for disabled verification")
+	}
+}
+
+func TestMCPVerifyOnlyBearerCanDiscoverWithoutProfileRead(t *testing.T) {
+	handler, issuer, _ := bearerHTTPFixtureWithMCP(t, true)
+	for _, test := range []struct {
+		method string
+		body   string
+	}{
+		{method: "server/discover", body: `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{` + mcpMeta + `}}`},
+		{method: "tools/list", body: `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{` + mcpMeta + `}}`},
+	} {
+		t.Run(test.method, func(t *testing.T) {
+			request := newMCPRequest(test.method, test.body)
+			request.Header.Set("Authorization", "Bearer "+issuer.token(t, "https://vaultsmith.example.test", vaultservice.ScopeAttestationVerify))
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestMCPDisabledVerifyBearerReturnsToolError(t *testing.T) {
+	handler, issuer, executor := bearerHTTPFixtureWithMCP(t, true)
+	body := `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"verify_rotation_attestation","arguments":{"attestation":{"protected":"synthetic","payload":"synthetic","signature":"synthetic"},"inputVaultText":"synthetic","outputVaultText":"synthetic"},` + mcpMeta + `}}`
+	request := newMCPRequest("tools/call", body)
+	request.Header.Set("Authorization", "Bearer "+issuer.token(t, "https://vaultsmith.example.test", vaultservice.ScopeAttestationVerify))
+	request.Header.Set("Mcp-Name", "verify_rotation_attestation")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	result, ok := envelope["result"].(map[string]any)
+	if !ok || result["isError"] != true {
+		t.Fatalf("result = %#v, want tool error", envelope["result"])
+	}
+	structured, ok := result["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("structuredContent = %#v, want object", result["structuredContent"])
+	}
+	errObject, ok := structured["error"].(map[string]any)
+	if !ok || errObject["code"] != string(vaultservice.CodeFeatureUnavailable) {
+		t.Fatalf("structured error = %#v, want feature_unavailable", structured["error"])
+	}
+	if executor.called {
+		t.Fatal("executor was called for disabled verification")
 	}
 }

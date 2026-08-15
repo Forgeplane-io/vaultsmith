@@ -7,9 +7,15 @@ import {
   maxInputBytes,
   OPERATION_TIMEOUT_MS,
   runOperation,
+  verifyAttestation,
+  type AttestationBinding,
+  type AttestationClaims,
   type OperationMode,
   type Profile,
   type Session,
+  type SignedAttestation,
+  type VerificationReason,
+  type VerificationResult,
   utf8ByteLength,
 } from './api'
 import {
@@ -26,6 +32,18 @@ type CopyFeedback = {
   message: string
 }
 
+type BindingFields = {
+  repository: string
+  revision: string
+  path: string
+  selector: string
+}
+
+const MAX_BINDING_FIELD_BYTES = 1 * 1024
+const MAX_CANONICAL_BINDING_BYTES = 4 * 1024
+
+const emptyBindingFields = (): BindingFields => ({ repository: '', revision: '', path: '', selector: '' })
+
 export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [session, setSession] = useState<Session | null>(null)
@@ -35,6 +53,16 @@ export default function App() {
   const [profileId, setProfileId] = useState('')
   const [destinationProfileId, setDestinationProfileId] = useState('')
   const [mode, setMode] = useState<OperationMode>('encrypt')
+  const [verifyMode, setVerifyMode] = useState(false)
+  const [issueAttestation, setIssueAttestation] = useState(false)
+  const [attestation, setAttestation] = useState<SignedAttestation | null>(null)
+  const [attestationBinding, setAttestationBinding] = useState<BindingFields>(emptyBindingFields)
+  const [attestationCopyFeedback, setAttestationCopyFeedback] = useState<CopyFeedback | null>(null)
+  const [verificationAttestation, setVerificationAttestation] = useState('')
+  const [verificationInput, setVerificationInput] = useState('')
+  const [verificationOutput, setVerificationOutput] = useState('')
+  const [expectedBinding, setExpectedBinding] = useState<BindingFields>(emptyBindingFields)
+  const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null)
   const [value, setValue] = useState('')
   const [output, setOutput] = useState('')
   const [ansibleVariableName, setAnsibleVariableName] = useState('')
@@ -55,6 +83,7 @@ export default function App() {
   const [modeNotice, setModeNotice] = useState('')
   const snippetCopyRequestRef = useRef(0)
   const resultCopyRequestRef = useRef(0)
+  const attestationCopyRequestRef = useRef(0)
   const operationControllerRef = useRef<AbortController | null>(null)
   const operationAbortReasonRef = useRef<'cancelled' | 'timeout' | null>(null)
   const operationGenerationRef = useRef(0)
@@ -96,6 +125,7 @@ export default function App() {
     if (signingOutRef.current) return
     let active = true
     let loadStage: 'session' | 'profiles' = 'session'
+    let loadedSession: Session | null = null
     const recoveringStaleSnapshot = recoveringStaleCapabilities
     setProfileSnapshotValid(false)
     setLoadingProfiles(true)
@@ -113,6 +143,7 @@ export default function App() {
     fetchSession(controller.signal)
       .then((session) => {
         if (!hasAuthority()) return undefined
+        loadedSession = session
         setSession(session)
         if (session.authRequired && !session.authenticated) {
           redirectToLogin()
@@ -140,6 +171,16 @@ export default function App() {
         if (reason instanceof ApiError && reason.code === 'unauthorized') {
           redirectToLogin()
           setStatus('Sign-in required…')
+          return
+        }
+        if (loadStage === 'profiles' && loadedSession?.attestationEnabled === true && reason instanceof ApiError && reason.status === 403) {
+          applyLoadedProfiles([], false)
+          setProfileSnapshotValid(true)
+          setProfileLoadFailed(false)
+          setProfileLoadError('')
+          setLoadFailureStage(null)
+          setRecoveringStaleCapabilities(false)
+          setStatus('')
           return
         }
         setProfileLoadFailed(true)
@@ -179,7 +220,22 @@ export default function App() {
   const byteLength = useMemo(() => utf8ByteLength(value), [value])
   const byteLimit = maxInputBytes(mode)
   const overLimit = byteLength > byteLimit
-  const visibleError = overLimit ? limitMessage(mode) : error || profileLoadError
+  const verificationAttestationBytes = useMemo(() => utf8ByteLength(verificationAttestation), [verificationAttestation])
+  const verificationInputBytes = useMemo(() => utf8ByteLength(verificationInput), [verificationInput])
+  const verificationOutputBytes = useMemo(() => utf8ByteLength(verificationOutput), [verificationOutput])
+  const verificationOverLimit = verificationAttestationBytes > 192 * 1024
+    || verificationInputBytes > 5 * 1024 * 1024
+    || verificationOutputBytes > 5 * 1024 * 1024
+  const verificationBindingOverLimit = !bindingFieldsWithinLimits(expectedBinding)
+  const attestationBindingOverLimit = issueAttestation && !bindingFieldsWithinLimits(attestationBinding)
+  const proofAvailable = session?.attestationEnabled === true
+  const compactAttestationBinding = compactBindingFields(attestationBinding)
+  const compactExpectedBinding = compactBindingFields(expectedBinding)
+  const visibleError = verifyMode && (verificationOverLimit || verificationBindingOverLimit)
+    ? 'Verification input or expected binding is too large.'
+    : !verifyMode && attestationBindingOverLimit
+      ? 'Attestation binding exceeds its field or canonical size limit.'
+      : overLimit ? limitMessage(mode) : error || profileLoadError
   const encryptProfiles = useMemo(() => profilesForMode(profiles, 'encrypt'), [profiles])
   const decryptProfiles = useMemo(() => profilesForMode(profiles, 'decrypt'), [profiles])
   const rotateSourceProfiles = useMemo(() => profilesForCapability(profiles, 'rotateSource'), [profiles])
@@ -197,25 +253,29 @@ export default function App() {
   const selectedProfileEligible = profileIsEligible(eligibleProfiles, profileId)
   const selectedDestinationEligible = mode !== 'rotate' || profileIsEligible(rotateDestinationProfiles, destinationProfileId)
   const workbenchLocked = busy || signingOut
-  const canSubmit = profileSnapshotReady && !workbenchLocked && modeAvailable && selectedProfileEligible && selectedDestinationEligible && value.length > 0 && !overLimit
-  const canClear = Boolean(value || output || ansibleVariableName)
+  const canSubmit = verifyMode
+    ? proofAvailable && !workbenchLocked && verificationAttestation.length > 0 && verificationInput.length > 0 && verificationOutput.length > 0 && !verificationOverLimit && !verificationBindingOverLimit
+    : profileSnapshotReady && !workbenchLocked && modeAvailable && selectedProfileEligible && selectedDestinationEligible && value.length > 0 && !overLimit && !attestationBindingOverLimit
+  const canClear = Boolean(value || output || ansibleVariableName || verificationAttestation || verificationInput || verificationOutput || attestation || verificationResult)
   const inputName = mode === 'encrypt' ? 'Value to encrypt' : mode === 'decrypt' ? 'Protected value to decrypt' : 'Protected value to re-key'
   const outputName = mode === 'encrypt' ? 'Encrypted value' : mode === 'decrypt' ? 'Decrypted value' : 'Re-keyed value'
-  const modeGuidance = mode === 'encrypt'
-    ? 'Choose an environment, then enter a value to encrypt.'
-    : mode === 'decrypt'
-      ? 'Choose an environment, then paste protected text or a YAML !vault block to decrypt.'
-      : 'Choose source and destination environments, then paste protected text or a YAML !vault block to re-key.'
+  const modeGuidance = verifyMode
+    ? 'Supply a flattened attestation and the original and rotated Vault values to verify the attested rotation statement.'
+    : mode === 'encrypt'
+      ? 'Choose an environment, then enter a value to encrypt.'
+      : mode === 'decrypt'
+        ? 'Choose an environment, then paste protected text or a YAML !vault block to decrypt.'
+        : 'Choose source and destination environments, then paste protected text or a YAML !vault block to re-key.'
   const shownOutput = mode === 'decrypt' && output && !revealed ? 'Decrypted value hidden' : output
   const outputByteLength = useMemo(() => utf8ByteLength(output), [output])
   const copyDisabled = workbenchLocked || !output
-  const copyLabel = mode === 'decrypt' && output && !revealed ? 'Copy without revealing' : 'Copy result'
+  const copyLabel = attestation ? 'Copy Vault value' : mode === 'decrypt' && output && !revealed ? 'Copy without revealing' : 'Copy result'
   const canCopyAnsibleSnippet = !workbenchLocked && Boolean(output) && (mode === 'encrypt' || mode === 'rotate') && isValidAnsibleVariableIdentifier(ansibleVariableName)
   const ansibleVariableValidation = ansibleVariableValidationMessage(ansibleVariableName)
   const handoffTargetProfileId = mode === 'rotate' ? destinationProfileId : profileId
   const handoffTargetMode: OperationMode = mode === 'decrypt' ? 'encrypt' : 'decrypt'
-  const handoffEligible = profileSnapshotReady && profileIsEligible(profilesForMode(profiles, handoffTargetMode), handoffTargetProfileId)
-  const canUseResultAsInput = !workbenchLocked && Boolean(output) && handoffEligible
+  const handoffEligible = !verifyMode && profileSnapshotReady && profileIsEligible(profilesForMode(profiles, handoffTargetMode), handoffTargetProfileId)
+  const canUseResultAsInput = !workbenchLocked && !verifyMode && Boolean(output) && handoffEligible
   const handoffLabel = mode === 'encrypt'
     ? 'Decrypt this result'
     : mode === 'decrypt'
@@ -227,29 +287,35 @@ export default function App() {
       ? 'The selected environment is not available for decryption.'
       : 'The selected environment is not available for encryption.'
   const formatInspection = useMemo(
-    () => mode === 'encrypt' ? null : inspectVaultFormat(value, profileId, byteLength),
-    [byteLength, mode, profileId, value],
+    () => verifyMode || mode === 'encrypt' ? null : inspectVaultFormat(value, profileId, byteLength),
+    [byteLength, mode, profileId, value, verifyMode],
   )
   const suggestedDecryptProfile = useMemo(
-    () => profileSnapshotReady && mode !== 'encrypt' && formatInspection
+    () => !verifyMode && profileSnapshotReady && mode !== 'encrypt' && formatInspection
       ? vaultIdSuggestedProfile(formatInspection, profileId, mode === 'rotate' ? rotateSourceProfiles : decryptProfiles)
       : null,
-    [decryptProfiles, formatInspection, mode, profileId, profileSnapshotReady, rotateSourceProfiles],
+    [decryptProfiles, formatInspection, mode, profileId, profileSnapshotReady, rotateSourceProfiles, verifyMode],
   )
   const selectedProfileLabel = profiles.find((profile) => profile.id === profileId)?.label || profileId
   const inputDescriptionIds = value && formatInspection
     ? 'input-byte-count vault-format-diagnostics'
     : 'input-byte-count'
-  const heading = mode === 'encrypt'
-    ? 'Encrypt a value'
-    : mode === 'decrypt'
-      ? 'Decrypt a protected value'
-      : 'Re-key a protected value'
+  const heading = verifyMode
+    ? 'Verify a rotation attestation'
+    : mode === 'encrypt'
+      ? 'Encrypt a value'
+      : mode === 'decrypt'
+        ? 'Decrypt a protected value'
+        : 'Re-key a protected value'
 
   function invalidateOutput() {
     snippetCopyRequestRef.current += 1
     resultCopyRequestRef.current += 1
+    attestationCopyRequestRef.current += 1
     setOutput('')
+    setAttestation(null)
+    setAttestationCopyFeedback(null)
+    setVerificationResult(null)
     setRevealed(false)
     setAnsibleSnippetFallback('')
     setResultCopyFeedback(null)
@@ -260,6 +326,7 @@ export default function App() {
 
   function changeMode(nextMode: OperationMode) {
     if (signingOut) return
+    leaveVerifyMode()
     const retainedInput = Boolean(value) && nextMode !== mode
     const nextProfiles = profilesForMode(profiles, nextMode)
     setProfileId((current) => profileIsEligible(nextProfiles, current) ? current : '')
@@ -273,6 +340,28 @@ export default function App() {
           ? 'Input kept; protected text expected.'
           : 'Input kept; plain value expected.'
       : '')
+  }
+
+  function changeVerifyMode() {
+    if (signingOut || !proofAvailable) return
+    setVerifyMode(true)
+    setVerificationResult(null)
+    setError('')
+    setStatus('')
+    setModeNotice('')
+  }
+
+  function clearVerificationState() {
+    setVerificationAttestation('')
+    setVerificationInput('')
+    setVerificationOutput('')
+    setExpectedBinding(emptyBindingFields())
+    setVerificationResult(null)
+  }
+
+  function leaveVerifyMode() {
+    clearVerificationState()
+    setVerifyMode(false)
   }
 
   function changeValue(nextValue: string) {
@@ -404,22 +493,46 @@ export default function App() {
 
   async function submit() {
     if (signingOut) return
-    if (!profileSnapshotReady || !selectedProfileEligible || !selectedDestinationEligible) {
-      setError(mode === 'rotate'
-        ? 'Select an available source and destination environment.'
-        : 'Select an available environment.')
-      return
-    }
-    if (!value) {
-      setError('Enter a value first')
-      return
-    }
-    if (overLimit) {
-      setError(limitMessage(mode))
-      return
+    if (verifyMode) {
+      if (!proofAvailable) {
+        setError('Rotation attestation verification is unavailable.')
+        return
+      }
+      if (!verificationAttestation || !verificationInput || !verificationOutput) {
+        setError('Enter an attestation, the original Vault value, and the rotated Vault value first.')
+        return
+      }
+      if (verificationOverLimit || verificationBindingOverLimit) {
+        setError('Verification input or expected binding is too large.')
+        return
+      }
+    } else {
+      if (!profileSnapshotReady || !selectedProfileEligible || !selectedDestinationEligible) {
+        setError(mode === 'rotate'
+          ? 'Select an available source and destination environment.'
+          : 'Select an available environment.')
+        return
+      }
+      if (!value) {
+        setError('Enter a value first')
+        return
+      }
+      if (overLimit) {
+        setError(limitMessage(mode))
+        return
+      }
+      if (mode === 'rotate' && issueAttestation && !bindingFieldsWithinLimits(attestationBinding)) {
+        setError('Attestation binding exceeds its field or canonical size limit.')
+        return
+      }
     }
 
     const operationMode = mode
+    const parsedAttestation = verifyMode ? parseSignedAttestationText(verificationAttestation) : null
+    if (verifyMode && !parsedAttestation) {
+      setError('Enter a valid flattened attestation JSON object.')
+      return
+    }
     const controller = new AbortController()
     const operationGeneration = operationGenerationRef.current + 1
     operationGenerationRef.current = operationGeneration
@@ -434,18 +547,46 @@ export default function App() {
     setBusy(true)
     snippetCopyRequestRef.current += 1
     resultCopyRequestRef.current += 1
+    attestationCopyRequestRef.current += 1
     setError('')
-    setOutput('')
-    setAnsibleSnippetFallback('')
-    setResultCopyFeedback(null)
-    setSnippetCopyFeedback(null)
-    setRevealed(false)
+    setVerificationResult(null)
+    if (!verifyMode) {
+      setOutput('')
+      setAttestation(null)
+      setAttestationCopyFeedback(null)
+      setAnsibleSnippetFallback('')
+      setResultCopyFeedback(null)
+      setSnippetCopyFeedback(null)
+      setRevealed(false)
+    }
     setModeNotice('')
-    setStatus(operationProgressLabel(operationMode))
+    setStatus(verifyMode ? 'Verifying attestation…' : operationProgressLabel(operationMode))
 
     try {
+      if (verifyMode && parsedAttestation) {
+        const result = await verifyAttestation({
+          attestation: parsedAttestation,
+          inputVaultText: verificationInput,
+          outputVaultText: verificationOutput,
+          ...(compactExpectedBinding ? { expectedBinding: compactExpectedBinding } : {}),
+        }, controller.signal)
+        if (!isCurrentOperation()) return
+        if (controller.signal.aborted) {
+          setStatus(operationAbortReasonRef.current === 'timeout' ? 'Verification timed out' : 'Verification cancelled')
+          return
+        }
+        setVerificationResult(result)
+        setStatus(result.valid ? 'Verified' : 'Not verified')
+        return
+      }
       const request = operationMode === 'rotate'
-        ? { mode: operationMode, sourceProfileId: profileId, destinationProfileId, value }
+        ? {
+          mode: operationMode,
+          sourceProfileId: profileId,
+          destinationProfileId,
+          value,
+          ...(issueAttestation ? { attestation: { ...(compactAttestationBinding ? { binding: compactAttestationBinding } : {}) } } : {}),
+        }
         : { profileId, mode: operationMode, value }
       const result = await runOperation(request, controller.signal)
       if (!isCurrentOperation()) return
@@ -458,16 +599,17 @@ export default function App() {
         }
         return
       }
-      setOutput(result)
+      setOutput(typeof result === 'string' ? result : result.vaultText)
+      setAttestation(typeof result === 'string' ? null : result.attestation ?? null)
       setStatus(operationReadyLabel(operationMode))
     } catch (reason: unknown) {
       if (!isCurrentOperation()) return
       if (controller.signal.aborted) {
         if (operationAbortReasonRef.current === 'timeout') {
-          setError('The operation timed out. Check the service and try again.')
-          setStatus('Operation timed out')
+          setError(verifyMode ? 'Verification timed out. Check the service and try again.' : 'The operation timed out. Check the service and try again.')
+          setStatus(verifyMode ? 'Verification timed out' : 'Operation timed out')
         } else {
-          setStatus('Operation cancelled')
+          setStatus(verifyMode ? 'Verification cancelled' : 'Operation cancelled')
         }
       } else {
         if (reason instanceof ApiError && reason.code === 'unauthorized') {
@@ -475,7 +617,7 @@ export default function App() {
           setStatus('Sign-in required…')
           return
         }
-        if (reason instanceof ApiError && reason.status === 403 && reason.code === 'forbidden') {
+        if (!verifyMode && reason instanceof ApiError && reason.status === 403 && reason.code === 'forbidden') {
           window.clearTimeout(timeoutId)
           operationControllerRef.current = null
           operationAbortReasonRef.current = null
@@ -522,6 +664,37 @@ export default function App() {
       if (resultCopyRequestRef.current !== requestId) return
       setResultCopyFeedback({ tone: 'error', message: resultCopyFallbackMessage('Clipboard access was blocked') })
     }
+  }
+
+  async function copyAttestation() {
+    if (signingOut || !attestation) return
+    const requestId = ++attestationCopyRequestRef.current
+    setAttestationCopyFeedback(null)
+    const text = JSON.stringify(attestation, null, 2)
+    if (!navigator.clipboard?.writeText) {
+      if (attestationCopyRequestRef.current !== requestId) return
+      setAttestationCopyFeedback({ tone: 'error', message: 'Clipboard access is unavailable; copy the attestation manually' })
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(text)
+      if (attestationCopyRequestRef.current === requestId) setAttestationCopyFeedback({ tone: 'success', message: 'Copied attestation' })
+    } catch {
+      if (attestationCopyRequestRef.current === requestId) setAttestationCopyFeedback({ tone: 'error', message: 'Clipboard access was blocked; copy the attestation manually' })
+    }
+  }
+
+  function verifyAttestedResult() {
+    if (!attestation || signingOut) return
+    setVerifyMode(true)
+    setVerificationAttestation(JSON.stringify(attestation, null, 2))
+    setVerificationInput(value)
+    setVerificationOutput(output)
+    setExpectedBinding({ ...attestationBinding })
+    setVerificationResult(null)
+    setError('')
+    setStatus('')
+    setModeNotice('')
   }
 
   async function copyAnsibleSnippet() {
@@ -572,6 +745,7 @@ export default function App() {
 
     snippetCopyRequestRef.current += 1
     resultCopyRequestRef.current += 1
+    attestationCopyRequestRef.current += 1
     valueRef.current = ''
     setBusy(false)
     setLoadingProfiles(false)
@@ -583,6 +757,16 @@ export default function App() {
     setSnippetCopyFeedback(null)
     setRevealed(false)
     setModeNotice('')
+    setAttestation(null)
+    setAttestationCopyFeedback(null)
+    setIssueAttestation(false)
+    setAttestationBinding(emptyBindingFields())
+    setVerificationAttestation('')
+    setVerificationInput('')
+    setVerificationOutput('')
+    setExpectedBinding(emptyBindingFields())
+    setVerificationResult(null)
+    setVerifyMode(false)
   }
 
   async function handleLogout() {
@@ -638,6 +822,16 @@ export default function App() {
     setResultCopyFeedback(null)
     setSnippetCopyFeedback(null)
     setRevealed(false)
+    setAttestation(null)
+    setAttestationCopyFeedback(null)
+    setIssueAttestation(false)
+    setAttestationBinding(emptyBindingFields())
+    setVerificationAttestation('')
+    setVerificationInput('')
+    setVerificationOutput('')
+    setExpectedBinding(emptyBindingFields())
+    setVerificationResult(null)
+    setVerifyMode(false)
     setError('')
     if (!recoveringStaleCapabilities) setStatus('')
     setModeNotice('')
@@ -715,84 +909,166 @@ export default function App() {
             }}
           >
             <div className="control-strip">
-              {mode === 'rotate' ? (
-                <div className="rotate-profile-fields">
-                  <div className="field-label">
-                    <label htmlFor="source-profile-select">From environment</label>
-                    <select
-                      id="source-profile-select"
-                      value={profileId}
-                      disabled={!profileSnapshotReady || workbenchLocked || rotateSourceProfiles.length === 0}
-                      onChange={(event) => changeProfile(event.target.value)}
-                    >
-                      {!profileIsEligible(rotateSourceProfiles, profileId) && <option value="">Select an environment</option>}
-                      {rotateSourceProfiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>{profile.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="field-label">
-                    <label htmlFor="destination-profile-select">To environment</label>
-                    <select
-                      id="destination-profile-select"
-                      value={destinationProfileId}
-                      disabled={!profileSnapshotReady || workbenchLocked || rotateDestinationProfiles.length === 0}
-                      onChange={(event) => changeDestinationProfile(event.target.value)}
-                    >
-                      {!profileIsEligible(rotateDestinationProfiles, destinationProfileId) && <option value="">Select an environment</option>}
-                      {rotateDestinationProfiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>{profile.label}</option>
-                      ))}
-                    </select>
+              {verifyMode ? (
+                <div className="verify-mode-controls">
+                  <p className="field-help">Verification uses the canonical REST endpoint and does not require a profile selection.</p>
+                  <div className="operation-controls">
+                    <fieldset className="mode-fieldset">
+                      <legend>Operation</legend>
+                      <div className="mode-switch">
+                        <button type="button" className="mode-button active" aria-label="Set verify mode" aria-pressed="true" onClick={changeVerifyMode} disabled={workbenchLocked}>Verify</button>
+                      </div>
+                    </fieldset>
+                    <button type="button" className="quiet-button" onClick={leaveVerifyMode} disabled={workbenchLocked}>Back to operations</button>
                   </div>
                 </div>
               ) : (
-                <div className="field-label">
-                  <label htmlFor="profile-select">Environment</label>
-                  <select
-                    id="profile-select"
-                    value={profileId}
-                    disabled={!profileSnapshotReady || workbenchLocked || eligibleProfiles.length === 0}
-                    onChange={(event) => changeProfile(event.target.value)}
-                  >
-                    {!profileIsEligible(eligibleProfiles, profileId) && (
-                      <option value="">{eligibleProfiles.length === 0 ? 'No environments available' : 'Select an environment'}</option>
-                    )}
-                    {eligibleProfiles.map((profile) => (
-                      <option key={profile.id} value={profile.id}>{profile.label}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
+                <>
+                  {mode === 'rotate' ? (
+                    <div className="rotate-profile-fields">
+                      <div className="field-label">
+                        <label htmlFor="source-profile-select">From environment</label>
+                        <select
+                          id="source-profile-select"
+                          value={profileId}
+                          disabled={!profileSnapshotReady || workbenchLocked || rotateSourceProfiles.length === 0}
+                          onChange={(event) => changeProfile(event.target.value)}
+                        >
+                          {!profileIsEligible(rotateSourceProfiles, profileId) && <option value="">Select an environment</option>}
+                          {rotateSourceProfiles.map((profile) => (
+                            <option key={profile.id} value={profile.id}>{profile.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="field-label">
+                        <label htmlFor="destination-profile-select">To environment</label>
+                        <select
+                          id="destination-profile-select"
+                          value={destinationProfileId}
+                          disabled={!profileSnapshotReady || workbenchLocked || rotateDestinationProfiles.length === 0}
+                          onChange={(event) => changeDestinationProfile(event.target.value)}
+                        >
+                          {!profileIsEligible(rotateDestinationProfiles, destinationProfileId) && <option value="">Select an environment</option>}
+                          {rotateDestinationProfiles.map((profile) => (
+                            <option key={profile.id} value={profile.id}>{profile.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="field-label">
+                      <label htmlFor="profile-select">Environment</label>
+                      <select
+                        id="profile-select"
+                        value={profileId}
+                        disabled={!profileSnapshotReady || workbenchLocked || eligibleProfiles.length === 0}
+                        onChange={(event) => changeProfile(event.target.value)}
+                      >
+                        {!profileIsEligible(eligibleProfiles, profileId) && (
+                          <option value="">{eligibleProfiles.length === 0 ? 'No environments available' : 'Select an environment'}</option>
+                        )}
+                        {eligibleProfiles.map((profile) => (
+                          <option key={profile.id} value={profile.id}>{profile.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
-              <div className="operation-controls">
-                <fieldset className="mode-fieldset">
-                  <legend>Operation</legend>
-                  <div className="mode-switch">
-                    <button type="button" className={mode === 'encrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set encrypt mode" aria-pressed={mode === 'encrypt'} onClick={() => changeMode('encrypt')} disabled={workbenchLocked || !profileSnapshotReady || !encryptAvailable}>Encrypt</button>
-                    <button type="button" className={mode === 'decrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set decrypt mode" aria-pressed={mode === 'decrypt'} onClick={() => changeMode('decrypt')} disabled={workbenchLocked || !profileSnapshotReady || !decryptAvailable}>Decrypt</button>
-                    <button type="button" className={mode === 'rotate' ? 'mode-button active' : 'mode-button'} aria-label="Set re-key mode" aria-pressed={mode === 'rotate'} onClick={() => changeMode('rotate')} disabled={workbenchLocked || !profileSnapshotReady || !rotateAvailable}>Re-key</button>
+                  <div className="operation-controls">
+                    <fieldset className="mode-fieldset">
+                      <legend>Operation</legend>
+                      <div className="mode-switch">
+                        <button type="button" className={mode === 'encrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set encrypt mode" aria-pressed={mode === 'encrypt'} onClick={() => changeMode('encrypt')} disabled={workbenchLocked || !profileSnapshotReady || !encryptAvailable}>Encrypt</button>
+                        <button type="button" className={mode === 'decrypt' ? 'mode-button active' : 'mode-button'} aria-label="Set decrypt mode" aria-pressed={mode === 'decrypt'} onClick={() => changeMode('decrypt')} disabled={workbenchLocked || !profileSnapshotReady || !decryptAvailable}>Decrypt</button>
+                        <button type="button" className={mode === 'rotate' ? 'mode-button active' : 'mode-button'} aria-label="Set re-key mode" aria-pressed={mode === 'rotate'} onClick={() => changeMode('rotate')} disabled={workbenchLocked || !profileSnapshotReady || !rotateAvailable}>Re-key</button>
+                      </div>
+                    </fieldset>
+                    {proofAvailable && <button type="button" className="mode-button verify-mode-button" aria-label="Set verify mode" aria-pressed="false" onClick={changeVerifyMode} disabled={workbenchLocked}>Verify</button>}
+                    <div className="mode-availability-list" aria-label="Operation availability">
+                      {profileSnapshotReady && (!encryptAvailable || !decryptAvailable || !rotateAvailable)
+                        ? (
+                          <>
+                            {!encryptAvailable && <p>No environments are available for encryption.</p>}
+                            {!decryptAvailable && <p>No environments are available for decryption.</p>}
+                            {!rotateAvailable && <p>Re-key requires an available decrypt source and encrypt destination.</p>}
+                          </>
+                        )
+                        : <span className="availability-placeholder" aria-hidden="true">&nbsp;</span>}
+                    </div>
                   </div>
-                </fieldset>
-                <div className="mode-availability-list" aria-label="Operation availability">
-                  {profileSnapshotReady && (!encryptAvailable || !decryptAvailable || !rotateAvailable)
-                    ? (
-                      <>
-                        {!encryptAvailable && <p>No environments are available for encryption.</p>}
-                        {!decryptAvailable && <p>No environments are available for decryption.</p>}
-                        {!rotateAvailable && <p>Re-key requires an available decrypt source and encrypt destination.</p>}
-                      </>
-                    )
-                    : <span className="availability-placeholder" aria-hidden="true">&nbsp;</span>}
-                </div>
-              </div>
+                </>
+              )}
             </div>
+
+            {!verifyMode && mode === 'rotate' && proofAvailable && (
+              <fieldset className="attestation-options">
+                <legend>Rotation attestation</legend>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={issueAttestation}
+                    onChange={(event) => {
+                      setIssueAttestation(event.target.checked)
+                      setAttestation(null)
+                      setAttestationCopyFeedback(null)
+                      setVerificationResult(null)
+                    }}
+                    disabled={workbenchLocked}
+                  />
+                  <span>Issue attestation</span>
+                </label>
+                {issueAttestation && (
+                  <div className="binding-fields">
+                    {(['repository', 'revision', 'path', 'selector'] as const).map((field) => (
+                      <div className="field-label" key={field}>
+                        <label htmlFor={`attestation-${field}`}>{field[0].toUpperCase() + field.slice(1)}</label>
+                        <input
+                          id={`attestation-${field}`}
+                          value={attestationBinding[field]}
+                          onChange={(event) => {
+                            setAttestationBinding((current) => ({ ...current, [field]: event.target.value }))
+                            setAttestation(null)
+                            setAttestationCopyFeedback(null)
+                          }}
+                          disabled={workbenchLocked}
+                          autoComplete="off"
+                          spellCheck={false}
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <span className="field-help">Context is caller-supplied. Vaultsmith does not infer repository, revision, path, or selector values.</span>
+              </fieldset>
+            )}
 
             <div className="mode-notice-slot">
               {modeNotice ? <p className="mode-notice" aria-live="polite">{modeNotice}</p> : <span className="feedback-placeholder" aria-hidden="true">&nbsp;</span>}
             </div>
 
-            <div className="editor-panes">
+            {verifyMode ? (
+              <VerificationWorkbench
+                attestation={verificationAttestation}
+                inputVaultText={verificationInput}
+                outputVaultText={verificationOutput}
+                expectedBinding={expectedBinding}
+                result={verificationResult}
+                attestationBytes={verificationAttestationBytes}
+                inputBytes={verificationInputBytes}
+                outputBytes={verificationOutputBytes}
+                busy={busy}
+                disabled={workbenchLocked}
+                submitDisabled={!canSubmit}
+                onAttestationChange={(next) => { setVerificationAttestation(next); setVerificationResult(null); setError('') }}
+                onInputChange={(next) => { setVerificationInput(next); setVerificationResult(null); setError('') }}
+                onOutputChange={(next) => { setVerificationOutput(next); setVerificationResult(null); setError('') }}
+                onBindingChange={(field, next) => { setExpectedBinding((current) => ({ ...current, [field]: next })); setVerificationResult(null); setError('') }}
+                onClear={clearAll}
+              />
+            ) : (
+              <div className="editor-panes">
               <div className="editor-pane input-pane">
                 <section className="editor-card" aria-label="Input editor">
                   <div className="editor-card-header">
@@ -861,6 +1137,16 @@ export default function App() {
                   <div className="editor-card-footer" id="output-byte-count"><span>Result size</span><strong>{outputByteLength.toLocaleString()} bytes</strong></div>
                 </section>
 
+                {attestation && (
+                  <section className="attestation-result-card" aria-label="Rotation attestation">
+                    <div className="editor-card-header">
+                      <strong>Attestation</strong>
+                      <span className="editor-limit">Signed rotation statement</span>
+                    </div>
+                    <textarea value={JSON.stringify(attestation, null, 2)} readOnly spellCheck={false} rows={6} aria-label="Attestation JSON" />
+                  </section>
+                )}
+
                 <div className="auxiliary-slot output-auxiliary-slot">
                   {output && (mode === 'encrypt' || mode === 'rotate') && (
                     <div className="snippet-controls">
@@ -917,10 +1203,14 @@ export default function App() {
                   {mode === 'decrypt' && output && <button className="secondary-button" type="button" disabled={workbenchLocked} onClick={() => { if (signingOut) return; setRevealed((current) => !current); setError(''); setResultCopyFeedback(null) }}>{revealed ? 'Hide result' : 'Reveal result'}</button>}
                   <button className="secondary-button" type="button" onClick={useResultAsInput} aria-describedby={output && !handoffEligible ? 'result-handoff-unavailable' : undefined} disabled={!canUseResultAsInput}>{handoffLabel}</button>
                   <button className="secondary-button" type="button" onClick={() => void copyResult()} disabled={copyDisabled}>{copyLabel}</button>
+                  {attestation && <button className="secondary-button" type="button" onClick={() => void copyAttestation()} disabled={workbenchLocked}>Copy attestation</button>}
+                  {attestation && <button className="secondary-button" type="button" onClick={verifyAttestedResult} disabled={workbenchLocked}>Verify</button>}
+                  {attestationCopyFeedback && <span className={`copy-feedback ${attestationCopyFeedback.tone}`} role={attestationCopyFeedback.tone === 'error' ? 'alert' : 'status'}>{attestationCopyFeedback.message}</span>}
                   {resultCopyFeedback && <span className={`copy-feedback ${resultCopyFeedback.tone}`} role={resultCopyFeedback.tone === 'error' ? 'alert' : 'status'}>{resultCopyFeedback.message}</span>}
                 </div>
               </div>
-            </div>
+              </div>
+            )}
           </form>
           <div className="error-slot">
             {visibleError
@@ -936,6 +1226,222 @@ export default function App() {
       </main>
     </div>
   )
+}
+
+function VerificationWorkbench({
+  attestation,
+  inputVaultText,
+  outputVaultText,
+  expectedBinding,
+  result,
+  attestationBytes,
+  inputBytes,
+  outputBytes,
+  busy,
+  disabled,
+  submitDisabled,
+  onAttestationChange,
+  onInputChange,
+  onOutputChange,
+  onBindingChange,
+  onClear,
+}: {
+  attestation: string
+  inputVaultText: string
+  outputVaultText: string
+  expectedBinding: BindingFields
+  result: VerificationResult | null
+  attestationBytes: number
+  inputBytes: number
+  outputBytes: number
+  busy: boolean
+  disabled: boolean
+  submitDisabled: boolean
+  onAttestationChange: (value: string) => void
+  onInputChange: (value: string) => void
+  onOutputChange: (value: string) => void
+  onBindingChange: (field: keyof BindingFields, value: string) => void
+  onClear: () => void
+}) {
+  return (
+    <>
+      <div className="editor-panes verification-panes">
+        <div className="editor-pane">
+          <section className="editor-card verification-card" aria-label="Attestation input">
+            <div className="editor-card-header">
+              <label className="editor-caption" htmlFor="verification-attestation">Attestation</label>
+              <span className="editor-limit">192 KiB max</span>
+            </div>
+            <textarea
+              id="verification-attestation"
+              value={attestation}
+              onChange={(event) => onAttestationChange(event.target.value)}
+              placeholder="Paste flattened attestation JSON…"
+              disabled={disabled}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              rows={10}
+            />
+            <div className="editor-card-footer"><span>Attestation size</span><strong>{attestationBytes.toLocaleString()} / {(192 * 1024).toLocaleString()} bytes</strong></div>
+          </section>
+        </div>
+        <div className="editor-pane">
+          <section className="editor-card verification-card" aria-label="Original Vault input">
+            <div className="editor-card-header">
+              <label className="editor-caption" htmlFor="verification-input">Original Vault</label>
+              <span className="editor-limit">5 MiB max</span>
+            </div>
+            <textarea
+              id="verification-input"
+              value={inputVaultText}
+              onChange={(event) => onInputChange(event.target.value)}
+              placeholder="Paste the original Vault value…"
+              disabled={disabled}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              rows={10}
+            />
+            <div className="editor-card-footer"><span>Input size</span><strong>{inputBytes.toLocaleString()} / {(5 * 1024 * 1024).toLocaleString()} bytes</strong></div>
+          </section>
+        </div>
+        <div className="editor-pane">
+          <section className="editor-card verification-card" aria-label="Rotated Vault input">
+            <div className="editor-card-header">
+              <label className="editor-caption" htmlFor="verification-output">Rotated Vault</label>
+              <span className="editor-limit">5 MiB max</span>
+            </div>
+            <textarea
+              id="verification-output"
+              value={outputVaultText}
+              onChange={(event) => onOutputChange(event.target.value)}
+              placeholder="Paste the rotated Vault value…"
+              disabled={disabled}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              rows={10}
+            />
+            <div className="editor-card-footer"><span>Output size</span><strong>{outputBytes.toLocaleString()} / {(5 * 1024 * 1024).toLocaleString()} bytes</strong></div>
+          </section>
+        </div>
+      </div>
+      <fieldset className="attestation-options verification-binding-options">
+        <legend>Expected binding (optional)</legend>
+        <div className="binding-fields">
+          {(['repository', 'revision', 'path', 'selector'] as const).map((field) => (
+            <div className="field-label" key={field}>
+              <label htmlFor={`expected-binding-${field}`}>{field[0].toUpperCase() + field.slice(1)}</label>
+              <input
+                id={`expected-binding-${field}`}
+                value={expectedBinding[field]}
+                onChange={(event) => onBindingChange(field, event.target.value)}
+                disabled={disabled}
+                autoComplete="off"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
+            </div>
+          ))}
+        </div>
+        <span className="field-help">Leave fields empty to verify without an expected caller binding.</span>
+      </fieldset>
+      <div className="panel-actions verification-actions">
+        <button className="primary-button" type="submit" disabled={submitDisabled || busy}>
+          {busy ? 'Verifying…' : 'Verify'}
+        </button>
+        <button className="quiet-button" type="button" onClick={onClear} disabled={disabled || busy}>Clear values</button>
+      </div>
+      {result && <VerificationSummary result={result} />}
+    </>
+  )
+}
+
+function VerificationSummary({ result }: { result: VerificationResult }) {
+  const claims = result.attestation
+  if (!result.valid) {
+    return (
+      <section className="verification-summary" data-valid="false" aria-label="Verification result">
+        <h2>Not verified</h2>
+        <p>{verificationReasonMessage(result.reason)}</p>
+      </section>
+    )
+  }
+
+  return (
+    <section className="verification-summary" data-valid="true" aria-label="Verification result">
+      <h2>Verified</h2>
+      {claims ? (
+        <dl className="verification-claims">
+          <div><dt>Issuer</dt><dd>{claims.issuer}</dd></div>
+          <div><dt>Issued</dt><dd>{claims.issuedAt}</dd></div>
+          <div><dt>Source</dt><dd>{claims.sourceProfileId}</dd></div>
+          <div><dt>Destination</dt><dd>{claims.destinationProfileId}</dd></div>
+          <div><dt>Signing key</dt><dd>{claims.kid}</dd></div>
+          {claims.binding && <div><dt>Binding</dt><dd>{bindingDescription(claims.binding)}</dd></div>}
+        </dl>
+      ) : <p>The attested rotation statement is valid.</p>}
+    </section>
+  )
+}
+
+function compactBindingFields(fields: BindingFields): AttestationBinding | undefined {
+  const binding: AttestationBinding = {}
+  for (const field of ['repository', 'revision', 'path', 'selector'] as const) {
+    if (fields[field].length > 0) binding[field] = fields[field]
+  }
+  return Object.keys(binding).length > 0 ? binding : undefined
+}
+
+function bindingFieldsWithinLimits(fields: BindingFields): boolean {
+  if (!(['repository', 'revision', 'path', 'selector'] as const).every((field) => utf8ByteLength(fields[field]) <= MAX_BINDING_FIELD_BYTES)) {
+    return false
+  }
+  const binding = compactBindingFields(fields)
+  if (!binding) return true
+  const canonical = JSON.stringify(binding)
+  return typeof canonical === 'string' && utf8ByteLength(canonical) <= MAX_CANONICAL_BINDING_BYTES
+}
+
+function parseSignedAttestationText(value: string): SignedAttestation | null {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!parsed || typeof parsed !== 'object') return null
+    const candidate = parsed as Partial<SignedAttestation>
+    return typeof candidate.protected === 'string'
+      && typeof candidate.payload === 'string'
+      && typeof candidate.signature === 'string'
+      ? candidate as SignedAttestation
+      : null
+  } catch {
+    return null
+  }
+}
+
+function verificationReasonMessage(reason?: VerificationReason): string {
+  switch (reason) {
+    case 'signature_invalid': return 'The attestation signature is invalid.'
+    case 'unknown_key': return 'The attestation signing key is not known.'
+    case 'key_revoked': return 'The attestation signing key is revoked.'
+    case 'issuer_mismatch': return 'The attestation issuer is not trusted here.'
+    case 'unsupported_version': return 'The attestation version is not supported.'
+    case 'input_digest_mismatch': return 'The original Vault value does not match the attestation.'
+    case 'output_digest_mismatch': return 'The rotated Vault value does not match the attestation.'
+    case 'binding_mismatch': return 'The attestation binding does not match the expected context.'
+    default: return 'The attestation could not be verified.'
+  }
+}
+
+function bindingDescription(binding: AttestationBinding): string {
+  return (['repository', 'revision', 'path', 'selector'] as const)
+    .filter((field) => binding[field])
+    .map((field) => `${field}: ${binding[field]}`)
+    .join(' · ')
 }
 
 function operationLabel(mode: OperationMode): string {
@@ -1095,6 +1601,10 @@ function safeErrorMessage(reason: unknown, fallback: string, context: 'session' 
   if (reason.code === 'session_timeout') return 'Session loading timed out. Check the service and try again.'
   if (reason.code === 'profiles_timeout') return 'Environment loading timed out. Check the service and try again.'
   if (reason.code === 'invalid_response') return 'The service returned an invalid response'
+  if (reason.code === 'feature_unavailable') return 'Rotation attestations are not enabled.'
+  if (reason.code === 'attestation_unavailable') return 'Rotation attestation service is unavailable. Try again shortly.'
+  if (reason.code === 'attestation_busy') return 'Rotation attestation service is busy. Try again shortly.'
+  if (reason.code === 'temporarily_unavailable') return 'Vaultsmith service is temporarily unavailable. Try again shortly.'
   if (reason.code === 'not_ready') return 'Vaultsmith service is not ready. Try again shortly.'
   if (reason.code === 'not_found') {
     if (context === 'session') return 'The session endpoint was not found. Check the service route and try again.'
