@@ -14,6 +14,9 @@ func (h *Handler) serveSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := sessionResponse{CSRFToken: CSRFToken(r), AuthRequired: h.authConfig.Mode == config.AuthModeNative}
+	if h.service != nil {
+		response.AttestationEnabled = h.service.AttestationEnabled()
+	}
 	if h.authConfig.Mode == config.AuthModeNative {
 		if h.auth == nil {
 			writeAuthError(w, http.StatusServiceUnavailable, "not_ready")

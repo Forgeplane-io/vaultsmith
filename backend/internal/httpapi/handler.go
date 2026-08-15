@@ -69,10 +69,11 @@ type statusResponse struct {
 }
 
 type sessionResponse struct {
-	Authenticated bool   `json:"authenticated"`
-	AuthRequired  bool   `json:"authRequired"`
-	Email         string `json:"email,omitempty"`
-	CSRFToken     string `json:"csrfToken"`
+	Authenticated      bool   `json:"authenticated"`
+	AuthRequired       bool   `json:"authRequired"`
+	Email              string `json:"email,omitempty"`
+	CSRFToken          string `json:"csrfToken"`
+	AttestationEnabled bool   `json:"attestationEnabled"`
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +84,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/operations":
 		h.serveOperation(w, r)
 	case "/api/v1/rotations":
-		h.serveCanonicalRotate(w, r)
+		h.serveCanonicalRotateWithAttestation(w, r)
+	case "/api/v1/attestations/verify":
+		h.serveAttestationVerify(w, r)
+	case "/.well-known/vaultsmith-attestation":
+		h.serveAttestationMetadata(w, r)
+	case "/.well-known/vaultsmith-attestation/jwks.json":
+		h.serveAttestationJWKS(w, r)
 	case "/api/v1/session":
 		h.serveSession(w, r)
 	case "/.well-known/oauth-protected-resource":
@@ -444,7 +451,7 @@ func (h *Handler) serveProtectedResourceMetadata(w http.ResponseWriter, r *http.
 	_ = json.NewEncoder(w).Encode(protectedResourceMetadataResponse{
 		Resource:               h.authConfig.OIDC.PublicBaseURL,
 		AuthorizationServers:   []string{h.authConfig.OIDC.IssuerURL},
-		ScopesSupported:        []string{vaultservice.ScopeProfileRead, vaultservice.ScopeEncrypt, vaultservice.ScopeDecrypt, vaultservice.ScopeRotate},
+		ScopesSupported:        []string{vaultservice.ScopeProfileRead, vaultservice.ScopeEncrypt, vaultservice.ScopeDecrypt, vaultservice.ScopeRotate, vaultservice.ScopeAttestationVerify},
 		BearerMethodsSupported: []string{"header"},
 	})
 }
@@ -766,6 +773,11 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		status = http.StatusUnprocessableEntity
 	case vaultservice.CodeTemporarilyUnavailable:
 		status = http.StatusServiceUnavailable
+	case vaultservice.CodeFeatureUnavailable, vaultservice.CodeAttestationUnavailable:
+		status = http.StatusServiceUnavailable
+	case vaultservice.CodeAttestationBusy:
+		status = http.StatusServiceUnavailable
+		w.Header().Set("Retry-After", "1")
 	default:
 		writeError(w, http.StatusServiceUnavailable, "not_ready", "service is not ready")
 		return

@@ -32,6 +32,8 @@ tags:
     description: Safe profile discovery.
   - name: Operations
     description: Synchronous in-memory Vault operations. Do not retry automatically.
+  - name: Attestations
+    description: Optional rotation-attestation issuance, verification, and discovery.
 paths:
   /api/v1/profiles:
     get:
@@ -267,6 +269,133 @@ paths:
         "422":
           $ref: "#/components/responses/OperationFailed"
         "503":
+          $ref: "#/components/responses/AttestationServiceUnavailable"
+  /api/v1/attestations/verify:
+    post:
+      operationId: verifyAttestation
+      tags:
+        - Attestations
+      summary: Verify a rotation attestation
+      description: |
+        Verifies a flattened JWS rotation attestation against the local issuer,
+        immutable keyring, and supplied Vault envelopes. Verification never
+        decrypts either envelope or resolves configured profiles. A syntactically
+        valid attestation with a semantic mismatch returns HTTP 200 with valid
+        false and a closed verification reason.
+      security:
+        - SessionCookie: []
+        - BearerAuth: []
+      x-required-bearer-scope: vaultsmith.attestation.verify
+      x-request-deadline-seconds: 30
+      x-max-body-bytes: 12582912
+      x-no-automatic-retry: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyAttestationRequest"
+      responses:
+        "200":
+          description: Validity result and safe claims when signature verification succeeds.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyAttestationResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedPost"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "503":
+          $ref: "#/components/responses/AttestationServiceUnavailable"
+  /.well-known/vaultsmith-attestation:
+    get:
+      operationId: attestationMetadata
+      tags:
+        - Attestations
+      summary: Get rotation-attestation metadata
+      security: []
+      responses:
+        "200":
+          description: Deterministic non-secret local attestation metadata.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttestationMetadata"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedGet"
+        "503":
+          $ref: "#/components/responses/AttestationServiceUnavailable"
+  /.well-known/vaultsmith-attestation/jwks.json:
+    get:
+      operationId: attestationJWKS
+      tags:
+        - Attestations
+      summary: Get public rotation-attestation keys
+      security: []
+      responses:
+        "200":
+          description: Deterministic public-only Ed25519 JWKS.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttestationJWKS"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedGet"
+        "503":
+          $ref: "#/components/responses/AttestationServiceUnavailable"
+  /api/v1/session:
+    get:
+      operationId: getSession
+      tags:
+        - Attestations
+      summary: Get the current session and capability state
+      security:
+        - SessionCookie: []
+      responses:
+        "200":
+          description: Session state with additive capability flags.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedGet"
+        "503":
           $ref: "#/components/responses/ServiceUnavailable"
   /api/v1/operations:
     post:
@@ -366,6 +495,7 @@ components:
       description: |
         Signed access token for the exact Vaultsmith resource origin. Required
         scopes are fixed per operation and shown with x-required-bearer-scope.
+        Attestation verification requires vaultsmith.attestation.verify.
   parameters:
     ProfileId:
       name: profileId
@@ -602,6 +732,35 @@ components:
                 error:
                   code: temporarily_unavailable
                   message: service is temporarily unavailable
+    AttestationServiceUnavailable:
+      description: The rotation-attestation subsystem is disabled, unavailable, or saturated.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AttestationErrorResponse"
+          examples:
+            disabled:
+              value:
+                error:
+                  code: feature_unavailable
+                  message: rotation attestations are disabled
+            unavailable:
+              value:
+                error:
+                  code: attestation_unavailable
+                  message: rotation attestation service is unavailable
+            busy:
+              value:
+                error:
+                  code: attestation_busy
+                  message: rotation attestation verification is busy
   schemas:
     ProfileId:
       type: string
@@ -706,6 +865,8 @@ components:
           type: string
           description: UTF-8 Ansible Vault 1.1 or 1.2 text limited to 5 MiB by encoded bytes.
           x-max-bytes: 5242880
+        attestation:
+          $ref: "#/components/schemas/RotationAttestationRequest"
     RotateResponse:
       type: object
       description: Secret-bearing response. Clients ignore unknown properties.
@@ -715,6 +876,257 @@ components:
         vaultText:
           type: string
           description: Ansible Vault 1.2/AES256 text labeled with the destination profile.
+        attestation:
+          $ref: "#/components/schemas/RotationAttestation"
+    RotationAttestationRequest:
+      type: object
+      additionalProperties: false
+      description: Optional request to bind the rotation result to caller context.
+      properties:
+        binding:
+          $ref: "#/components/schemas/RotationBinding"
+    RotationBinding:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: Partial exact-match binding. At least one field is required.
+      properties:
+        repository:
+          type: string
+          maxLength: 1024
+        revision:
+          type: string
+          maxLength: 1024
+        path:
+          type: string
+          maxLength: 1024
+        selector:
+          type: string
+          maxLength: 1024
+    RotationAttestation:
+      type: object
+      additionalProperties: false
+      required:
+        - protected
+        - payload
+        - signature
+      properties:
+        protected:
+          type: string
+          maxLength: 65536
+          description: Unpadded base64url protected JWS header.
+        payload:
+          type: string
+          maxLength: 65536
+          description: Unpadded base64url canonical JCS claims.
+        signature:
+          type: string
+          maxLength: 65536
+          description: Unpadded base64url pure Ed25519 signature.
+    AttestationProtectedHeader:
+      type: object
+      additionalProperties: false
+      required:
+        - alg
+        - kid
+        - typ
+      properties:
+        alg:
+          type: string
+          const: Ed25519
+        kid:
+          type: string
+        typ:
+          type: string
+          const: application/vaultsmith-rotation-attestation+json
+    DigestBinding:
+      type: object
+      additionalProperties: false
+      required:
+        - algorithm
+        - digest
+      properties:
+        algorithm:
+          type: string
+          const: sha-256
+        digest:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+    RotationAttestationClaims:
+      type: object
+      additionalProperties: false
+      required:
+        - issuer
+        - issuedAt
+        - operation
+        - sourceProfileId
+        - destinationProfileId
+        - kid
+      properties:
+        issuer:
+          type: string
+          format: uri
+        issuedAt:
+          type: string
+          format: date-time
+        operation:
+          type: string
+          const: rotate
+        sourceProfileId:
+          $ref: "#/components/schemas/ProfileId"
+        destinationProfileId:
+          $ref: "#/components/schemas/ProfileId"
+        kid:
+          type: string
+        binding:
+          $ref: "#/components/schemas/RotationBinding"
+    VerifyAttestationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - attestation
+        - inputVaultText
+        - outputVaultText
+      properties:
+        attestation:
+          $ref: "#/components/schemas/RotationAttestation"
+        inputVaultText:
+          type: string
+          maxLength: 5242880
+          x-max-bytes: 5242880
+        outputVaultText:
+          type: string
+          maxLength: 5242880
+          x-max-bytes: 5242880
+        expectedBinding:
+          $ref: "#/components/schemas/RotationBinding"
+    AttestationVerificationReason:
+      type: string
+      enum:
+        - signature_invalid
+        - unknown_key
+        - key_revoked
+        - issuer_mismatch
+        - unsupported_version
+        - input_digest_mismatch
+        - output_digest_mismatch
+        - binding_mismatch
+    VerifyAttestationResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - valid
+      properties:
+        valid:
+          type: boolean
+        reason:
+          $ref: "#/components/schemas/AttestationVerificationReason"
+        attestation:
+          $ref: "#/components/schemas/RotationAttestationClaims"
+    AttestationError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          enum:
+            - feature_unavailable
+            - attestation_unavailable
+            - attestation_busy
+        message:
+          type: string
+    AttestationErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/AttestationError"
+    AttestationMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - issuer
+        - activeKid
+        - attestationVersions
+        - jwksUri
+        - revokedKids
+      properties:
+        issuer:
+          type: string
+          format: uri
+        activeKid:
+          type: string
+        attestationVersions:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+        jwksUri:
+          type: string
+          format: uri
+        revokedKids:
+          type: array
+          items:
+            type: string
+    AttestationJWKS:
+      type: object
+      additionalProperties: false
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - kty
+              - crv
+              - alg
+              - use
+              - kid
+              - x
+            properties:
+              kty:
+                type: string
+                const: OKP
+              crv:
+                type: string
+                const: Ed25519
+              alg:
+                type: string
+                const: Ed25519
+              use:
+                type: string
+                const: sig
+              kid:
+                type: string
+              x:
+                type: string
+    SessionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - authenticated
+        - authRequired
+        - csrfToken
+        - attestationEnabled
+      properties:
+        authenticated:
+          type: boolean
+        authRequired:
+          type: boolean
+        email:
+          type: string
+        csrfToken:
+          type: string
+        attestationEnabled:
+          type: boolean
     LegacyOperationRequest:
       oneOf:
         - $ref: "#/components/schemas/LegacyEncryptRequest"

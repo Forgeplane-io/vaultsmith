@@ -16,11 +16,78 @@ This is the static reference for the released REST contract. The canonical sourc
 
 | Name | Type | Location | Description |
 | --- | --- | --- | --- |
-| `BearerAuth` | http / bearer (`RFC 9068 JWT access token`) |  | Signed access token for the exact Vaultsmith resource origin. Required scopes are fixed per operation and shown with x-required-bearer-scope. |
+| `BearerAuth` | http / bearer (`RFC 9068 JWT access token`) |  | Signed access token for the exact Vaultsmith resource origin. Required scopes are fixed per operation and shown with x-required-bearer-scope. Attestation verification requires vaultsmith.attestation.verify. |
 | `CsrfHeader` | apiKey | header `X-CSRF-Token` | Native-mode CSRF token required with the session on unsafe requests. |
 | `SessionCookie` | apiKey | cookie `__Host-vaultsmith_session` | Opaque native-mode browser session cookie. |
 
 # Operations
+
+## `GET /.well-known/vaultsmith-attestation`
+
+**Get rotation-attestation metadata**
+
+**Operation ID:** `attestationMetadata`
+
+### Responses
+
+| Status | Meaning | Body |
+| --- | --- | --- |
+| `200` | Deterministic non-secret local attestation metadata. | `application/json` [AttestationMetadata](#schema-attestationmetadata) |
+| `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
+| `405` | The resource accepts GET only. | [MethodNotAllowedGet](#response-methodnotallowedget) |
+| `503` | The rotation-attestation subsystem is disabled, unavailable, or saturated. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
+
+## `GET /.well-known/vaultsmith-attestation/jwks.json`
+
+**Get public rotation-attestation keys**
+
+**Operation ID:** `attestationJWKS`
+
+### Responses
+
+| Status | Meaning | Body |
+| --- | --- | --- |
+| `200` | Deterministic public-only Ed25519 JWKS. | `application/json` [AttestationJWKS](#schema-attestationjwks) |
+| `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
+| `405` | The resource accepts GET only. | [MethodNotAllowedGet](#response-methodnotallowedget) |
+| `503` | The rotation-attestation subsystem is disabled, unavailable, or saturated. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
+
+## `POST /api/v1/attestations/verify`
+
+**Verify a rotation attestation**
+
+**Operation ID:** `verifyAttestation`
+
+Verifies a flattened JWS rotation attestation against the local issuer, immutable keyring, and supplied Vault envelopes. Verification never decrypts either envelope or resolves configured profiles. A syntactically valid attestation with a semantic mismatch returns HTTP 200 with valid false and a closed verification reason.
+
+**Authentication:** `SessionCookie` or `BearerAuth`
+
+**Required Bearer scope:** `vaultsmith.attestation.verify`
+
+**Application deadline:** 30 seconds
+
+**Maximum HTTP body:** 12582912 bytes (12 MiB)
+
+**Automatic retry:** Prohibited
+
+### Request body
+
+**Required:** yes
+
+- `application/json`: [VerifyAttestationRequest](#schema-verifyattestationrequest)
+
+### Responses
+
+| Status | Meaning | Body |
+| --- | --- | --- |
+| `200` | Validity result and safe claims when signature verification succeeds. | `application/json` [VerifyAttestationResponse](#schema-verifyattestationresponse) |
+| `400` | Invalid path value, JSON, UTF-8, fields, Origin, or credential combination. | [InvalidRequest](#response-invalidrequest) |
+| `401` | Native-mode credentials are missing or invalid. | [Unauthorized](#response-unauthorized) |
+| `403` | CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request. | [Forbidden](#response-forbidden) |
+| `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |
+| `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
+| `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
+| `503` | The rotation-attestation subsystem is disabled, unavailable, or saturated. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
 
 ## `GET /api/v1/profiles`
 
@@ -172,6 +239,23 @@ Decrypts with the source profile and re-encrypts with the destination profile. P
 | `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
 | `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
 | `422` | The Vault operation failed. Wrong passwords, malformed Vault text, MAC failures, invalid or oversized decrypted plaintext, and other Vault failures are intentionally indistinguishable. | [OperationFailed](#response-operationfailed) |
+| `503` | The rotation-attestation subsystem is disabled, unavailable, or saturated. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
+
+## `GET /api/v1/session`
+
+**Get the current session and capability state**
+
+**Operation ID:** `getSession`
+
+**Authentication:** `SessionCookie`
+
+### Responses
+
+| Status | Meaning | Body |
+| --- | --- | --- |
+| `200` | Session state with additive capability flags. | `application/json` [SessionResponse](#schema-sessionresponse) |
+| `401` | Native-mode credentials are missing or invalid. | [Unauthorized](#response-unauthorized) |
+| `405` | The resource accepts GET only. | [MethodNotAllowedGet](#response-methodnotallowedget) |
 | `503` | Startup state, a runtime authentication dependency, operation admission, or the 30-second application request deadline prevented completion. Retry-After is present only for immediate admission saturation. | [ServiceUnavailable](#response-serviceunavailable) |
 
 # Compatibility
@@ -228,6 +312,57 @@ Safe stable code and human text. Clients ignore unknown properties.
 | `code` | string; values `invalid_request`, `unauthorized`, `forbidden`, `not_found`, `method_not_allowed`, `operation_failed`, `not_ready`, `temporarily_unavailable` | yes | Stable machine-readable error code. |
 | `message` | string | yes | Safe human text with no submitted values or underlying failure details. |
 
+## Schema `AttestationError`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `code` | string; values `feature_unavailable`, `attestation_unavailable`, `attestation_busy` | yes |  |
+| `message` | string | yes |  |
+
+## Schema `AttestationErrorResponse`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `error` | [AttestationError](#schema-attestationerror) | yes |  |
+
+## Schema `AttestationJWKS`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `keys` | array of object | yes |  |
+
+## Schema `AttestationMetadata`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `activeKid` | string | yes |  |
+| `attestationVersions` | array of integer; minimum 1 | yes |  |
+| `issuer` | string (`uri`) | yes |  |
+| `jwksUri` | string (`uri`) | yes |  |
+| `revokedKids` | array of string | yes |  |
+
+## Schema `AttestationProtectedHeader`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `alg` | string | yes |  |
+| `kid` | string | yes |  |
+| `typ` | string | yes |  |
+
+## Schema `AttestationVerificationReason`
+
+**Type:** string; values `signature_invalid`, `unknown_key`, `key_revoked`, `issuer_mismatch`, `unsupported_version`, `input_digest_mismatch`, `output_digest_mismatch`, `binding_mismatch`
+
 ## Schema `DecryptRequest`
 
 **Type:** object
@@ -245,6 +380,15 @@ Secret-bearing response. Clients ignore unknown properties.
 | Property | Type and limits | Required | Description |
 | --- | --- | --- | --- |
 | `plaintext` | string | yes | Valid UTF-8 plaintext limited to 1 MiB by encoded bytes. |
+
+## Schema `DigestBinding`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `algorithm` | string | yes |  |
+| `digest` | string | yes |  |
 
 ## Schema `EncryptRequest`
 
@@ -366,6 +510,7 @@ Ordered visible profile catalog. Clients ignore unknown properties.
 
 | Property | Type and limits | Required | Description |
 | --- | --- | --- | --- |
+| `attestation` | [RotationAttestationRequest](#schema-rotationattestationrequest) | no |  |
 | `destinationProfileId` | [ProfileId](#schema-profileid) | yes |  |
 | `sourceProfileId` | [ProfileId](#schema-profileid) | yes |  |
 | `vaultText` | string | yes | UTF-8 Ansible Vault 1.1 or 1.2 text limited to 5 MiB by encoded bytes. |
@@ -378,9 +523,96 @@ Secret-bearing response. Clients ignore unknown properties.
 
 | Property | Type and limits | Required | Description |
 | --- | --- | --- | --- |
+| `attestation` | [RotationAttestation](#schema-rotationattestation) | no |  |
 | `vaultText` | string | yes | Ansible Vault 1.2/AES256 text labeled with the destination profile. |
 
+## Schema `RotationAttestation`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `payload` | string; max length 65536 | yes | Unpadded base64url canonical JCS claims. |
+| `protected` | string; max length 65536 | yes | Unpadded base64url protected JWS header. |
+| `signature` | string; max length 65536 | yes | Unpadded base64url pure Ed25519 signature. |
+
+## Schema `RotationAttestationClaims`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `binding` | [RotationBinding](#schema-rotationbinding) | no |  |
+| `destinationProfileId` | [ProfileId](#schema-profileid) | yes |  |
+| `issuedAt` | string (`date-time`) | yes |  |
+| `issuer` | string (`uri`) | yes |  |
+| `kid` | string | yes |  |
+| `operation` | string | yes |  |
+| `sourceProfileId` | [ProfileId](#schema-profileid) | yes |  |
+
+## Schema `RotationAttestationRequest`
+
+Optional request to bind the rotation result to caller context.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `binding` | [RotationBinding](#schema-rotationbinding) | no |  |
+
+## Schema `RotationBinding`
+
+Partial exact-match binding. At least one field is required.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `path` | string; max length 1024 | no |  |
+| `repository` | string; max length 1024 | no |  |
+| `revision` | string; max length 1024 | no |  |
+| `selector` | string; max length 1024 | no |  |
+
+## Schema `SessionResponse`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `attestationEnabled` | boolean | yes |  |
+| `authRequired` | boolean | yes |  |
+| `authenticated` | boolean | yes |  |
+| `csrfToken` | string | yes |  |
+| `email` | string | no |  |
+
+## Schema `VerifyAttestationRequest`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `attestation` | [RotationAttestation](#schema-rotationattestation) | yes |  |
+| `expectedBinding` | [RotationBinding](#schema-rotationbinding) | no |  |
+| `inputVaultText` | string; max length 5242880 | yes |  |
+| `outputVaultText` | string; max length 5242880 | yes |  |
+
+## Schema `VerifyAttestationResponse`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `attestation` | [RotationAttestationClaims](#schema-rotationattestationclaims) | no |  |
+| `reason` | [AttestationVerificationReason](#schema-attestationverificationreason) | no |  |
+| `valid` | boolean | yes |  |
+
 # Reusable responses
+
+## Response `AttestationServiceUnavailable`
+
+The rotation-attestation subsystem is disabled, unavailable, or saturated.
+
+- `application/json`: [AttestationErrorResponse](#schema-attestationerrorresponse)
 
 ## Response `Forbidden`
 
