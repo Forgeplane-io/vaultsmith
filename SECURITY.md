@@ -6,7 +6,7 @@ Vaultsmith handles Ansible Vault values and passwords. Native mode provides OIDC
 
 TLS termination, private routing, rate limits, request-body logging, and Kubernetes access controls remain deployment responsibilities. NetworkPolicy and Kubernetes RBAC do not replace application authentication.
 
-Do not put passwords, plaintext, ciphertext, kubeconfig data, registry credentials, tokens, or personal data in issues, pull requests, logs, screenshots, fixtures, or support requests.
+Do not put passwords, plaintext, ciphertext, generated tokens, private keys, non-synthetic public keys or CSRs, kubeconfig data, registry credentials, authentication tokens, or personal data in issues, pull requests, logs, screenshots, fixtures, or support requests.
 
 ## Supported versions
 

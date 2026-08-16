@@ -1,0 +1,1244 @@
+{
+  "schemaVersion": 1,
+  "generateProtocolVersion": 1,
+  "status": "accepted",
+  "baselineCommit": "b0b5dcf51239bae8c3891ac2acae28cbfb1cdde4",
+  "warning": "Protocol constants and synthetic fixture requirements only. Never use deterministic fixture material in production.",
+  "privateSerializations": {
+    "password": {
+      "format": "password_ascii",
+      "encoding": "ascii",
+      "terminalLf": false
+    },
+    "token": {
+      "formats": [
+        "token_base64url",
+        "token_hex"
+      ],
+      "encoding": "ascii",
+      "terminalLf": false
+    },
+    "ssh_keypair": {
+      "format": "openssh_private_key",
+      "pemBlockType": "OPENSSH PRIVATE KEY",
+      "encryptedInNativeFormat": false,
+      "terminalLf": true
+    },
+    "age_identity": {
+      "format": "age_x25519_identity",
+      "prefix": "AGE-SECRET-KEY-",
+      "terminalLf": true
+    },
+    "x509_csr": {
+      "format": "pkcs8_private_key_pem",
+      "pemBlockType": "PRIVATE KEY",
+      "encryptedInNativeFormat": false,
+      "terminalLf": true
+    }
+  },
+  "publicSerializations": {
+    "ssh_keypair": {
+      "format": "openssh_authorized_key",
+      "terminalLfInResponse": false,
+      "fingerprint": "SHA256:<base64-without-padding> over the OpenSSH public-key blob"
+    },
+    "age_identity": {
+      "format": "age_x25519_recipient",
+      "prefix": "age1",
+      "terminalLfInResponse": false
+    },
+    "x509_csr": {
+      "format": "pkcs10_csr_pem",
+      "pemBlockType": "CERTIFICATE REQUEST",
+      "terminalLf": true,
+      "fingerprint": "SHA256:<base64-without-padding> over DER SubjectPublicKeyInfo"
+    }
+  },
+  "uiPublicDownloads": {
+    "ssh_keypair": {
+      "filename": "vaultsmith-ssh-public-key.pub",
+      "mediaType": "text/plain;charset=utf-8",
+      "terminalLf": "ensure exactly one"
+    },
+    "age_identity": {
+      "filename": "vaultsmith-age-recipient.txt",
+      "mediaType": "text/plain;charset=utf-8",
+      "terminalLf": "ensure exactly one"
+    },
+    "x509_csr": {
+      "filename": "vaultsmith-request.csr.pem",
+      "mediaType": "text/plain;charset=utf-8",
+      "terminalLf": "ensure exactly one"
+    }
+  },
+  "password": {
+    "defaultLength": 32,
+    "length": {
+      "minimum": 22,
+      "maximum": 128
+    },
+    "minimumPerClass": {
+      "minimum": 0,
+      "maximum": 32
+    },
+    "minimumEntropyBits": 128,
+    "classes": {
+      "lowercase": "abcdefghijklmnopqrstuvwxyz",
+      "uppercase": "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "digits": "0123456789",
+      "symbols": "!#$%&()*+,-./:;<=>?@[]^_{|}~"
+    },
+    "defaults": {
+      "lowercase": true,
+      "uppercase": true,
+      "digits": true,
+      "symbols": false,
+      "excludeAmbiguous": false
+    },
+    "minimumDefaults": {
+      "enabledClass": 1,
+      "disabledClass": 0
+    },
+    "ambiguousCharacters": "0O1lI|",
+    "acceptedSet": "All strings of the requested length over the enabled effective class union whose per-class counts meet or exceed every effective minimum",
+    "acceptedSetCardinality": "Exact arbitrary-precision integer N",
+    "entropyAcceptance": "N >= 2^128",
+    "samplingDistribution": "Uniform over the accepted set; every accepted string has probability exactly 1/N",
+    "boundedIntegerSampling": "CSPRNG rejection sampling; modulo reduction is forbidden",
+    "nonConformingSampler": "Force minima, fill from the union, then shuffle",
+    "callerProvidedAlphabet": false,
+    "callerProvidedExclusions": false,
+    "terminalLf": false
+  },
+  "token": {
+    "encodings": [
+      "base64url",
+      "hex"
+    ],
+    "defaultEncoding": "base64url",
+    "defaultBytes": 32,
+    "minimumBytes": 16,
+    "maximumBytes": 64,
+    "prefixes": false,
+    "terminalLf": false
+  },
+  "ssh": {
+    "algorithms": [
+      "ed25519",
+      "ecdsa_p256",
+      "rsa_3072",
+      "rsa_4096"
+    ],
+    "serverDefault": null,
+    "uiDefault": "ed25519"
+  },
+  "age": {
+    "algorithm": "x25519",
+    "callerSelectableAlgorithm": false
+  },
+  "x509": {
+    "algorithms": [
+      "ed25519",
+      "ecdsa_p256",
+      "ecdsa_p384",
+      "rsa_3072",
+      "rsa_4096"
+    ],
+    "serverDefault": null,
+    "uiDefault": "ecdsa_p256",
+    "privateKeyContainer": "PKCS#8",
+    "csrContainer": "PKCS#10",
+    "signatureAlgorithms": {
+      "ed25519": "pure_ed25519",
+      "ecdsa_p256": "ecdsa_sha256",
+      "ecdsa_p384": "ecdsa_sha384",
+      "rsa_3072": "rsa_pkcs1v15_sha256",
+      "rsa_4096": "rsa_pkcs1v15_sha256"
+    },
+    "subjectScalarFields": [
+      "commonName",
+      "serialNumber"
+    ],
+    "subjectArrayFields": [
+      "country",
+      "organization",
+      "organizationalUnit",
+      "locality",
+      "province",
+      "streetAddress",
+      "postalCode"
+    ],
+    "sanFields": [
+      "dnsNames",
+      "ipAddresses",
+      "emailAddresses",
+      "uris"
+    ],
+    "requiresCommonNameOrSan": true,
+    "maximumArraySubjectValues": 8,
+    "maximumSubjectValueUtf8Bytes": 256,
+    "countryPattern": "^[A-Z]{2}$",
+    "maximumTotalSans": 64,
+    "maximumDnsOrEmailAsciiBytes": 253,
+    "maximumUriUtf8Bytes": 2048,
+    "arbitraryExtensions": false,
+    "arbitraryAttributes": false,
+    "customOids": false,
+    "caIntegration": false
+  },
+  "rest": {
+    "method": "POST",
+    "path": "/api/v1/generate",
+    "maximumBodyBytes": 65536,
+    "successStatus": 200,
+    "cacheControl": "no-store",
+    "compression": false,
+    "etag": false,
+    "legacyOperationsApi": false,
+    "idempotencyKey": "reject",
+    "automaticRetry": false,
+    "errorCodesByStatus": {
+      "400": [
+        "invalid_request"
+      ],
+      "401": [
+        "unauthorized"
+      ],
+      "403": [
+        "forbidden",
+        "csrf_failed"
+      ],
+      "404": [
+        "not_found"
+      ],
+      "405": [
+        "method_not_allowed"
+      ],
+      "413": [
+        "invalid_request"
+      ],
+      "415": [
+        "invalid_request"
+      ],
+      "422": [
+        "operation_failed"
+      ],
+      "503": [
+        "not_ready",
+        "csrf_unavailable",
+        "temporarily_unavailable"
+      ]
+    }
+  },
+  "wireContract": {
+    "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+    "unknownProperties": {
+      "restRequests": "reject at every object",
+      "restResponses": "current producer emits only declared properties; published v1 client schemas allow and clients ignore unknown properties",
+      "mcpInputsAndOutputs": "reject at every object"
+    },
+    "explicitNull": "reject",
+    "defaultsApplyTo": "omitted optional request properties only",
+    "definitions": {
+      "profileId": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "passwordParameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "length": {
+            "type": "integer",
+            "minimum": 22,
+            "maximum": 128,
+            "default": 32
+          },
+          "lowercase": {
+            "type": "boolean",
+            "default": true
+          },
+          "uppercase": {
+            "type": "boolean",
+            "default": true
+          },
+          "digits": {
+            "type": "boolean",
+            "default": true
+          },
+          "symbols": {
+            "type": "boolean",
+            "default": false
+          },
+          "minLowercase": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 32,
+            "x-default": "1 when effective lowercase is true; otherwise 0"
+          },
+          "minUppercase": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 32,
+            "x-default": "1 when effective uppercase is true; otherwise 0"
+          },
+          "minDigits": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 32,
+            "x-default": "1 when effective digits is true; otherwise 0"
+          },
+          "minSymbols": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 32,
+            "x-default": "1 when effective symbols is true; otherwise 0"
+          },
+          "excludeAmbiguous": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "x-semanticConstraints": [
+          "At least one class is enabled",
+          "A non-zero minimum requires its corresponding class",
+          "The sum of effective minima does not exceed length",
+          "The exact accepted-set cardinality N is at least 2^128"
+        ]
+      },
+      "tokenParameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {
+          "encoding": {
+            "type": "string",
+            "enum": [
+              "base64url",
+              "hex"
+            ],
+            "default": "base64url"
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 16,
+            "maximum": 64,
+            "default": 32
+          }
+        }
+      },
+      "sshParameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "algorithm"
+        ],
+        "properties": {
+          "algorithm": {
+            "type": "string",
+            "enum": [
+              "ed25519",
+              "ecdsa_p256",
+              "rsa_3072",
+              "rsa_4096"
+            ]
+          }
+        }
+      },
+      "ageParameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "dnValue": {
+        "type": "string",
+        "minLength": 1,
+        "x-maxUtf8Bytes": 256,
+        "x-leadingOrTrailingUnicodeWhitespace": "reject",
+        "x-nulOrAsciiControl": "reject"
+      },
+      "dnArray": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "$ref": "#/wireContract/definitions/dnValue"
+        }
+      },
+      "countryArray": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^[A-Z]{2}$"
+        }
+      },
+      "dnsOrEmailSanArray": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 64,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "x-asciiOnly": true,
+          "x-maxAsciiBytes": 253,
+          "x-leadingOrTrailingUnicodeWhitespace": "reject",
+          "x-nulOrAsciiControl": "reject"
+        }
+      },
+      "ipSanArray": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 64,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "x-format": "canonical IPv4 or IPv6 text"
+        }
+      },
+      "uriSanArray": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 64,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "x-maxUtf8Bytes": 2048,
+          "x-format": "absolute URI with scheme",
+          "x-leadingOrTrailingUnicodeWhitespace": "reject",
+          "x-nulOrAsciiControl": "reject"
+        }
+      },
+      "x509Subject": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "required": [],
+        "properties": {
+          "commonName": {
+            "$ref": "#/wireContract/definitions/dnValue"
+          },
+          "serialNumber": {
+            "$ref": "#/wireContract/definitions/dnValue"
+          },
+          "country": {
+            "$ref": "#/wireContract/definitions/countryArray"
+          },
+          "organization": {
+            "$ref": "#/wireContract/definitions/dnArray"
+          },
+          "organizationalUnit": {
+            "$ref": "#/wireContract/definitions/dnArray"
+          },
+          "locality": {
+            "$ref": "#/wireContract/definitions/dnArray"
+          },
+          "province": {
+            "$ref": "#/wireContract/definitions/dnArray"
+          },
+          "streetAddress": {
+            "$ref": "#/wireContract/definitions/dnArray"
+          },
+          "postalCode": {
+            "$ref": "#/wireContract/definitions/dnArray"
+          }
+        }
+      },
+      "x509Sans": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "required": [],
+        "properties": {
+          "dnsNames": {
+            "$ref": "#/wireContract/definitions/dnsOrEmailSanArray",
+            "x-format": "ASCII DNS A-labels"
+          },
+          "ipAddresses": {
+            "$ref": "#/wireContract/definitions/ipSanArray"
+          },
+          "emailAddresses": {
+            "$ref": "#/wireContract/definitions/dnsOrEmailSanArray",
+            "x-format": "addr-spec without display name"
+          },
+          "uris": {
+            "$ref": "#/wireContract/definitions/uriSanArray"
+          }
+        },
+        "x-totalItemsMaximum": 64
+      },
+      "x509Parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "algorithm"
+        ],
+        "properties": {
+          "algorithm": {
+            "type": "string",
+            "enum": [
+              "ed25519",
+              "ecdsa_p256",
+              "ecdsa_p384",
+              "rsa_3072",
+              "rsa_4096"
+            ]
+          },
+          "subject": {
+            "$ref": "#/wireContract/definitions/x509Subject"
+          },
+          "sans": {
+            "$ref": "#/wireContract/definitions/x509Sans"
+          }
+        },
+        "x-requiresOneOf": [
+          "subject.commonName",
+          "at least one item in any sans array"
+        ],
+        "x-preservation": "Identity string bytes and array order are preserved; no case folding, IDNA conversion, Unicode normalization, sorting, or cross-field deduplication"
+      },
+      "passwordEffectiveParameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "length",
+          "lowercase",
+          "uppercase",
+          "digits",
+          "symbols",
+          "minLowercase",
+          "minUppercase",
+          "minDigits",
+          "minSymbols",
+          "excludeAmbiguous"
+        ],
+        "properties": {
+          "length": {
+            "$ref": "#/wireContract/definitions/passwordParameters/properties/length"
+          },
+          "lowercase": {
+            "$ref": "#/wireContract/definitions/passwordParameters/properties/lowercase"
+          },
+          "uppercase": {
+            "$ref": "#/wireContract/definitions/passwordParameters/properties/uppercase"
+          },
+          "digits": {
+            "$ref": "#/wireContract/definitions/passwordParameters/properties/digits"
+          },
+          "symbols": {
+            "$ref": "#/wireContract/definitions/passwordParameters/properties/symbols"
+          },
+          "minLowercase": {
+            "$ref": "#/wireContract/definitions/passwordParameters/properties/minLowercase"
+          },
+          "minUppercase": {
+            "$ref": "#/wireContract/definitions/passwordParameters/properties/minUppercase"
+          },
+          "minDigits": {
+            "$ref": "#/wireContract/definitions/passwordParameters/properties/minDigits"
+          },
+          "minSymbols": {
+            "$ref": "#/wireContract/definitions/passwordParameters/properties/minSymbols"
+          },
+          "excludeAmbiguous": {
+            "$ref": "#/wireContract/definitions/passwordParameters/properties/excludeAmbiguous"
+          }
+        }
+      },
+      "tokenEffectiveParameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "encoding",
+          "bytes"
+        ],
+        "properties": {
+          "encoding": {
+            "$ref": "#/wireContract/definitions/tokenParameters/properties/encoding"
+          },
+          "bytes": {
+            "$ref": "#/wireContract/definitions/tokenParameters/properties/bytes"
+          }
+        }
+      },
+      "secretPassword": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "format",
+          "vaultText"
+        ],
+        "properties": {
+          "format": {
+            "const": "password_ascii"
+          },
+          "vaultText": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "secretToken": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "format",
+          "vaultText"
+        ],
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "token_base64url",
+              "token_hex"
+            ]
+          },
+          "vaultText": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "secretSsh": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "format",
+          "vaultText"
+        ],
+        "properties": {
+          "format": {
+            "const": "openssh_private_key"
+          },
+          "vaultText": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "secretAge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "format",
+          "vaultText"
+        ],
+        "properties": {
+          "format": {
+            "const": "age_x25519_identity"
+          },
+          "vaultText": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "secretX509": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "format",
+          "vaultText"
+        ],
+        "properties": {
+          "format": {
+            "const": "pkcs8_private_key_pem"
+          },
+          "vaultText": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "publicSsh": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "format",
+          "authorizedKey",
+          "fingerprint"
+        ],
+        "properties": {
+          "format": {
+            "const": "openssh_authorized_key"
+          },
+          "authorizedKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^SHA256:[A-Za-z0-9+/]+$"
+          }
+        }
+      },
+      "publicAge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "format",
+          "recipient"
+        ],
+        "properties": {
+          "format": {
+            "const": "age_x25519_recipient"
+          },
+          "recipient": {
+            "type": "string",
+            "pattern": "^age1[0-9a-z]+$"
+          }
+        }
+      },
+      "publicX509": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "format",
+          "csrPem",
+          "fingerprint"
+        ],
+        "properties": {
+          "format": {
+            "const": "pkcs10_csr_pem"
+          },
+          "csrPem": {
+            "type": "string",
+            "minLength": 1,
+            "x-format": "CERTIFICATE REQUEST PEM with exactly one terminal LF"
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^SHA256:[A-Za-z0-9+/]+$"
+          }
+        }
+      }
+    },
+    "restRequests": {
+      "password": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "profileId",
+          "parameters"
+        ],
+        "properties": {
+          "kind": {
+            "const": "password"
+          },
+          "profileId": {
+            "$ref": "#/wireContract/definitions/profileId"
+          },
+          "parameters": {
+            "$ref": "#/wireContract/definitions/passwordParameters"
+          }
+        }
+      },
+      "token": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "profileId",
+          "parameters"
+        ],
+        "properties": {
+          "kind": {
+            "const": "token"
+          },
+          "profileId": {
+            "$ref": "#/wireContract/definitions/profileId"
+          },
+          "parameters": {
+            "$ref": "#/wireContract/definitions/tokenParameters"
+          }
+        }
+      },
+      "ssh_keypair": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "profileId",
+          "parameters"
+        ],
+        "properties": {
+          "kind": {
+            "const": "ssh_keypair"
+          },
+          "profileId": {
+            "$ref": "#/wireContract/definitions/profileId"
+          },
+          "parameters": {
+            "$ref": "#/wireContract/definitions/sshParameters"
+          }
+        }
+      },
+      "age_identity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "profileId",
+          "parameters"
+        ],
+        "properties": {
+          "kind": {
+            "const": "age_identity"
+          },
+          "profileId": {
+            "$ref": "#/wireContract/definitions/profileId"
+          },
+          "parameters": {
+            "$ref": "#/wireContract/definitions/ageParameters"
+          }
+        }
+      },
+      "x509_csr": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "profileId",
+          "parameters"
+        ],
+        "properties": {
+          "kind": {
+            "const": "x509_csr"
+          },
+          "profileId": {
+            "$ref": "#/wireContract/definitions/profileId"
+          },
+          "parameters": {
+            "$ref": "#/wireContract/definitions/x509Parameters"
+          }
+        }
+      }
+    },
+    "restRequestUnion": {
+      "oneOf": [
+        {
+          "$ref": "#/wireContract/restRequests/password"
+        },
+        {
+          "$ref": "#/wireContract/restRequests/token"
+        },
+        {
+          "$ref": "#/wireContract/restRequests/ssh_keypair"
+        },
+        {
+          "$ref": "#/wireContract/restRequests/age_identity"
+        },
+        {
+          "$ref": "#/wireContract/restRequests/x509_csr"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "kind",
+        "mapping": {
+          "password": "#/wireContract/restRequests/password",
+          "token": "#/wireContract/restRequests/token",
+          "ssh_keypair": "#/wireContract/restRequests/ssh_keypair",
+          "age_identity": "#/wireContract/restRequests/age_identity",
+          "x509_csr": "#/wireContract/restRequests/x509_csr"
+        }
+      }
+    },
+    "currentProducerResponses": {
+      "password": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "profileId",
+          "effectiveParameters",
+          "secret"
+        ],
+        "properties": {
+          "kind": {
+            "const": "password"
+          },
+          "profileId": {
+            "$ref": "#/wireContract/definitions/profileId"
+          },
+          "effectiveParameters": {
+            "$ref": "#/wireContract/definitions/passwordEffectiveParameters"
+          },
+          "secret": {
+            "$ref": "#/wireContract/definitions/secretPassword"
+          }
+        }
+      },
+      "token": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "profileId",
+          "effectiveParameters",
+          "secret"
+        ],
+        "properties": {
+          "kind": {
+            "const": "token"
+          },
+          "profileId": {
+            "$ref": "#/wireContract/definitions/profileId"
+          },
+          "effectiveParameters": {
+            "$ref": "#/wireContract/definitions/tokenEffectiveParameters"
+          },
+          "secret": {
+            "$ref": "#/wireContract/definitions/secretToken"
+          }
+        },
+        "x-secretFormatByEncoding": {
+          "base64url": "token_base64url",
+          "hex": "token_hex"
+        }
+      },
+      "ssh_keypair": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "profileId",
+          "effectiveParameters",
+          "secret",
+          "public"
+        ],
+        "properties": {
+          "kind": {
+            "const": "ssh_keypair"
+          },
+          "profileId": {
+            "$ref": "#/wireContract/definitions/profileId"
+          },
+          "effectiveParameters": {
+            "$ref": "#/wireContract/definitions/sshParameters"
+          },
+          "secret": {
+            "$ref": "#/wireContract/definitions/secretSsh"
+          },
+          "public": {
+            "$ref": "#/wireContract/definitions/publicSsh"
+          }
+        }
+      },
+      "age_identity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "profileId",
+          "effectiveParameters",
+          "secret",
+          "public"
+        ],
+        "properties": {
+          "kind": {
+            "const": "age_identity"
+          },
+          "profileId": {
+            "$ref": "#/wireContract/definitions/profileId"
+          },
+          "effectiveParameters": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "algorithm"
+            ],
+            "properties": {
+              "algorithm": {
+                "const": "x25519"
+              }
+            }
+          },
+          "secret": {
+            "$ref": "#/wireContract/definitions/secretAge"
+          },
+          "public": {
+            "$ref": "#/wireContract/definitions/publicAge"
+          }
+        }
+      },
+      "x509_csr": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "profileId",
+          "effectiveParameters",
+          "secret",
+          "public"
+        ],
+        "properties": {
+          "kind": {
+            "const": "x509_csr"
+          },
+          "profileId": {
+            "$ref": "#/wireContract/definitions/profileId"
+          },
+          "effectiveParameters": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "algorithm"
+            ],
+            "properties": {
+              "algorithm": {
+                "$ref": "#/wireContract/definitions/x509Parameters/properties/algorithm"
+              }
+            }
+          },
+          "secret": {
+            "$ref": "#/wireContract/definitions/secretX509"
+          },
+          "public": {
+            "$ref": "#/wireContract/definitions/publicX509"
+          }
+        }
+      }
+    },
+    "currentProducerResponseUnion": {
+      "oneOf": [
+        {
+          "$ref": "#/wireContract/currentProducerResponses/password"
+        },
+        {
+          "$ref": "#/wireContract/currentProducerResponses/token"
+        },
+        {
+          "$ref": "#/wireContract/currentProducerResponses/ssh_keypair"
+        },
+        {
+          "$ref": "#/wireContract/currentProducerResponses/age_identity"
+        },
+        {
+          "$ref": "#/wireContract/currentProducerResponses/x509_csr"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "kind",
+        "mapping": {
+          "password": "#/wireContract/currentProducerResponses/password",
+          "token": "#/wireContract/currentProducerResponses/token",
+          "ssh_keypair": "#/wireContract/currentProducerResponses/ssh_keypair",
+          "age_identity": "#/wireContract/currentProducerResponses/age_identity",
+          "x509_csr": "#/wireContract/currentProducerResponses/x509_csr"
+        }
+      }
+    },
+    "restResponseCompatibility": {
+      "knownShapes": "#/wireContract/currentProducerResponses",
+      "publishedOpenApiAdditionalProperties": "allowed at every response object",
+      "clientUnknownProperties": "ignore",
+      "currentServerEmission": "declared properties only"
+    },
+    "mcp": {
+      "discoveryPlacement": "append after every pre-existing tool without changing existing relative order",
+      "maximumHttpBodyBytes": 8388608,
+      "toolOrder": [
+        "generate_password",
+        "generate_token",
+        "generate_ssh_keypair",
+        "generate_age_identity",
+        "generate_x509_csr"
+      ],
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "resultDelivery": {
+        "structuredContent": "exactly one corresponding REST response object",
+        "textContent": "Generated material is available in structuredContent.",
+        "textContentSensitiveValues": false,
+        "resultType": "complete",
+        "ttlMs": 0,
+        "cacheScope": "private"
+      },
+      "tools": {
+        "generate_password": {
+          "input": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "profileId"
+            ],
+            "properties": {
+              "profileId": {
+                "$ref": "#/wireContract/definitions/profileId"
+              },
+              "length": {
+                "$ref": "#/wireContract/definitions/passwordParameters/properties/length"
+              },
+              "lowercase": {
+                "$ref": "#/wireContract/definitions/passwordParameters/properties/lowercase"
+              },
+              "uppercase": {
+                "$ref": "#/wireContract/definitions/passwordParameters/properties/uppercase"
+              },
+              "digits": {
+                "$ref": "#/wireContract/definitions/passwordParameters/properties/digits"
+              },
+              "symbols": {
+                "$ref": "#/wireContract/definitions/passwordParameters/properties/symbols"
+              },
+              "minLowercase": {
+                "$ref": "#/wireContract/definitions/passwordParameters/properties/minLowercase"
+              },
+              "minUppercase": {
+                "$ref": "#/wireContract/definitions/passwordParameters/properties/minUppercase"
+              },
+              "minDigits": {
+                "$ref": "#/wireContract/definitions/passwordParameters/properties/minDigits"
+              },
+              "minSymbols": {
+                "$ref": "#/wireContract/definitions/passwordParameters/properties/minSymbols"
+              },
+              "excludeAmbiguous": {
+                "$ref": "#/wireContract/definitions/passwordParameters/properties/excludeAmbiguous"
+              }
+            },
+            "x-semanticConstraintsRef": "#/wireContract/definitions/passwordParameters/x-semanticConstraints"
+          },
+          "output": {
+            "$ref": "#/wireContract/currentProducerResponses/password"
+          }
+        },
+        "generate_token": {
+          "input": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "profileId"
+            ],
+            "properties": {
+              "profileId": {
+                "$ref": "#/wireContract/definitions/profileId"
+              },
+              "encoding": {
+                "$ref": "#/wireContract/definitions/tokenParameters/properties/encoding"
+              },
+              "bytes": {
+                "$ref": "#/wireContract/definitions/tokenParameters/properties/bytes"
+              }
+            }
+          },
+          "output": {
+            "$ref": "#/wireContract/currentProducerResponses/token"
+          }
+        },
+        "generate_ssh_keypair": {
+          "input": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "profileId",
+              "algorithm"
+            ],
+            "properties": {
+              "profileId": {
+                "$ref": "#/wireContract/definitions/profileId"
+              },
+              "algorithm": {
+                "$ref": "#/wireContract/definitions/sshParameters/properties/algorithm"
+              }
+            }
+          },
+          "output": {
+            "$ref": "#/wireContract/currentProducerResponses/ssh_keypair"
+          }
+        },
+        "generate_age_identity": {
+          "input": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "profileId"
+            ],
+            "properties": {
+              "profileId": {
+                "$ref": "#/wireContract/definitions/profileId"
+              }
+            }
+          },
+          "output": {
+            "$ref": "#/wireContract/currentProducerResponses/age_identity"
+          }
+        },
+        "generate_x509_csr": {
+          "input": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "profileId",
+              "algorithm"
+            ],
+            "properties": {
+              "profileId": {
+                "$ref": "#/wireContract/definitions/profileId"
+              },
+              "algorithm": {
+                "$ref": "#/wireContract/definitions/x509Parameters/properties/algorithm"
+              },
+              "subject": {
+                "$ref": "#/wireContract/definitions/x509Subject"
+              },
+              "sans": {
+                "$ref": "#/wireContract/definitions/x509Sans"
+              }
+            },
+            "x-requiresOneOf": [
+              "subject.commonName",
+              "at least one item in any sans array"
+            ]
+          },
+          "output": {
+            "$ref": "#/wireContract/currentProducerResponses/x509_csr"
+          }
+        }
+      }
+    }
+  },
+  "authorization": {
+    "bearerScope": "vaultsmith.encrypt",
+    "profileAction": "encrypt",
+    "newScope": false,
+    "availableInAuthModeOff": true
+  },
+  "fixturePolicy": {
+    "productionKeysAllowed": false,
+    "realIdentitiesAllowed": false,
+    "deterministicRandomnessAllowedOnlyInTests": true,
+    "compareRandomizedCiphertextEquality": false,
+    "requiredFixtureIds": [
+      "password-default",
+      "password-entropy-floor",
+      "token-base64url-16",
+      "token-hex-64",
+      "ssh-ed25519",
+      "ssh-ecdsa-p256",
+      "ssh-rsa-3072",
+      "ssh-rsa-4096",
+      "age-x25519",
+      "x509-ed25519-cn",
+      "x509-ecdsa-p256-san",
+      "x509-ecdsa-p384-mixed",
+      "x509-rsa-3072-cn",
+      "x509-rsa-4096-san"
+    ]
+  }
+}
