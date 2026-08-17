@@ -146,7 +146,7 @@ func TestMCPDiscoverAndListUseCompletePrivateResults(t *testing.T) {
 				for _, tool := range tools {
 					names = append(names, tool.(map[string]any)["name"].(string))
 				}
-				if strings.Join(names, ",") != "list_profiles,encrypt,decrypt,rotate" {
+				if strings.Join(names, ",") != "list_profiles,encrypt,decrypt,rotate,generate_password,generate_token,generate_ssh_keypair,generate_age_identity,generate_x509_csr" {
 					t.Fatalf("tool order = %#v", names)
 				}
 			}
@@ -832,9 +832,10 @@ func TestMCPBearerToolSurfaceFiltersEachRequiredScope(t *testing.T) {
 		want   []string
 	}{
 		{name: "profile read only", scopes: []string{vaultservice.ScopeProfileRead}, want: []string{"list_profiles"}},
-		{name: "profile read and encrypt", scopes: []string{vaultservice.ScopeProfileRead, vaultservice.ScopeEncrypt}, want: []string{"list_profiles", "encrypt"}},
+		{name: "profile read and encrypt", scopes: []string{vaultservice.ScopeProfileRead, vaultservice.ScopeEncrypt}, want: []string{"list_profiles", "encrypt", "generate_password", "generate_token", "generate_ssh_keypair", "generate_age_identity", "generate_x509_csr"}},
 		{name: "profile read decrypt and rotate", scopes: []string{vaultservice.ScopeProfileRead, vaultservice.ScopeDecrypt, vaultservice.ScopeRotate}, want: []string{"list_profiles", "decrypt", "rotate"}},
 		{name: "profile read and verify", scopes: []string{vaultservice.ScopeProfileRead, vaultservice.ScopeAttestationVerify}, want: []string{"list_profiles", "verify_rotation_attestation"}},
+		{name: "all visible pre-existing tools precede Generate", scopes: []string{vaultservice.ScopeProfileRead, vaultservice.ScopeEncrypt, vaultservice.ScopeAttestationVerify}, want: []string{"list_profiles", "encrypt", "verify_rotation_attestation", "generate_password", "generate_token", "generate_ssh_keypair", "generate_age_identity", "generate_x509_csr"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

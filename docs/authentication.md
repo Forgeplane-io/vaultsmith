@@ -24,6 +24,7 @@ Use a Bearer access token for canonical REST and MCP machine clients:
 - `POST /api/v1/profiles/{profileId}/encrypt`
 - `POST /api/v1/profiles/{profileId}/decrypt`
 - `POST /api/v1/rotations`
+- `POST /api/v1/generate`
 - `POST /api/v1/attestations/verify`
 - `POST /mcp` when enabled
 
@@ -68,12 +69,12 @@ Scopes are case-sensitive.
 | Scope | REST use | MCP use |
 | --- | --- | --- |
 | `vaultsmith.profile.read` | List visible profiles | `server/discover`, `tools/list`, `list_profiles` |
-| `vaultsmith.encrypt` | Encrypt | `encrypt` |
+| `vaultsmith.encrypt` | Encrypt or Generate into a destination profile | `encrypt`, `generate_password`, `generate_token`, `generate_ssh_keypair`, `generate_age_identity`, `generate_x509_csr` |
 | `vaultsmith.decrypt` | Decrypt | `decrypt` |
 | `vaultsmith.rotate` | Rotate between profiles | `rotate` |
 | `vaultsmith.attestation.verify` | Verify a rotation attestation | `verify_rotation_attestation` |
 
-A scope permits a class of operation. It does not grant access to a profile. Casbin must also permit the verified caller's groups to use the requested profile. Rotation requires decrypt policy on the source and encrypt policy on the destination.
+A scope permits a class of operation. It does not grant access to a profile. Casbin must also permit the verified caller's groups to use the requested profile. Rotation requires decrypt policy on the source and encrypt policy on the destination. Generate adds no scope or per-kind policy: REST and direct MCP tool calls require `vaultsmith.encrypt` and encrypt policy on the destination profile. `vaultsmith.profile.read` is needed separately to browse profiles or list MCP tools.
 
 A missing fixed scope returns `403` with an `insufficient_scope` Bearer challenge before Vaultsmith reads the request body. A missing Casbin grant returns a generic `403 forbidden` without an insufficient-scope challenge because adding a scope cannot satisfy policy.
 
@@ -130,7 +131,7 @@ Providers differ in how they express `resource`, audience mappers, service-accou
 
 ## `auth.mode: off`
 
-Off mode removes authentication, sessions, CSRF, token validation, and Casbin policy checks. Every caller that can reach Vaultsmith can list profiles, encrypt, decrypt, rotate, and use enabled MCP tools. Proofs are controlled separately by `proofs.enabled`: when disabled, no keyring Secret is required and attestation issuance and verification return stable feature-unavailable responses. Normal encrypt, decrypt, and rotate behavior remains available.
+Off mode removes authentication, sessions, CSRF, token validation, and Casbin policy checks. Every caller that can reach Vaultsmith can list profiles, encrypt, decrypt, rotate, Generate every supported material kind, and use enabled MCP tools. Proofs are controlled separately by `proofs.enabled`: when disabled, no keyring Secret is required and attestation issuance and verification return stable feature-unavailable responses. Normal encrypt, decrypt, rotate, and Generate behavior remains available.
 
 Consequences:
 

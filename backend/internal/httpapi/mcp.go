@@ -114,8 +114,21 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	verifyCall := headerMethod == "tools/call" && headerToolName == "verify_rotation_attestation"
+	generateCall := headerMethod == "tools/call" && isMCPGenerateTool(headerToolName)
 	var verifyPreflightErr error
-	if actor.Kind() == caller.KindBearer {
+	if generateCall {
+		generatePreflightErr := h.service.PreflightGenerate(r.Context(), actor)
+		if generatePreflightErr != nil {
+			if actor.Kind() == caller.KindBearer && vaultservice.HasCode(generatePreflightErr, vaultservice.CodeForbidden) {
+				writeBearerChallenge(w, http.StatusForbidden, "insufficient_scope", vaultservice.ScopeEncrypt, protectedResourceMetadataURL(h.authConfig))
+			} else if errors.Is(generatePreflightErr, context.Canceled) || errors.Is(generatePreflightErr, context.DeadlineExceeded) {
+				writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
+			} else {
+				writeServiceError(w, generatePreflightErr)
+			}
+			return
+		}
+	} else if actor.Kind() == caller.KindBearer {
 		if verifyCall {
 			verifyPreflightErr = h.service.PreflightAttestationVerify(r.Context(), actor)
 		} else if (headerMethod == "server/discover" || headerMethod == "tools/list") && actor.HasScope(vaultservice.ScopeAttestationVerify) {
@@ -178,7 +191,11 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 		lease, err = h.service.Admission().TryAcquire(r.Context())
 		if err != nil {
 			if errors.Is(err, vaultservice.ErrAdmissionSaturated) {
-				writeAdmissionSaturated(w, h.service.Admission())
+				if generateCall {
+					writeGenerateAdmissionSaturated(w, h.service.Admission())
+				} else {
+					writeAdmissionSaturated(w, h.service.Admission())
+				}
 			} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
 			} else {
@@ -414,6 +431,8 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 		}
 		verifyOutcome = "success"
 		mcpWriteResult(w, id, mcpCallResult(verifyAttestationResponse{Valid: true, Attestation: h.safeClaimsResponse(request.Attestation, claims)}, false))
+	case "generate_password", "generate_token", "generate_ssh_keypair", "generate_age_identity", "generate_x509_csr":
+		h.serveMCPGenerateTool(w, id, actor, leaseContext, call.Name, call.Arguments)
 	case "encrypt", "decrypt", "rotate":
 		command, response, ok := mcpCommand(call.Name, arguments)
 		if !ok {
@@ -835,6 +854,9 @@ func decodeMCPCallParams(params json.RawMessage) (mcp.CallToolParamsRaw, map[str
 		arguments, err = decodeMCPMixedArguments(argsRaw, map[string]struct{}{"sourceProfileId": {}, "destinationProfileId": {}, "vaultText": {}}, map[string]struct{}{"attestation": {}})
 	case "verify_rotation_attestation":
 		arguments, err = decodeMCPMixedArguments(argsRaw, map[string]struct{}{"attestation": {}, "inputVaultText": {}, "outputVaultText": {}}, map[string]struct{}{"attestation": {}, "expectedBinding": {}})
+	case "generate_password", "generate_token", "generate_ssh_keypair", "generate_age_identity", "generate_x509_csr":
+		// Generate owns a typed flat decoder so booleans, integers, nested X.509
+		// objects, and omitted defaults are not coerced through string arguments.
 	default:
 		return mcp.CallToolParamsRaw{Name: name, Arguments: argsRaw}, nil, errors.New("unknown tool")
 	}
@@ -1001,7 +1023,7 @@ func mcpWriteServiceUnavailable(w http.ResponseWriter, err error) {
 }
 
 func (h *Handler) mcpTools(actor caller.Caller) []*mcp.Tool {
-	tools := make([]*mcp.Tool, 0, 5)
+	tools := make([]*mcp.Tool, 0, 10)
 	bindingSchema := mcpObjectSchema(nil, map[string]any{
 		"repository": mcpStringSchema(), "revision": mcpStringSchema(), "path": mcpStringSchema(), "selector": mcpStringSchema(),
 	})
@@ -1063,6 +1085,9 @@ func (h *Handler) mcpTools(actor caller.Caller) []*mcp.Tool {
 			}),
 		})
 	}
+	if mcpToolVisible(actor, encryptScope) {
+		tools = append(tools, mcpGenerateTools()...)
+	}
 	return tools
 }
 
@@ -1105,6 +1130,8 @@ func mcpHeaderRequiredScope(method, toolName string) string {
 		case "encrypt":
 			scope, _ := vaultservice.RequiredScope(vaultservice.OperationEncrypt)
 			return scope
+		case "generate_password", "generate_token", "generate_ssh_keypair", "generate_age_identity", "generate_x509_csr":
+			return vaultservice.ScopeEncrypt
 		case "decrypt":
 			scope, _ := vaultservice.RequiredScope(vaultservice.OperationDecrypt)
 			return scope

@@ -406,6 +406,9 @@ func preflightMCPBearerRoute(w http.ResponseWriter, r *http.Request, next http.H
 	if headers.method == "tools/call" && headers.toolName == "verify_rotation_attestation" {
 		scope = vaultservice.ScopeAttestationVerify
 		err = handler.service.PreflightAttestationVerify(r.Context(), actor)
+	} else if headers.method == "tools/call" && isMCPGenerateTool(headers.toolName) {
+		scope = vaultservice.ScopeEncrypt
+		err = handler.service.PreflightGenerate(r.Context(), actor)
 	} else if scope == vaultservice.ScopeProfileRead {
 		err = handler.preflightProfiles(r.Context(), actor)
 	} else {
