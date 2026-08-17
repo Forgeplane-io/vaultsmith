@@ -10,6 +10,22 @@ All notable changes to Vaultsmith are documented here. Release Please maintains 
 - Proofs use `PUBLIC_BASE_URL` as the issuer and reload a valid changed keyring without restart. A malformed replacement keeps the previous valid keyring active.
 - When proofs are disabled, normal encrypt, decrypt, and rotate behavior remains available and no signing Secret is required.
 
+## [0.7.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.6.0...v0.7.0) (2026-08-17)
+
+
+### Features
+
+* **generate:** add MCP tools and operator UI ([62bf648](https://github.com/Forgeplane-io/vaultsmith/commit/62bf64887f0b97e878f2e5b24474c3933a32ee27))
+* **generate:** add private material generator core ([bfaceb8](https://github.com/Forgeplane-io/vaultsmith/commit/bfaceb8566c8221515736df3e6dfdcd7cce9098f))
+* **generate:** add sealed generation service and API ([206714b](https://github.com/Forgeplane-io/vaultsmith/commit/206714b4f5d1ad5876b34a3829410684dfc31e7a))
+
+
+### Bug Fixes
+
+* **attestation:** qualify Helm and operations ([21fe4e4](https://github.com/Forgeplane-io/vaultsmith/commit/21fe4e45b8cbb45e15d08b5b39258b89d3b76ae4))
+* **ui:** keep generate settings compact ([bf03d98](https://github.com/Forgeplane-io/vaultsmith/commit/bf03d98a82c71d073dbcb8f0ac58cf539488c417))
+* **ui:** sync embedded frontend entrypoint ([b1c887a](https://github.com/Forgeplane-io/vaultsmith/commit/b1c887a3630615673d155696f5708abb850b773c))
+
 ## [0.6.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.5.0...v0.6.0) (2026-08-15)
 
 
