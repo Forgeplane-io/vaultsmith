@@ -78,6 +78,22 @@ printf '%s' 'synthetic plaintext' \
 
 Encryption is randomized. **Do not retry it automatically.** A timeout can occur after the server completed the operation. Let an operator decide whether another ciphertext is acceptable.
 
+## Generate sealed private material
+
+`POST /api/v1/generate` creates one private value in memory, seals its exact serialization with the selected profile, and returns the resulting Vault text plus only the permitted public companion. It never returns private plaintext and has no reveal, replay, recovery, or server-side storage API.
+
+REST requests contain `kind`, `profileId`, and `parameters`. MCP exposes the same operation as five typed tools whose arguments are flat and omit the REST `kind` and `parameters` wrapper:
+
+| REST kind | MCP tool | Parameters | Public companion |
+| --- | --- | --- | --- |
+| `password` | `generate_password` | Optional bounded character-class settings; defaults to 32 alphanumeric characters | None |
+| `token` | `generate_token` | Optional `encoding` and `bytes`; defaults to 32-byte base64url | None |
+| `ssh_keypair` | `generate_ssh_keypair` | Required `algorithm` | Authorized key and fingerprint |
+| `age_identity` | `generate_age_identity` | Empty REST object; no MCP arguments beyond `profileId` | age X25519 recipient |
+| `x509_csr` | `generate_x509_csr` | Required `algorithm`, with optional typed `subject` and `sans`; common name or at least one SAN is required | PKCS#10 CSR and SPKI fingerprint |
+
+The `secret.vaultText` response field contains the private material inside Ansible Vault ciphertext. Protect it like other Vault text. Generate is randomized and non-idempotent: do not send `Idempotency-Key`, do not retry an ambiguous or failed invocation automatically, and require an operator to decide whether generating a different value is acceptable.
+
 ## Decrypt a Vault file
 
 Use a synthetic or protected local file. The response contains plaintext.
@@ -215,6 +231,28 @@ jq -cn \
 
 The literal synthetic plaintext is visible in this example command by design. For a real value, read standard input and use `jq -Rs` as in the REST encrypt example.
 
+### Call `generate_password`
+
+This call uses the documented password defaults and writes the MCP response to a file created under the restrictive `umask` from the safe shell setup. The response contains Vault ciphertext in `structuredContent`, never the generated password plaintext; its sole text content block is the fixed generic notice `Generated material is available in structuredContent.`
+
+```sh
+jq -cn \
+  --arg profile "$PROFILE_ID" \
+  '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"generate_password",arguments:{profileId:$profile},_meta:{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' \
+  | curl --fail-with-body --silent --show-error \
+      --config "$vaultsmith_curl_config" \
+      --header 'Accept: application/json, text/event-stream' \
+      --header 'Content-Type: application/json' \
+      --header 'MCP-Protocol-Version: 2026-07-28' \
+      --header 'Mcp-Method: tools/call' \
+      --header 'Mcp-Name: generate_password' \
+      --data-binary @- \
+      "$VAULTSMITH_URL/mcp" \
+  >generated-password-mcp-result.json
+```
+
+The five Generate tools require `vaultsmith.encrypt` and destination-profile encrypt policy in native mode. A direct tool call does not also require `vaultsmith.profile.read`; that scope is required to list tools and browse profiles. Do not retry a failed or ambiguous Generate call automatically.
+
 ### Call `verify_rotation_attestation`
 
 The MCP verifier accepts the attestation, input envelope, output envelope, and
@@ -250,11 +288,13 @@ disabled, the tool returns a stable feature-unavailable result.
 | --- | ---: | --- |
 | Plaintext | 1 MiB of UTF-8 bytes | `413` / `invalid_request` or an MCP tool failure |
 | Vault text | 5 MiB of UTF-8 bytes | `413` / `invalid_request` or an MCP tool failure |
-| REST or MCP HTTP body | 8 MiB | `413` before decoding |
+| Generate REST HTTP body | 64 KiB | `413` before decoding |
+| Generate MCP HTTP body | 8 MiB | `413` before decoding |
+| Encrypt, decrypt, or rotate REST or MCP HTTP body | 8 MiB | `413` before decoding |
 | Application request time | 30 seconds | `503 temporarily_unavailable`; the server cancels downstream work |
-| Runtime operation admission | `min(GOMAXPROCS, 16)` | `503 temporarily_unavailable`, `Retry-After: 1`, before reading the body |
+| Runtime operation admission | `min(GOMAXPROCS, 16)` | `503 temporarily_unavailable` before reading the body; Generate omits `Retry-After`, while other operations send `Retry-After: 1` |
 
-Limits count bytes, not Unicode characters. Bodies and operation strings must be valid UTF-8. Compressed request bodies are not accepted.
+Limits count bytes, not Unicode characters. Bodies and operation strings must be valid UTF-8. Compressed request bodies are not accepted. The 64 KiB ceiling applies only to the canonical REST Generate request; Generate over MCP retains the 8 MiB JSON-RPC body ceiling and the same bounded field validation.
 
 The admission cap of 16 is the compiled ceiling selected against the exact 2 GiB Linux/amd64 release benchmark. The running process can use a smaller capacity when `GOMAXPROCS` is smaller. Operators can inspect `/metrics` for capacity, current use, and cumulative saturation rejections. To revise the ceiling, rerun the benchmark matrix and commit a new receipt before changing the constant.
 
@@ -296,7 +336,7 @@ Stable REST codes include:
 | 413 | `invalid_request` | Reduce the value or body below the stated byte limit. |
 | 415 | `invalid_request` | Send identity-encoded `application/json`. |
 | 422 | `operation_failed` | Treat the submitted value or crypto operation as failed. |
-| 503 | `not_ready` or `temporarily_unavailable` | Use bounded operator-approved retry. Do not automatically retry encrypt or rotate. |
+| 503 | `not_ready` or `temporarily_unavailable` | Use bounded operator-approved retry only for retryable operations. Do not automatically retry encrypt, rotate, or Generate; Generate does not emit `Retry-After`. |
 
 MCP JSON-RPC transport errors use standard parse/request/method/params codes plus:
 

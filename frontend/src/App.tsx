@@ -25,6 +25,7 @@ import {
 } from './ansibleSnippet'
 import { normalizeVaultPaste } from './pasteHandling'
 import { inspectVaultFormat, type VaultFormatInspection } from './vaultFormat'
+import GenerateWorkbench from './GenerateWorkbench'
 import './styles.css'
 
 type CopyFeedback = {
@@ -54,6 +55,7 @@ export default function App() {
   const [destinationProfileId, setDestinationProfileId] = useState('')
   const [mode, setMode] = useState<OperationMode>('encrypt')
   const [verifyMode, setVerifyMode] = useState(false)
+  const [generateMode, setGenerateMode] = useState(false)
   const [issueAttestation, setIssueAttestation] = useState(false)
   const [attestation, setAttestation] = useState<SignedAttestation | null>(null)
   const [attestationBinding, setAttestationBinding] = useState<BindingFields>(emptyBindingFields)
@@ -261,6 +263,8 @@ export default function App() {
   const outputName = mode === 'encrypt' ? 'Encrypted value' : mode === 'decrypt' ? 'Decrypted value' : 'Re-keyed value'
   const modeGuidance = verifyMode
     ? 'Supply a flattened attestation and the original and rotated Vault values to verify the attested rotation statement.'
+    : generateMode
+      ? 'Choose private material and an environment. Vaultsmith returns sealed Vault text and only the defined public companion.'
     : mode === 'encrypt'
       ? 'Choose an environment, then enter a value to encrypt.'
       : mode === 'decrypt'
@@ -302,6 +306,8 @@ export default function App() {
     : 'input-byte-count'
   const heading = verifyMode
     ? 'Verify a rotation attestation'
+    : generateMode
+      ? 'Generate sealed private material'
     : mode === 'encrypt'
       ? 'Encrypt a value'
       : mode === 'decrypt'
@@ -326,6 +332,7 @@ export default function App() {
 
   function changeMode(nextMode: OperationMode) {
     if (signingOut) return
+    setGenerateMode(false)
     leaveVerifyMode()
     const retainedInput = Boolean(value) && nextMode !== mode
     const nextProfiles = profilesForMode(profiles, nextMode)
@@ -344,8 +351,19 @@ export default function App() {
 
   function changeVerifyMode() {
     if (signingOut || !proofAvailable) return
+    setGenerateMode(false)
     setVerifyMode(true)
     setVerificationResult(null)
+    setError('')
+    setStatus('')
+    setModeNotice('')
+  }
+
+  function changeGenerateMode() {
+    if (signingOut || !profileSnapshotReady || !encryptAvailable) return
+    clearVerificationState()
+    setVerifyMode(false)
+    setGenerateMode(true)
     setError('')
     setStatus('')
     setModeNotice('')
@@ -767,6 +785,7 @@ export default function App() {
     setExpectedBinding(emptyBindingFields())
     setVerificationResult(null)
     setVerifyMode(false)
+    setGenerateMode(false)
   }
 
   async function handleLogout() {
@@ -837,8 +856,9 @@ export default function App() {
     setModeNotice('')
   }
 
-  function renderModeSwitch(verificationView: boolean) {
-    const operationDisabled = (available: boolean) => verificationView
+  function renderModeSwitch(activeView: 'operation' | 'verify' | 'generate') {
+    const specialView = activeView !== 'operation'
+    const operationDisabled = (available: boolean) => specialView
       ? workbenchLocked
       : workbenchLocked || !profileSnapshotReady || !available
 
@@ -846,9 +866,9 @@ export default function App() {
       <div className="mode-switch">
         <button
           type="button"
-          className={!verificationView && mode === 'encrypt' ? 'mode-button active' : 'mode-button'}
+          className={!specialView && mode === 'encrypt' ? 'mode-button active' : 'mode-button'}
           aria-label="Set encrypt mode"
-          aria-pressed={!verificationView && mode === 'encrypt'}
+          aria-pressed={!specialView && mode === 'encrypt'}
           onClick={() => changeMode('encrypt')}
           disabled={operationDisabled(encryptAvailable)}
         >
@@ -856,9 +876,9 @@ export default function App() {
         </button>
         <button
           type="button"
-          className={!verificationView && mode === 'decrypt' ? 'mode-button active' : 'mode-button'}
+          className={!specialView && mode === 'decrypt' ? 'mode-button active' : 'mode-button'}
           aria-label="Set decrypt mode"
-          aria-pressed={!verificationView && mode === 'decrypt'}
+          aria-pressed={!specialView && mode === 'decrypt'}
           onClick={() => changeMode('decrypt')}
           disabled={operationDisabled(decryptAvailable)}
         >
@@ -866,9 +886,9 @@ export default function App() {
         </button>
         <button
           type="button"
-          className={!verificationView && mode === 'rotate' ? 'mode-button active' : 'mode-button'}
+          className={!specialView && mode === 'rotate' ? 'mode-button active' : 'mode-button'}
           aria-label="Set re-key mode"
-          aria-pressed={!verificationView && mode === 'rotate'}
+          aria-pressed={!specialView && mode === 'rotate'}
           onClick={() => changeMode('rotate')}
           disabled={operationDisabled(rotateAvailable)}
         >
@@ -876,9 +896,19 @@ export default function App() {
         </button>
         <button
           type="button"
-          className={verificationView ? 'mode-button active' : 'mode-button'}
+          className={activeView === 'generate' ? 'mode-button active' : 'mode-button'}
+          aria-label="Set generate mode"
+          aria-pressed={activeView === 'generate'}
+          onClick={changeGenerateMode}
+          disabled={workbenchLocked || !profileSnapshotReady || !encryptAvailable}
+        >
+          Generate
+        </button>
+        <button
+          type="button"
+          className={activeView === 'verify' ? 'mode-button active' : 'mode-button'}
           aria-label="Set verify mode"
-          aria-pressed={verificationView}
+          aria-pressed={activeView === 'verify'}
           onClick={changeVerifyMode}
           disabled={workbenchLocked || !proofAvailable}
         >
@@ -941,7 +971,22 @@ export default function App() {
           </div>
         </div>
 
-        <section className="workbench-card" aria-label="Vault operation">
+        <section className="workbench-card" aria-label={generateMode ? 'Generate material' : 'Vault operation'}>
+          {generateMode ? (
+            <GenerateWorkbench
+              profiles={encryptProfiles}
+              profilesReady={profileSnapshotReady}
+              disabled={signingOut}
+              modeSwitch={renderModeSwitch('generate')}
+              externalStatus={status}
+              externalError={profileLoadError || error}
+              externalRetryLabel={loadFailureStage === 'session' ? 'Retry loading session' : 'Retry loading environments'}
+              onRetryProfiles={profileLoadFailed && !logoutFailed && !loadingProfiles ? retryProfiles : undefined}
+              onUnauthorized={redirectToLogin}
+              onForbidden={refreshCapabilitiesAfterForbidden}
+            />
+          ) : (
+            <>
           <div className="global-feedback">
             <div className="status-slot">
               {status
@@ -966,7 +1011,7 @@ export default function App() {
                   <div className="operation-controls">
                     <fieldset className="mode-fieldset">
                       <legend>Operation</legend>
-                      {renderModeSwitch(true)}
+                      {renderModeSwitch('verify')}
                     </fieldset>
                   </div>
                 </div>
@@ -1025,7 +1070,7 @@ export default function App() {
                   <div className="operation-controls">
                     <fieldset className="mode-fieldset">
                       <legend>Operation</legend>
-                      {renderModeSwitch(false)}
+                      {renderModeSwitch('operation')}
                     </fieldset>
                     <div className="mode-availability-list" aria-label="Operation availability">
                       {profileSnapshotReady && (!encryptAvailable || !decryptAvailable || !rotateAvailable)
@@ -1269,6 +1314,8 @@ export default function App() {
               )
               : <span className="feedback-placeholder" aria-hidden="true">&nbsp;</span>}
           </div>
+            </>
+          )}
         </section>
       </main>
     </div>

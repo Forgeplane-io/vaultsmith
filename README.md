@@ -1,12 +1,13 @@
 # Vaultsmith
 
-Vaultsmith is a web UI and HTTP API for encrypting, decrypting, and re-keying Ansible Vault values. It supports Ansible Vault 1.1 and 1.2/AES256. The Go server embeds the React frontend in the built binary.
+Vaultsmith is a web UI and HTTP API for encrypting, decrypting, and re-keying Ansible Vault values, and for generating private material directly into an Ansible Vault envelope. It supports Ansible Vault 1.1 and 1.2/AES256. The Go server embeds the React frontend in the built binary.
 
 ## What it does
 
 - Encrypt a value with a selected vault profile.
 - Decrypt an existing Ansible Vault value.
 - Re-key a value from one profile to another.
+- Generate passwords, tokens, SSH keypairs, age identities, and X.509 private keys with CSRs, returning the sealed Vault text and permitted public companion without private plaintext.
 - Copy an Ansible `!vault` variable snippet from the result.
 
 The server reads vault passwords from environment variables. It does not persist submitted values or accept file uploads. Native mode uses an opaque, HTTP-only session cookie and a separate readable CSRF cookie; passwords and plaintext are not stored in browser state. Request bodies are not logged.
@@ -15,7 +16,9 @@ Application limits:
 
 - Encrypt input: 1 MiB of UTF-8 plaintext.
 - Decrypt and re-key input: 5 MiB of UTF-8 Vault text.
-- JSON request body: 8 MiB.
+- Generate REST request body: 64 KiB.
+- Generate MCP request body: 8 MiB.
+- Standard Encrypt, Decrypt, and Rotate JSON request bodies: 8 MiB.
 
 ![Vaultsmith empty Encrypt workbench](docs/screenshots/workbench.png)
 
@@ -79,6 +82,7 @@ The bundled UI uses the canonical REST API. The deprecated legacy operation endp
 | `POST /api/v1/profiles/{profileId}/encrypt` | Canonical Encrypt API. |
 | `POST /api/v1/profiles/{profileId}/decrypt` | Canonical Decrypt API. |
 | `POST /api/v1/rotations` | Canonical Rotate API (re-key in the UI), with optional attestation issuance. |
+| `POST /api/v1/generate` | Generate private material in memory and return only its Vault ciphertext and permitted public companion. |
 | `POST /api/v1/attestations/verify` | Verify a rotation attestation against supplied envelopes and binding. |
 | `GET /.well-known/vaultsmith-attestation` | Public attestation metadata when proofs are enabled. |
 | `GET /.well-known/vaultsmith-attestation/jwks.json` | Public attestation keys when proofs are enabled. |
@@ -91,7 +95,7 @@ The bundled UI uses the canonical REST API. The deprecated legacy operation endp
 
 ### Legacy compatibility
 
-`POST /api/v1/operations` is the deprecated legacy operation endpoint. It remains only for existing v1 compatibility callers. New clients and the bundled UI must use the canonical REST API above.
+`POST /api/v1/operations` is the deprecated legacy operation endpoint. It remains only for existing v1 compatibility callers. New clients and the bundled UI must use the canonical REST API above. Generate is available only at `POST /api/v1/generate`; it is not a legacy operation mode.
 
 Operation modes are `encrypt`, `decrypt`, and `rotate` (the API name for re-key). A re-key request names `sourceProfileId` and `destinationProfileId`. In native mode, session mutations require the CSRF token returned by `/api/v1/session`; Bearer requests do not use sessions or CSRF and require the exact operation scope. Attestation verification uses `vaultsmith.attestation.verify`; issuance uses the rotate path and does not create a new operation scope. MCP is disabled by default with `mcp.enabled: false` / `MCP_ENABLED=false`. Proofs are disabled by default with `proofs.enabled: false`; normal Vault operations remain available when proofs are disabled.
 
