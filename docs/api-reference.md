@@ -87,6 +87,45 @@ Verifies a flattened JWS rotation attestation against the local issuer, immutabl
 | `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
 | `503` | The rotation-attestation subsystem is disabled, unavailable, or saturated. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
 
+## `POST /api/v1/generate`
+
+**Generate and seal private material**
+
+**Operation ID:** `generateMaterial`
+
+Generates one password, token, SSH keypair, age X25519 identity, or X.509 private key and PKCS#10 CSR in memory. The exact private serialization is encrypted with the selected server-owned profile and only the resulting Ansible Vault text and kind-specific public companion are returned. Private plaintext is never returned, persisted, or made available through a replay or recovery endpoint. This randomized operation is not idempotent and callers must not retry an ambiguous or failed invocation automatically. An Idempotency-Key header is rejected.
+
+**Authentication:** `CsrfHeader` + `SessionCookie` or `BearerAuth`
+
+**Required Bearer scope:** `vaultsmith.encrypt`
+
+**Application deadline:** 30 seconds
+
+**Maximum HTTP body:** 65536 bytes (65536 bytes)
+
+**Automatic retry:** Prohibited
+
+### Request body
+
+**Required:** yes
+
+- `application/json`: [GenerateRequest](#schema-generaterequest)
+
+### Responses
+
+| Status | Meaning | Body |
+| --- | --- | --- |
+| `200` | Newly generated private material sealed as Ansible Vault text, with its permitted public companion. | `application/json` [GenerateResponse](#schema-generateresponse) |
+| `400` | Invalid path value, JSON, UTF-8, fields, Origin, or credential combination. | [InvalidRequest](#response-invalidrequest) |
+| `401` | Native-mode credentials are missing or invalid. | [Unauthorized](#response-unauthorized) |
+| `403` | CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request. | [Forbidden](#response-forbidden) |
+| `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
+| `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |
+| `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
+| `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
+| `422` | Generation, native serialization, consistency validation, or Vault encryption failed. Underlying random, key-library, serialization, profile-password, and Vault errors are intentionally indistinguishable. | [GenerateOperationFailed](#response-generateoperationfailed) |
+| `503` | Startup state, CSRF setup, a runtime authentication dependency, operation admission, cancellation, or the 30-second application deadline prevented completion. Retry-After is never emitted for this randomized, non-idempotent operation. | [GenerateServiceUnavailable](#response-generateserviceunavailable) |
+
 ## `GET /api/v1/profiles`
 
 **List visible Vault profiles**
@@ -307,7 +346,7 @@ Safe stable code and human text. Clients ignore unknown properties.
 
 | Property | Type and limits | Required | Description |
 | --- | --- | --- | --- |
-| `code` | string; values `invalid_request`, `unauthorized`, `forbidden`, `not_found`, `method_not_allowed`, `operation_failed`, `not_ready`, `temporarily_unavailable` | yes | Stable machine-readable error code. |
+| `code` | string; values `invalid_request`, `unauthorized`, `forbidden`, `csrf_failed`, `not_found`, `method_not_allowed`, `operation_failed`, `not_ready`, `csrf_unavailable`, `temporarily_unavailable` | yes | Stable machine-readable error code. |
 | `message` | string | yes | Safe human text with no submitted values or underlying failure details. |
 
 ## Schema `AttestationError`
@@ -415,6 +454,397 @@ Safe API error envelope. Clients ignore unknown properties.
 | Property | Type and limits | Required | Description |
 | --- | --- | --- | --- |
 | `error` | [ApiError](#schema-apierror) | yes |  |
+
+## Schema `GenerateAgeIdentityEffectiveParameters`
+
+Fixed age identity algorithm. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `algorithm` | string | yes |  |
+
+## Schema `GenerateAgeIdentityParameters`
+
+**Type:** object
+
+## Schema `GenerateAgeIdentityPublic`
+
+Native age X25519 recipient. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `format` | string | yes |  |
+| `recipient` | string | yes |  |
+
+## Schema `GenerateAgeIdentityRequest`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | string | yes |  |
+| `parameters` | [GenerateAgeIdentityParameters](#schema-generateageidentityparameters) | yes |  |
+| `profileId` | [ProfileId](#schema-profileid) | yes |  |
+
+## Schema `GenerateAgeIdentityResponse`
+
+Current age identity producer shape. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `effectiveParameters` | [GenerateAgeIdentityEffectiveParameters](#schema-generateageidentityeffectiveparameters) | yes |  |
+| `kind` | string | yes |  |
+| `profileId` | [ProfileId](#schema-profileid) | yes |  |
+| `public` | [GenerateAgeIdentityPublic](#schema-generateageidentitypublic) | yes |  |
+| `secret` | [GenerateAgeIdentitySecret](#schema-generateageidentitysecret) | yes |  |
+
+## Schema `GenerateAgeIdentitySecret`
+
+Sealed native age X25519 identity. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `format` | string | yes |  |
+| `vaultText` | string; min length 1 | yes |  |
+
+## Schema `GeneratePasswordEffectiveParameters`
+
+Every applied password default is populated. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `digits` | boolean | yes |  |
+| `excludeAmbiguous` | boolean | yes |  |
+| `length` | integer; minimum 22; maximum 128 | yes |  |
+| `lowercase` | boolean | yes |  |
+| `minDigits` | integer; minimum 0; maximum 32 | yes |  |
+| `minLowercase` | integer; minimum 0; maximum 32 | yes |  |
+| `minSymbols` | integer; minimum 0; maximum 32 | yes |  |
+| `minUppercase` | integer; minimum 0; maximum 32 | yes |  |
+| `symbols` | boolean | yes |  |
+| `uppercase` | boolean | yes |  |
+
+## Schema `GeneratePasswordParameters`
+
+Bounded fixed-class password parameters. Runtime validation additionally requires at least one enabled class, rejects non-zero minima for disabled classes, requires the effective minima to fit the length, and requires the exact accepted-set cardinality to be at least 2^128 before consuming randomness.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `digits` | boolean | no | Defaults to true when omitted. |
+| `excludeAmbiguous` | boolean | no | Defaults to false when omitted. |
+| `length` | integer; minimum 22; maximum 128 | no | Defaults to 32 when omitted. |
+| `lowercase` | boolean | no | Defaults to true when omitted. |
+| `minDigits` | integer; minimum 0; maximum 32 | no | Defaults to 1 when digits are enabled and 0 otherwise. |
+| `minLowercase` | integer; minimum 0; maximum 32 | no | Defaults to 1 when lowercase is enabled and 0 otherwise. |
+| `minSymbols` | integer; minimum 0; maximum 32 | no | Defaults to 1 when symbols are enabled and 0 otherwise. |
+| `minUppercase` | integer; minimum 0; maximum 32 | no | Defaults to 1 when uppercase is enabled and 0 otherwise. |
+| `symbols` | boolean | no | Defaults to false when omitted. |
+| `uppercase` | boolean | no | Defaults to true when omitted. |
+
+## Schema `GeneratePasswordRequest`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | string | yes |  |
+| `parameters` | [GeneratePasswordParameters](#schema-generatepasswordparameters) | yes |  |
+| `profileId` | [ProfileId](#schema-profileid) | yes |  |
+
+## Schema `GeneratePasswordResponse`
+
+Current password producer shape. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `effectiveParameters` | [GeneratePasswordEffectiveParameters](#schema-generatepasswordeffectiveparameters) | yes |  |
+| `kind` | string | yes |  |
+| `profileId` | [ProfileId](#schema-profileid) | yes |  |
+| `secret` | [GeneratePasswordSecret](#schema-generatepasswordsecret) | yes |  |
+
+## Schema `GeneratePasswordSecret`
+
+Sealed password serialization. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `format` | string | yes |  |
+| `vaultText` | string; min length 1 | yes |  |
+
+## Schema `GenerateRequest`
+
+**Type:** one of [GeneratePasswordRequest](#schema-generatepasswordrequest), [GenerateTokenRequest](#schema-generatetokenrequest), [GenerateSSHKeyPairRequest](#schema-generatesshkeypairrequest), [GenerateAgeIdentityRequest](#schema-generateageidentityrequest), [GenerateX509CSRRequest](#schema-generatex509csrrequest)
+
+**One of:** [GeneratePasswordRequest](#schema-generatepasswordrequest), [GenerateTokenRequest](#schema-generatetokenrequest), [GenerateSSHKeyPairRequest](#schema-generatesshkeypairrequest), [GenerateAgeIdentityRequest](#schema-generateageidentityrequest), [GenerateX509CSRRequest](#schema-generatex509csrrequest)
+
+## Schema `GenerateResponse`
+
+Generate success response. The server currently emits only declared properties, while published v1 response schemas remain forward-extensible and clients ignore unknown properties at every response object.
+
+**Type:** one of [GeneratePasswordResponse](#schema-generatepasswordresponse), [GenerateTokenResponse](#schema-generatetokenresponse), [GenerateSSHKeyPairResponse](#schema-generatesshkeypairresponse), [GenerateAgeIdentityResponse](#schema-generateageidentityresponse), [GenerateX509CSRResponse](#schema-generatex509csrresponse)
+
+**One of:** [GeneratePasswordResponse](#schema-generatepasswordresponse), [GenerateTokenResponse](#schema-generatetokenresponse), [GenerateSSHKeyPairResponse](#schema-generatesshkeypairresponse), [GenerateAgeIdentityResponse](#schema-generateageidentityresponse), [GenerateX509CSRResponse](#schema-generatex509csrresponse)
+
+## Schema `GenerateSSHKeyAlgorithm`
+
+**Type:** string; values `ed25519`, `ecdsa_p256`, `rsa_3072`, `rsa_4096`
+
+## Schema `GenerateSSHKeyPairEffectiveParameters`
+
+Selected SSH algorithm. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `algorithm` | [GenerateSSHKeyAlgorithm](#schema-generatesshkeyalgorithm) | yes |  |
+
+## Schema `GenerateSSHKeyPairParameters`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `algorithm` | [GenerateSSHKeyAlgorithm](#schema-generatesshkeyalgorithm) | yes |  |
+
+## Schema `GenerateSSHKeyPairPublic`
+
+OpenSSH public companion. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `authorizedKey` | string; min length 1 | yes |  |
+| `fingerprint` | string | yes |  |
+| `format` | string | yes |  |
+
+## Schema `GenerateSSHKeyPairRequest`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | string | yes |  |
+| `parameters` | [GenerateSSHKeyPairParameters](#schema-generatesshkeypairparameters) | yes |  |
+| `profileId` | [ProfileId](#schema-profileid) | yes |  |
+
+## Schema `GenerateSSHKeyPairResponse`
+
+Current SSH keypair producer shape. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `effectiveParameters` | [GenerateSSHKeyPairEffectiveParameters](#schema-generatesshkeypaireffectiveparameters) | yes |  |
+| `kind` | string | yes |  |
+| `profileId` | [ProfileId](#schema-profileid) | yes |  |
+| `public` | [GenerateSSHKeyPairPublic](#schema-generatesshkeypairpublic) | yes |  |
+| `secret` | [GenerateSSHKeyPairSecret](#schema-generatesshkeypairsecret) | yes |  |
+
+## Schema `GenerateSSHKeyPairSecret`
+
+Sealed OpenSSH private-key serialization. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `format` | string | yes |  |
+| `vaultText` | string; min length 1 | yes |  |
+
+## Schema `GenerateTokenEffectiveParameters`
+
+Every applied token default is populated. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `bytes` | integer; minimum 16; maximum 64 | yes |  |
+| `encoding` | string; values `base64url`, `hex` | yes |  |
+
+## Schema `GenerateTokenParameters`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `bytes` | integer; minimum 16; maximum 64 | no | Defaults to 32 when omitted. |
+| `encoding` | string; values `base64url`, `hex` | no | Defaults to base64url when omitted. |
+
+## Schema `GenerateTokenRequest`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | string | yes |  |
+| `parameters` | [GenerateTokenParameters](#schema-generatetokenparameters) | yes |  |
+| `profileId` | [ProfileId](#schema-profileid) | yes |  |
+
+## Schema `GenerateTokenResponse`
+
+Current token producer shape. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `effectiveParameters` | [GenerateTokenEffectiveParameters](#schema-generatetokeneffectiveparameters) | yes |  |
+| `kind` | string | yes |  |
+| `profileId` | [ProfileId](#schema-profileid) | yes |  |
+| `secret` | [GenerateTokenSecret](#schema-generatetokensecret) | yes |  |
+
+## Schema `GenerateTokenSecret`
+
+Sealed token serialization. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `format` | string; values `token_base64url`, `token_hex` | yes |  |
+| `vaultText` | string; min length 1 | yes |  |
+
+## Schema `GenerateX509CSREffectiveParameters`
+
+Selected X.509 private-key algorithm. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `algorithm` | [GenerateX509KeyAlgorithm](#schema-generatex509keyalgorithm) | yes |  |
+
+## Schema `GenerateX509CSRParameters`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `algorithm` | [GenerateX509KeyAlgorithm](#schema-generatex509keyalgorithm) | yes |  |
+| `sans` | [GenerateX509SANs](#schema-generatex509sans) | no |  |
+| `subject` | [GenerateX509Subject](#schema-generatex509subject) | no |  |
+
+## Schema `GenerateX509CSRPublic`
+
+PKCS#10 CSR and its SHA-256 SPKI fingerprint. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `csrPem` | string; min length 1 | yes |  |
+| `fingerprint` | string | yes |  |
+| `format` | string | yes |  |
+
+## Schema `GenerateX509CSRRequest`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | string | yes |  |
+| `parameters` | [GenerateX509CSRParameters](#schema-generatex509csrparameters) | yes |  |
+| `profileId` | [ProfileId](#schema-profileid) | yes |  |
+
+## Schema `GenerateX509CSRResponse`
+
+Current X.509 CSR producer shape. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `effectiveParameters` | [GenerateX509CSREffectiveParameters](#schema-generatex509csreffectiveparameters) | yes |  |
+| `kind` | string | yes |  |
+| `profileId` | [ProfileId](#schema-profileid) | yes |  |
+| `public` | [GenerateX509CSRPublic](#schema-generatex509csrpublic) | yes |  |
+| `secret` | [GenerateX509CSRSecret](#schema-generatex509csrsecret) | yes |  |
+
+## Schema `GenerateX509CSRSecret`
+
+Sealed PKCS#8 private-key PEM. Clients ignore unknown properties.
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `format` | string | yes |  |
+| `vaultText` | string; min length 1 | yes |  |
+
+## Schema `GenerateX509CountryValues`
+
+**Type:** array of string
+
+## Schema `GenerateX509DNSOrEmailSANs`
+
+**Type:** array of string; min length 1
+
+## Schema `GenerateX509DNValue`
+
+**Type:** string; min length 1
+
+## Schema `GenerateX509DNValues`
+
+**Type:** array of [GenerateX509DNValue](#schema-generatex509dnvalue)
+
+## Schema `GenerateX509IPSANs`
+
+**Type:** array of string; min length 1
+
+## Schema `GenerateX509KeyAlgorithm`
+
+**Type:** string; values `ed25519`, `ecdsa_p256`, `ecdsa_p384`, `rsa_3072`, `rsa_4096`
+
+## Schema `GenerateX509SANs`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `dnsNames` | [GenerateX509DNSOrEmailSANs](#schema-generatex509dnsoremailsans) | no |  |
+| `emailAddresses` | [GenerateX509DNSOrEmailSANs](#schema-generatex509dnsoremailsans) | no |  |
+| `ipAddresses` | [GenerateX509IPSANs](#schema-generatex509ipsans) | no |  |
+| `uris` | [GenerateX509URISANs](#schema-generatex509urisans) | no |  |
+
+## Schema `GenerateX509Subject`
+
+**Type:** object
+
+| Property | Type and limits | Required | Description |
+| --- | --- | --- | --- |
+| `commonName` | [GenerateX509DNValue](#schema-generatex509dnvalue) | no |  |
+| `country` | [GenerateX509CountryValues](#schema-generatex509countryvalues) | no |  |
+| `locality` | [GenerateX509DNValues](#schema-generatex509dnvalues) | no |  |
+| `organization` | [GenerateX509DNValues](#schema-generatex509dnvalues) | no |  |
+| `organizationalUnit` | [GenerateX509DNValues](#schema-generatex509dnvalues) | no |  |
+| `postalCode` | [GenerateX509DNValues](#schema-generatex509dnvalues) | no |  |
+| `province` | [GenerateX509DNValues](#schema-generatex509dnvalues) | no |  |
+| `serialNumber` | [GenerateX509DNValue](#schema-generatex509dnvalue) | no |  |
+| `streetAddress` | [GenerateX509DNValues](#schema-generatex509dnvalues) | no |  |
+
+## Schema `GenerateX509URISANs`
+
+**Type:** array of string; min length 1
 
 ## Schema `LegacyDecryptRequest`
 
@@ -615,6 +1045,18 @@ The rotation-attestation subsystem is disabled, unavailable, or saturated.
 ## Response `Forbidden`
 
 CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request.
+
+- `application/json`: [ErrorResponse](#schema-errorresponse)
+
+## Response `GenerateOperationFailed`
+
+Generation, native serialization, consistency validation, or Vault encryption failed. Underlying random, key-library, serialization, profile-password, and Vault errors are intentionally indistinguishable.
+
+- `application/json`: [ErrorResponse](#schema-errorresponse)
+
+## Response `GenerateServiceUnavailable`
+
+Startup state, CSRF setup, a runtime authentication dependency, operation admission, cancellation, or the 30-second application deadline prevented completion. Retry-After is never emitted for this randomized, non-idempotent operation.
 
 - `application/json`: [ErrorResponse](#schema-errorresponse)
 

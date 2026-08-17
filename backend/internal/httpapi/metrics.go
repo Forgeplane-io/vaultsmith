@@ -43,6 +43,8 @@ func metricOperationForRequest(r *http.Request) string {
 	switch r.URL.Path {
 	case "/api/v1/operations":
 		return "legacy"
+	case "/api/v1/generate":
+		return "generate"
 	case "/api/v1/rotations":
 		return "rotate"
 	case "/api/v1/attestations/verify":
@@ -73,7 +75,7 @@ type durationMetric struct {
 }
 
 var (
-	metricOperations    = []string{"encrypt", "decrypt", "rotate", "legacy", "verify"}
+	metricOperations    = []string{"encrypt", "decrypt", "rotate", "generate", "legacy", "verify"}
 	metricOutcomes      = []string{"success", "invalid_request", "unauthorized", "forbidden", "not_found", "unavailable", "busy", "failed"}
 	attestationOutcomes = []string{"success", "invalid", "feature_unavailable", "unavailable", "busy", "failed"}
 	metricBuckets       = []float64{0.005, 0.025, 0.1, 0.5, 1, 5}

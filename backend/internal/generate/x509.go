@@ -204,7 +204,7 @@ func validateX509CSRParameters(parameters X509CSRParameters) (validatedX509CSR, 
 		validated.uris = uris
 	}
 
-	hasCommonName := parameters.Subject != nil && parameters.Subject.CommonName != ""
+	hasCommonName := parameters.Subject != nil && parameters.Subject.CommonName != nil
 	hasSAN := len(validated.dnsNames)+len(validated.ipAddresses)+len(validated.emailAddresses)+len(validated.uris) > 0
 	if !hasCommonName && !hasSAN {
 		return validatedX509CSR{}, ErrInvalidParameters
@@ -213,15 +213,15 @@ func validateX509CSRParameters(parameters X509CSRParameters) (validatedX509CSR, 
 }
 
 func validateX509Subject(subject X509Subject) (pkix.Name, bool) {
-	if subject.CommonName == "" && subject.SerialNumber == "" &&
+	if subject.CommonName == nil && subject.SerialNumber == nil &&
 		allStringSlicesNil(subject.Country, subject.Organization, subject.OrganizationalUnit,
 			subject.Locality, subject.Province, subject.StreetAddress, subject.PostalCode) {
 		return pkix.Name{}, false
 	}
-	if subject.CommonName != "" && !validIdentityString(subject.CommonName, maximumX509SubjectBytes, false) {
+	if subject.CommonName != nil && !validIdentityString(*subject.CommonName, maximumX509SubjectBytes, false) {
 		return pkix.Name{}, false
 	}
-	if subject.SerialNumber != "" && !validIdentityString(subject.SerialNumber, maximumX509SubjectBytes, false) {
+	if subject.SerialNumber != nil && !validIdentityString(*subject.SerialNumber, maximumX509SubjectBytes, false) {
 		return pkix.Name{}, false
 	}
 	if !validCountryValues(subject.Country) ||
@@ -235,8 +235,8 @@ func validateX509Subject(subject X509Subject) (pkix.Name, bool) {
 	}
 
 	return pkix.Name{
-		CommonName:         subject.CommonName,
-		SerialNumber:       subject.SerialNumber,
+		CommonName:         stringValue(subject.CommonName),
+		SerialNumber:       stringValue(subject.SerialNumber),
 		Country:            cloneStrings(subject.Country),
 		Organization:       cloneStrings(subject.Organization),
 		OrganizationalUnit: cloneStrings(subject.OrganizationalUnit),
@@ -245,6 +245,13 @@ func validateX509Subject(subject X509Subject) (pkix.Name, bool) {
 		StreetAddress:      cloneStrings(subject.StreetAddress),
 		PostalCode:         cloneStrings(subject.PostalCode),
 	}, true
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func validateX509SANs(sans X509SANs) ([]string, []net.IP, []string, []*url.URL, bool) {

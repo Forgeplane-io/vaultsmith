@@ -13,6 +13,8 @@ import (
 
 // Defines values for ApiErrorCode.
 const (
+	ApiErrorCodeCsrfFailed             ApiErrorCode = "csrf_failed"
+	ApiErrorCodeCsrfUnavailable        ApiErrorCode = "csrf_unavailable"
 	ApiErrorCodeForbidden              ApiErrorCode = "forbidden"
 	ApiErrorCodeInvalidRequest         ApiErrorCode = "invalid_request"
 	ApiErrorCodeMethodNotAllowed       ApiErrorCode = "method_not_allowed"
@@ -26,6 +28,10 @@ const (
 // Valid indicates whether the value is a known member of the ApiErrorCode enum.
 func (e ApiErrorCode) Valid() bool {
 	switch e {
+	case ApiErrorCodeCsrfFailed:
+		return true
+	case ApiErrorCodeCsrfUnavailable:
+		return true
 	case ApiErrorCodeForbidden:
 		return true
 	case ApiErrorCodeInvalidRequest:
@@ -209,6 +215,381 @@ func (e DigestBindingAlgorithm) Valid() bool {
 	}
 }
 
+// Defines values for GenerateAgeIdentityEffectiveParametersAlgorithm.
+const (
+	X25519 GenerateAgeIdentityEffectiveParametersAlgorithm = "x25519"
+)
+
+// Valid indicates whether the value is a known member of the GenerateAgeIdentityEffectiveParametersAlgorithm enum.
+func (e GenerateAgeIdentityEffectiveParametersAlgorithm) Valid() bool {
+	switch e {
+	case X25519:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateAgeIdentityPublicFormat.
+const (
+	AgeX25519Recipient GenerateAgeIdentityPublicFormat = "age_x25519_recipient"
+)
+
+// Valid indicates whether the value is a known member of the GenerateAgeIdentityPublicFormat enum.
+func (e GenerateAgeIdentityPublicFormat) Valid() bool {
+	switch e {
+	case AgeX25519Recipient:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateAgeIdentityRequestKind.
+const (
+	GenerateAgeIdentityRequestKindAgeIdentity GenerateAgeIdentityRequestKind = "age_identity"
+)
+
+// Valid indicates whether the value is a known member of the GenerateAgeIdentityRequestKind enum.
+func (e GenerateAgeIdentityRequestKind) Valid() bool {
+	switch e {
+	case GenerateAgeIdentityRequestKindAgeIdentity:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateAgeIdentityResponseKind.
+const (
+	GenerateAgeIdentityResponseKindAgeIdentity GenerateAgeIdentityResponseKind = "age_identity"
+)
+
+// Valid indicates whether the value is a known member of the GenerateAgeIdentityResponseKind enum.
+func (e GenerateAgeIdentityResponseKind) Valid() bool {
+	switch e {
+	case GenerateAgeIdentityResponseKindAgeIdentity:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateAgeIdentitySecretFormat.
+const (
+	AgeX25519Identity GenerateAgeIdentitySecretFormat = "age_x25519_identity"
+)
+
+// Valid indicates whether the value is a known member of the GenerateAgeIdentitySecretFormat enum.
+func (e GenerateAgeIdentitySecretFormat) Valid() bool {
+	switch e {
+	case AgeX25519Identity:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GeneratePasswordRequestKind.
+const (
+	GeneratePasswordRequestKindPassword GeneratePasswordRequestKind = "password"
+)
+
+// Valid indicates whether the value is a known member of the GeneratePasswordRequestKind enum.
+func (e GeneratePasswordRequestKind) Valid() bool {
+	switch e {
+	case GeneratePasswordRequestKindPassword:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GeneratePasswordResponseKind.
+const (
+	GeneratePasswordResponseKindPassword GeneratePasswordResponseKind = "password"
+)
+
+// Valid indicates whether the value is a known member of the GeneratePasswordResponseKind enum.
+func (e GeneratePasswordResponseKind) Valid() bool {
+	switch e {
+	case GeneratePasswordResponseKindPassword:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GeneratePasswordSecretFormat.
+const (
+	PasswordAscii GeneratePasswordSecretFormat = "password_ascii"
+)
+
+// Valid indicates whether the value is a known member of the GeneratePasswordSecretFormat enum.
+func (e GeneratePasswordSecretFormat) Valid() bool {
+	switch e {
+	case PasswordAscii:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateSSHKeyAlgorithm.
+const (
+	GenerateSSHKeyAlgorithmEcdsaP256 GenerateSSHKeyAlgorithm = "ecdsa_p256"
+	GenerateSSHKeyAlgorithmEd25519   GenerateSSHKeyAlgorithm = "ed25519"
+	GenerateSSHKeyAlgorithmRsa3072   GenerateSSHKeyAlgorithm = "rsa_3072"
+	GenerateSSHKeyAlgorithmRsa4096   GenerateSSHKeyAlgorithm = "rsa_4096"
+)
+
+// Valid indicates whether the value is a known member of the GenerateSSHKeyAlgorithm enum.
+func (e GenerateSSHKeyAlgorithm) Valid() bool {
+	switch e {
+	case GenerateSSHKeyAlgorithmEcdsaP256:
+		return true
+	case GenerateSSHKeyAlgorithmEd25519:
+		return true
+	case GenerateSSHKeyAlgorithmRsa3072:
+		return true
+	case GenerateSSHKeyAlgorithmRsa4096:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateSSHKeyPairPublicFormat.
+const (
+	OpensshAuthorizedKey GenerateSSHKeyPairPublicFormat = "openssh_authorized_key"
+)
+
+// Valid indicates whether the value is a known member of the GenerateSSHKeyPairPublicFormat enum.
+func (e GenerateSSHKeyPairPublicFormat) Valid() bool {
+	switch e {
+	case OpensshAuthorizedKey:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateSSHKeyPairRequestKind.
+const (
+	GenerateSSHKeyPairRequestKindSshKeypair GenerateSSHKeyPairRequestKind = "ssh_keypair"
+)
+
+// Valid indicates whether the value is a known member of the GenerateSSHKeyPairRequestKind enum.
+func (e GenerateSSHKeyPairRequestKind) Valid() bool {
+	switch e {
+	case GenerateSSHKeyPairRequestKindSshKeypair:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateSSHKeyPairResponseKind.
+const (
+	GenerateSSHKeyPairResponseKindSshKeypair GenerateSSHKeyPairResponseKind = "ssh_keypair"
+)
+
+// Valid indicates whether the value is a known member of the GenerateSSHKeyPairResponseKind enum.
+func (e GenerateSSHKeyPairResponseKind) Valid() bool {
+	switch e {
+	case GenerateSSHKeyPairResponseKindSshKeypair:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateSSHKeyPairSecretFormat.
+const (
+	OpensshPrivateKey GenerateSSHKeyPairSecretFormat = "openssh_private_key"
+)
+
+// Valid indicates whether the value is a known member of the GenerateSSHKeyPairSecretFormat enum.
+func (e GenerateSSHKeyPairSecretFormat) Valid() bool {
+	switch e {
+	case OpensshPrivateKey:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateTokenEffectiveParametersEncoding.
+const (
+	GenerateTokenEffectiveParametersEncodingBase64url GenerateTokenEffectiveParametersEncoding = "base64url"
+	GenerateTokenEffectiveParametersEncodingHex       GenerateTokenEffectiveParametersEncoding = "hex"
+)
+
+// Valid indicates whether the value is a known member of the GenerateTokenEffectiveParametersEncoding enum.
+func (e GenerateTokenEffectiveParametersEncoding) Valid() bool {
+	switch e {
+	case GenerateTokenEffectiveParametersEncodingBase64url:
+		return true
+	case GenerateTokenEffectiveParametersEncodingHex:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateTokenParametersEncoding.
+const (
+	GenerateTokenParametersEncodingBase64url GenerateTokenParametersEncoding = "base64url"
+	GenerateTokenParametersEncodingHex       GenerateTokenParametersEncoding = "hex"
+)
+
+// Valid indicates whether the value is a known member of the GenerateTokenParametersEncoding enum.
+func (e GenerateTokenParametersEncoding) Valid() bool {
+	switch e {
+	case GenerateTokenParametersEncodingBase64url:
+		return true
+	case GenerateTokenParametersEncodingHex:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateTokenRequestKind.
+const (
+	GenerateTokenRequestKindToken GenerateTokenRequestKind = "token"
+)
+
+// Valid indicates whether the value is a known member of the GenerateTokenRequestKind enum.
+func (e GenerateTokenRequestKind) Valid() bool {
+	switch e {
+	case GenerateTokenRequestKindToken:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateTokenResponseKind.
+const (
+	GenerateTokenResponseKindToken GenerateTokenResponseKind = "token"
+)
+
+// Valid indicates whether the value is a known member of the GenerateTokenResponseKind enum.
+func (e GenerateTokenResponseKind) Valid() bool {
+	switch e {
+	case GenerateTokenResponseKindToken:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateTokenSecretFormat.
+const (
+	TokenBase64url GenerateTokenSecretFormat = "token_base64url"
+	TokenHex       GenerateTokenSecretFormat = "token_hex"
+)
+
+// Valid indicates whether the value is a known member of the GenerateTokenSecretFormat enum.
+func (e GenerateTokenSecretFormat) Valid() bool {
+	switch e {
+	case TokenBase64url:
+		return true
+	case TokenHex:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateX509CSRPublicFormat.
+const (
+	Pkcs10CsrPem GenerateX509CSRPublicFormat = "pkcs10_csr_pem"
+)
+
+// Valid indicates whether the value is a known member of the GenerateX509CSRPublicFormat enum.
+func (e GenerateX509CSRPublicFormat) Valid() bool {
+	switch e {
+	case Pkcs10CsrPem:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateX509CSRRequestKind.
+const (
+	GenerateX509CSRRequestKindX509Csr GenerateX509CSRRequestKind = "x509_csr"
+)
+
+// Valid indicates whether the value is a known member of the GenerateX509CSRRequestKind enum.
+func (e GenerateX509CSRRequestKind) Valid() bool {
+	switch e {
+	case GenerateX509CSRRequestKindX509Csr:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateX509CSRResponseKind.
+const (
+	GenerateX509CSRResponseKindX509Csr GenerateX509CSRResponseKind = "x509_csr"
+)
+
+// Valid indicates whether the value is a known member of the GenerateX509CSRResponseKind enum.
+func (e GenerateX509CSRResponseKind) Valid() bool {
+	switch e {
+	case GenerateX509CSRResponseKindX509Csr:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateX509CSRSecretFormat.
+const (
+	Pkcs8PrivateKeyPem GenerateX509CSRSecretFormat = "pkcs8_private_key_pem"
+)
+
+// Valid indicates whether the value is a known member of the GenerateX509CSRSecretFormat enum.
+func (e GenerateX509CSRSecretFormat) Valid() bool {
+	switch e {
+	case Pkcs8PrivateKeyPem:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GenerateX509KeyAlgorithm.
+const (
+	GenerateX509KeyAlgorithmEcdsaP256 GenerateX509KeyAlgorithm = "ecdsa_p256"
+	GenerateX509KeyAlgorithmEcdsaP384 GenerateX509KeyAlgorithm = "ecdsa_p384"
+	GenerateX509KeyAlgorithmEd25519   GenerateX509KeyAlgorithm = "ed25519"
+	GenerateX509KeyAlgorithmRsa3072   GenerateX509KeyAlgorithm = "rsa_3072"
+	GenerateX509KeyAlgorithmRsa4096   GenerateX509KeyAlgorithm = "rsa_4096"
+)
+
+// Valid indicates whether the value is a known member of the GenerateX509KeyAlgorithm enum.
+func (e GenerateX509KeyAlgorithm) Valid() bool {
+	switch e {
+	case GenerateX509KeyAlgorithmEcdsaP256:
+		return true
+	case GenerateX509KeyAlgorithmEcdsaP384:
+		return true
+	case GenerateX509KeyAlgorithmEd25519:
+		return true
+	case GenerateX509KeyAlgorithmRsa3072:
+		return true
+	case GenerateX509KeyAlgorithmRsa4096:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for LegacyDecryptRequestMode.
 const (
 	Decrypt LegacyDecryptRequestMode = "decrypt"
@@ -382,6 +763,397 @@ type ErrorResponse struct {
 	// Error Safe stable code and human text. Clients ignore unknown properties.
 	Error ApiError `json:"error"`
 }
+
+// GenerateAgeIdentityEffectiveParameters Fixed age identity algorithm. Clients ignore unknown properties.
+type GenerateAgeIdentityEffectiveParameters struct {
+	Algorithm GenerateAgeIdentityEffectiveParametersAlgorithm `json:"algorithm"`
+}
+
+// GenerateAgeIdentityEffectiveParametersAlgorithm defines model for GenerateAgeIdentityEffectiveParameters.Algorithm.
+type GenerateAgeIdentityEffectiveParametersAlgorithm string
+
+// GenerateAgeIdentityParameters defines model for GenerateAgeIdentityParameters.
+type GenerateAgeIdentityParameters = struct{}
+
+// GenerateAgeIdentityPublic Native age X25519 recipient. Clients ignore unknown properties.
+type GenerateAgeIdentityPublic struct {
+	Format    GenerateAgeIdentityPublicFormat `json:"format"`
+	Recipient string                          `json:"recipient"`
+}
+
+// GenerateAgeIdentityPublicFormat defines model for GenerateAgeIdentityPublic.Format.
+type GenerateAgeIdentityPublicFormat string
+
+// GenerateAgeIdentityRequest defines model for GenerateAgeIdentityRequest.
+type GenerateAgeIdentityRequest struct {
+	Kind       GenerateAgeIdentityRequestKind `json:"kind"`
+	Parameters GenerateAgeIdentityParameters  `json:"parameters"`
+
+	// ProfileId Examples: production
+	ProfileId ProfileId `json:"profileId"`
+}
+
+// GenerateAgeIdentityRequestKind defines model for GenerateAgeIdentityRequest.Kind.
+type GenerateAgeIdentityRequestKind string
+
+// GenerateAgeIdentityResponse Current age identity producer shape. Clients ignore unknown properties.
+type GenerateAgeIdentityResponse struct {
+	// EffectiveParameters Fixed age identity algorithm. Clients ignore unknown properties.
+	EffectiveParameters GenerateAgeIdentityEffectiveParameters `json:"effectiveParameters"`
+	Kind                GenerateAgeIdentityResponseKind        `json:"kind"`
+
+	// ProfileId Examples: production
+	ProfileId ProfileId `json:"profileId"`
+
+	// Public Native age X25519 recipient. Clients ignore unknown properties.
+	Public GenerateAgeIdentityPublic `json:"public"`
+
+	// Secret Sealed native age X25519 identity. Clients ignore unknown properties.
+	Secret GenerateAgeIdentitySecret `json:"secret"`
+}
+
+// GenerateAgeIdentityResponseKind defines model for GenerateAgeIdentityResponse.Kind.
+type GenerateAgeIdentityResponseKind string
+
+// GenerateAgeIdentitySecret Sealed native age X25519 identity. Clients ignore unknown properties.
+type GenerateAgeIdentitySecret struct {
+	Format    GenerateAgeIdentitySecretFormat `json:"format"`
+	VaultText string                          `json:"vaultText"`
+}
+
+// GenerateAgeIdentitySecretFormat defines model for GenerateAgeIdentitySecret.Format.
+type GenerateAgeIdentitySecretFormat string
+
+// GeneratePasswordEffectiveParameters Every applied password default is populated. Clients ignore unknown properties.
+type GeneratePasswordEffectiveParameters struct {
+	Digits           bool `json:"digits"`
+	ExcludeAmbiguous bool `json:"excludeAmbiguous"`
+	Length           int  `json:"length"`
+	Lowercase        bool `json:"lowercase"`
+	MinDigits        int  `json:"minDigits"`
+	MinLowercase     int  `json:"minLowercase"`
+	MinSymbols       int  `json:"minSymbols"`
+	MinUppercase     int  `json:"minUppercase"`
+	Symbols          bool `json:"symbols"`
+	Uppercase        bool `json:"uppercase"`
+}
+
+// GeneratePasswordParameters Bounded fixed-class password parameters. Runtime validation additionally
+// requires at least one enabled class, rejects non-zero minima for disabled
+// classes, requires the effective minima to fit the length, and requires
+// the exact accepted-set cardinality to be at least 2^128 before consuming
+// randomness.
+type GeneratePasswordParameters struct {
+	// Digits Defaults to true when omitted.
+	Digits *bool `json:"digits,omitempty"`
+
+	// ExcludeAmbiguous Defaults to false when omitted.
+	ExcludeAmbiguous *bool `json:"excludeAmbiguous,omitempty"`
+
+	// Length Defaults to 32 when omitted.
+	Length *int `json:"length,omitempty"`
+
+	// Lowercase Defaults to true when omitted.
+	Lowercase *bool `json:"lowercase,omitempty"`
+
+	// MinDigits Defaults to 1 when digits are enabled and 0 otherwise.
+	MinDigits *int `json:"minDigits,omitempty"`
+
+	// MinLowercase Defaults to 1 when lowercase is enabled and 0 otherwise.
+	MinLowercase *int `json:"minLowercase,omitempty"`
+
+	// MinSymbols Defaults to 1 when symbols are enabled and 0 otherwise.
+	MinSymbols *int `json:"minSymbols,omitempty"`
+
+	// MinUppercase Defaults to 1 when uppercase is enabled and 0 otherwise.
+	MinUppercase *int `json:"minUppercase,omitempty"`
+
+	// Symbols Defaults to false when omitted.
+	Symbols *bool `json:"symbols,omitempty"`
+
+	// Uppercase Defaults to true when omitted.
+	Uppercase *bool `json:"uppercase,omitempty"`
+}
+
+// GeneratePasswordRequest defines model for GeneratePasswordRequest.
+type GeneratePasswordRequest struct {
+	Kind GeneratePasswordRequestKind `json:"kind"`
+
+	// Parameters Bounded fixed-class password parameters. Runtime validation additionally
+	// requires at least one enabled class, rejects non-zero minima for disabled
+	// classes, requires the effective minima to fit the length, and requires
+	// the exact accepted-set cardinality to be at least 2^128 before consuming
+	// randomness.
+	Parameters GeneratePasswordParameters `json:"parameters"`
+
+	// ProfileId Examples: production
+	ProfileId ProfileId `json:"profileId"`
+}
+
+// GeneratePasswordRequestKind defines model for GeneratePasswordRequest.Kind.
+type GeneratePasswordRequestKind string
+
+// GeneratePasswordResponse Current password producer shape. Clients ignore unknown properties.
+type GeneratePasswordResponse struct {
+	// EffectiveParameters Every applied password default is populated. Clients ignore unknown properties.
+	EffectiveParameters GeneratePasswordEffectiveParameters `json:"effectiveParameters"`
+	Kind                GeneratePasswordResponseKind        `json:"kind"`
+
+	// ProfileId Examples: production
+	ProfileId ProfileId `json:"profileId"`
+
+	// Secret Sealed password serialization. Clients ignore unknown properties.
+	Secret GeneratePasswordSecret `json:"secret"`
+}
+
+// GeneratePasswordResponseKind defines model for GeneratePasswordResponse.Kind.
+type GeneratePasswordResponseKind string
+
+// GeneratePasswordSecret Sealed password serialization. Clients ignore unknown properties.
+type GeneratePasswordSecret struct {
+	Format    GeneratePasswordSecretFormat `json:"format"`
+	VaultText string                       `json:"vaultText"`
+}
+
+// GeneratePasswordSecretFormat defines model for GeneratePasswordSecret.Format.
+type GeneratePasswordSecretFormat string
+
+// GenerateRequest defines model for GenerateRequest.
+type GenerateRequest struct {
+	union json.RawMessage
+}
+
+// GenerateResponse Generate success response. The server currently emits only declared
+// properties, while published v1 response schemas remain forward-extensible
+// and clients ignore unknown properties at every response object.
+type GenerateResponse struct {
+	union json.RawMessage
+}
+
+// GenerateSSHKeyAlgorithm defines model for GenerateSSHKeyAlgorithm.
+type GenerateSSHKeyAlgorithm string
+
+// GenerateSSHKeyPairEffectiveParameters Selected SSH algorithm. Clients ignore unknown properties.
+type GenerateSSHKeyPairEffectiveParameters struct {
+	Algorithm GenerateSSHKeyAlgorithm `json:"algorithm"`
+}
+
+// GenerateSSHKeyPairParameters defines model for GenerateSSHKeyPairParameters.
+type GenerateSSHKeyPairParameters struct {
+	Algorithm GenerateSSHKeyAlgorithm `json:"algorithm"`
+}
+
+// GenerateSSHKeyPairPublic OpenSSH public companion. Clients ignore unknown properties.
+type GenerateSSHKeyPairPublic struct {
+	AuthorizedKey string                         `json:"authorizedKey"`
+	Fingerprint   string                         `json:"fingerprint"`
+	Format        GenerateSSHKeyPairPublicFormat `json:"format"`
+}
+
+// GenerateSSHKeyPairPublicFormat defines model for GenerateSSHKeyPairPublic.Format.
+type GenerateSSHKeyPairPublicFormat string
+
+// GenerateSSHKeyPairRequest defines model for GenerateSSHKeyPairRequest.
+type GenerateSSHKeyPairRequest struct {
+	Kind       GenerateSSHKeyPairRequestKind `json:"kind"`
+	Parameters GenerateSSHKeyPairParameters  `json:"parameters"`
+
+	// ProfileId Examples: production
+	ProfileId ProfileId `json:"profileId"`
+}
+
+// GenerateSSHKeyPairRequestKind defines model for GenerateSSHKeyPairRequest.Kind.
+type GenerateSSHKeyPairRequestKind string
+
+// GenerateSSHKeyPairResponse Current SSH keypair producer shape. Clients ignore unknown properties.
+type GenerateSSHKeyPairResponse struct {
+	// EffectiveParameters Selected SSH algorithm. Clients ignore unknown properties.
+	EffectiveParameters GenerateSSHKeyPairEffectiveParameters `json:"effectiveParameters"`
+	Kind                GenerateSSHKeyPairResponseKind        `json:"kind"`
+
+	// ProfileId Examples: production
+	ProfileId ProfileId `json:"profileId"`
+
+	// Public OpenSSH public companion. Clients ignore unknown properties.
+	Public GenerateSSHKeyPairPublic `json:"public"`
+
+	// Secret Sealed OpenSSH private-key serialization. Clients ignore unknown properties.
+	Secret GenerateSSHKeyPairSecret `json:"secret"`
+}
+
+// GenerateSSHKeyPairResponseKind defines model for GenerateSSHKeyPairResponse.Kind.
+type GenerateSSHKeyPairResponseKind string
+
+// GenerateSSHKeyPairSecret Sealed OpenSSH private-key serialization. Clients ignore unknown properties.
+type GenerateSSHKeyPairSecret struct {
+	Format    GenerateSSHKeyPairSecretFormat `json:"format"`
+	VaultText string                         `json:"vaultText"`
+}
+
+// GenerateSSHKeyPairSecretFormat defines model for GenerateSSHKeyPairSecret.Format.
+type GenerateSSHKeyPairSecretFormat string
+
+// GenerateTokenEffectiveParameters Every applied token default is populated. Clients ignore unknown properties.
+type GenerateTokenEffectiveParameters struct {
+	Bytes    int                                      `json:"bytes"`
+	Encoding GenerateTokenEffectiveParametersEncoding `json:"encoding"`
+}
+
+// GenerateTokenEffectiveParametersEncoding defines model for GenerateTokenEffectiveParameters.Encoding.
+type GenerateTokenEffectiveParametersEncoding string
+
+// GenerateTokenParameters defines model for GenerateTokenParameters.
+type GenerateTokenParameters struct {
+	// Bytes Defaults to 32 when omitted.
+	Bytes *int `json:"bytes,omitempty"`
+
+	// Encoding Defaults to base64url when omitted.
+	Encoding *GenerateTokenParametersEncoding `json:"encoding,omitempty"`
+}
+
+// GenerateTokenParametersEncoding Defaults to base64url when omitted.
+type GenerateTokenParametersEncoding string
+
+// GenerateTokenRequest defines model for GenerateTokenRequest.
+type GenerateTokenRequest struct {
+	Kind       GenerateTokenRequestKind `json:"kind"`
+	Parameters GenerateTokenParameters  `json:"parameters"`
+
+	// ProfileId Examples: production
+	ProfileId ProfileId `json:"profileId"`
+}
+
+// GenerateTokenRequestKind defines model for GenerateTokenRequest.Kind.
+type GenerateTokenRequestKind string
+
+// GenerateTokenResponse Current token producer shape. Clients ignore unknown properties.
+type GenerateTokenResponse struct {
+	// EffectiveParameters Every applied token default is populated. Clients ignore unknown properties.
+	EffectiveParameters GenerateTokenEffectiveParameters `json:"effectiveParameters"`
+	Kind                GenerateTokenResponseKind        `json:"kind"`
+
+	// ProfileId Examples: production
+	ProfileId ProfileId `json:"profileId"`
+
+	// Secret Sealed token serialization. Clients ignore unknown properties.
+	Secret GenerateTokenSecret `json:"secret"`
+}
+
+// GenerateTokenResponseKind defines model for GenerateTokenResponse.Kind.
+type GenerateTokenResponseKind string
+
+// GenerateTokenSecret Sealed token serialization. Clients ignore unknown properties.
+type GenerateTokenSecret struct {
+	Format    GenerateTokenSecretFormat `json:"format"`
+	VaultText string                    `json:"vaultText"`
+}
+
+// GenerateTokenSecretFormat defines model for GenerateTokenSecret.Format.
+type GenerateTokenSecretFormat string
+
+// GenerateX509CSREffectiveParameters Selected X.509 private-key algorithm. Clients ignore unknown properties.
+type GenerateX509CSREffectiveParameters struct {
+	Algorithm GenerateX509KeyAlgorithm `json:"algorithm"`
+}
+
+// GenerateX509CSRParameters defines model for GenerateX509CSRParameters.
+type GenerateX509CSRParameters struct {
+	Algorithm GenerateX509KeyAlgorithm `json:"algorithm"`
+	Sans      *GenerateX509SANs        `json:"sans,omitempty"`
+	Subject   *GenerateX509Subject     `json:"subject,omitempty"`
+}
+
+// GenerateX509CSRPublic PKCS#10 CSR and its SHA-256 SPKI fingerprint. Clients ignore unknown properties.
+type GenerateX509CSRPublic struct {
+	CsrPem      string                      `json:"csrPem"`
+	Fingerprint string                      `json:"fingerprint"`
+	Format      GenerateX509CSRPublicFormat `json:"format"`
+}
+
+// GenerateX509CSRPublicFormat defines model for GenerateX509CSRPublic.Format.
+type GenerateX509CSRPublicFormat string
+
+// GenerateX509CSRRequest defines model for GenerateX509CSRRequest.
+type GenerateX509CSRRequest struct {
+	Kind       GenerateX509CSRRequestKind `json:"kind"`
+	Parameters GenerateX509CSRParameters  `json:"parameters"`
+
+	// ProfileId Examples: production
+	ProfileId ProfileId `json:"profileId"`
+}
+
+// GenerateX509CSRRequestKind defines model for GenerateX509CSRRequest.Kind.
+type GenerateX509CSRRequestKind string
+
+// GenerateX509CSRResponse Current X.509 CSR producer shape. Clients ignore unknown properties.
+type GenerateX509CSRResponse struct {
+	// EffectiveParameters Selected X.509 private-key algorithm. Clients ignore unknown properties.
+	EffectiveParameters GenerateX509CSREffectiveParameters `json:"effectiveParameters"`
+	Kind                GenerateX509CSRResponseKind        `json:"kind"`
+
+	// ProfileId Examples: production
+	ProfileId ProfileId `json:"profileId"`
+
+	// Public PKCS#10 CSR and its SHA-256 SPKI fingerprint. Clients ignore unknown properties.
+	Public GenerateX509CSRPublic `json:"public"`
+
+	// Secret Sealed PKCS#8 private-key PEM. Clients ignore unknown properties.
+	Secret GenerateX509CSRSecret `json:"secret"`
+}
+
+// GenerateX509CSRResponseKind defines model for GenerateX509CSRResponse.Kind.
+type GenerateX509CSRResponseKind string
+
+// GenerateX509CSRSecret Sealed PKCS#8 private-key PEM. Clients ignore unknown properties.
+type GenerateX509CSRSecret struct {
+	Format    GenerateX509CSRSecretFormat `json:"format"`
+	VaultText string                      `json:"vaultText"`
+}
+
+// GenerateX509CSRSecretFormat defines model for GenerateX509CSRSecret.Format.
+type GenerateX509CSRSecretFormat string
+
+// GenerateX509CountryValues defines model for GenerateX509CountryValues.
+type GenerateX509CountryValues = []string
+
+// GenerateX509DNSOrEmailSANs defines model for GenerateX509DNSOrEmailSANs.
+type GenerateX509DNSOrEmailSANs = []string
+
+// GenerateX509DNValue defines model for GenerateX509DNValue.
+type GenerateX509DNValue = string
+
+// GenerateX509DNValues defines model for GenerateX509DNValues.
+type GenerateX509DNValues = []GenerateX509DNValue
+
+// GenerateX509IPSANs defines model for GenerateX509IPSANs.
+type GenerateX509IPSANs = []string
+
+// GenerateX509KeyAlgorithm defines model for GenerateX509KeyAlgorithm.
+type GenerateX509KeyAlgorithm string
+
+// GenerateX509SANs defines model for GenerateX509SANs.
+type GenerateX509SANs struct {
+	DnsNames       *GenerateX509DNSOrEmailSANs `json:"dnsNames,omitempty"`
+	EmailAddresses *GenerateX509DNSOrEmailSANs `json:"emailAddresses,omitempty"`
+	IpAddresses    *GenerateX509IPSANs         `json:"ipAddresses,omitempty"`
+	Uris           *GenerateX509URISANs        `json:"uris,omitempty"`
+}
+
+// GenerateX509Subject defines model for GenerateX509Subject.
+type GenerateX509Subject struct {
+	CommonName         *GenerateX509DNValue       `json:"commonName,omitempty"`
+	Country            *GenerateX509CountryValues `json:"country,omitempty"`
+	Locality           *GenerateX509DNValues      `json:"locality,omitempty"`
+	Organization       *GenerateX509DNValues      `json:"organization,omitempty"`
+	OrganizationalUnit *GenerateX509DNValues      `json:"organizationalUnit,omitempty"`
+	PostalCode         *GenerateX509DNValues      `json:"postalCode,omitempty"`
+	Province           *GenerateX509DNValues      `json:"province,omitempty"`
+	SerialNumber       *GenerateX509DNValue       `json:"serialNumber,omitempty"`
+	StreetAddress      *GenerateX509DNValues      `json:"streetAddress,omitempty"`
+}
+
+// GenerateX509URISANs defines model for GenerateX509URISANs.
+type GenerateX509URISANs = []string
 
 // LegacyDecryptRequest defines model for LegacyDecryptRequest.
 type LegacyDecryptRequest struct {
@@ -563,6 +1335,12 @@ type AttestationServiceUnavailable = AttestationErrorResponse
 // Forbidden Safe API error envelope. Clients ignore unknown properties.
 type Forbidden = ErrorResponse
 
+// GenerateOperationFailed Safe API error envelope. Clients ignore unknown properties.
+type GenerateOperationFailed = ErrorResponse
+
+// GenerateServiceUnavailable Safe API error envelope. Clients ignore unknown properties.
+type GenerateServiceUnavailable = ErrorResponse
+
 // InvalidRequest Safe API error envelope. Clients ignore unknown properties.
 type InvalidRequest = ErrorResponse
 
@@ -596,6 +1374,9 @@ type UnsupportedMediaType = ErrorResponse
 // VerifyAttestationJSONRequestBody defines body for VerifyAttestation for application/json ContentType.
 type VerifyAttestationJSONRequestBody = VerifyAttestationRequest
 
+// GenerateMaterialJSONRequestBody defines body for GenerateMaterial for application/json ContentType.
+type GenerateMaterialJSONRequestBody = GenerateRequest
+
 // LegacyOperationJSONRequestBody defines body for LegacyOperation for application/json ContentType.
 //
 // Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
@@ -609,6 +1390,424 @@ type EncryptValueJSONRequestBody = EncryptRequest
 
 // RotateValueJSONRequestBody defines body for RotateValue for application/json ContentType.
 type RotateValueJSONRequestBody = RotateRequest
+
+// AsGeneratePasswordRequest returns the union data inside the GenerateRequest as a GeneratePasswordRequest
+func (t GenerateRequest) AsGeneratePasswordRequest() (GeneratePasswordRequest, error) {
+	var body GeneratePasswordRequest
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGeneratePasswordRequest overwrites any union data inside the GenerateRequest as the provided GeneratePasswordRequest
+func (t *GenerateRequest) FromGeneratePasswordRequest(v GeneratePasswordRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"password"}`))
+	t.union = b
+	return err
+}
+
+// MergeGeneratePasswordRequest performs a merge with any union data inside the GenerateRequest, using the provided GeneratePasswordRequest
+func (t *GenerateRequest) MergeGeneratePasswordRequest(v GeneratePasswordRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"password"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGenerateTokenRequest returns the union data inside the GenerateRequest as a GenerateTokenRequest
+func (t GenerateRequest) AsGenerateTokenRequest() (GenerateTokenRequest, error) {
+	var body GenerateTokenRequest
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGenerateTokenRequest overwrites any union data inside the GenerateRequest as the provided GenerateTokenRequest
+func (t *GenerateRequest) FromGenerateTokenRequest(v GenerateTokenRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"token"}`))
+	t.union = b
+	return err
+}
+
+// MergeGenerateTokenRequest performs a merge with any union data inside the GenerateRequest, using the provided GenerateTokenRequest
+func (t *GenerateRequest) MergeGenerateTokenRequest(v GenerateTokenRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"token"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGenerateSSHKeyPairRequest returns the union data inside the GenerateRequest as a GenerateSSHKeyPairRequest
+func (t GenerateRequest) AsGenerateSSHKeyPairRequest() (GenerateSSHKeyPairRequest, error) {
+	var body GenerateSSHKeyPairRequest
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGenerateSSHKeyPairRequest overwrites any union data inside the GenerateRequest as the provided GenerateSSHKeyPairRequest
+func (t *GenerateRequest) FromGenerateSSHKeyPairRequest(v GenerateSSHKeyPairRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"ssh_keypair"}`))
+	t.union = b
+	return err
+}
+
+// MergeGenerateSSHKeyPairRequest performs a merge with any union data inside the GenerateRequest, using the provided GenerateSSHKeyPairRequest
+func (t *GenerateRequest) MergeGenerateSSHKeyPairRequest(v GenerateSSHKeyPairRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"ssh_keypair"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGenerateAgeIdentityRequest returns the union data inside the GenerateRequest as a GenerateAgeIdentityRequest
+func (t GenerateRequest) AsGenerateAgeIdentityRequest() (GenerateAgeIdentityRequest, error) {
+	var body GenerateAgeIdentityRequest
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGenerateAgeIdentityRequest overwrites any union data inside the GenerateRequest as the provided GenerateAgeIdentityRequest
+func (t *GenerateRequest) FromGenerateAgeIdentityRequest(v GenerateAgeIdentityRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"age_identity"}`))
+	t.union = b
+	return err
+}
+
+// MergeGenerateAgeIdentityRequest performs a merge with any union data inside the GenerateRequest, using the provided GenerateAgeIdentityRequest
+func (t *GenerateRequest) MergeGenerateAgeIdentityRequest(v GenerateAgeIdentityRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"age_identity"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGenerateX509CSRRequest returns the union data inside the GenerateRequest as a GenerateX509CSRRequest
+func (t GenerateRequest) AsGenerateX509CSRRequest() (GenerateX509CSRRequest, error) {
+	var body GenerateX509CSRRequest
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGenerateX509CSRRequest overwrites any union data inside the GenerateRequest as the provided GenerateX509CSRRequest
+func (t *GenerateRequest) FromGenerateX509CSRRequest(v GenerateX509CSRRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"x509_csr"}`))
+	t.union = b
+	return err
+}
+
+// MergeGenerateX509CSRRequest performs a merge with any union data inside the GenerateRequest, using the provided GenerateX509CSRRequest
+func (t *GenerateRequest) MergeGenerateX509CSRRequest(v GenerateX509CSRRequest) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"x509_csr"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t GenerateRequest) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"kind"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t GenerateRequest) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "age_identity":
+		return t.AsGenerateAgeIdentityRequest()
+	case "password":
+		return t.AsGeneratePasswordRequest()
+	case "ssh_keypair":
+		return t.AsGenerateSSHKeyPairRequest()
+	case "token":
+		return t.AsGenerateTokenRequest()
+	case "x509_csr":
+		return t.AsGenerateX509CSRRequest()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
+
+func (t GenerateRequest) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *GenerateRequest) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsGeneratePasswordResponse returns the union data inside the GenerateResponse as a GeneratePasswordResponse
+func (t GenerateResponse) AsGeneratePasswordResponse() (GeneratePasswordResponse, error) {
+	var body GeneratePasswordResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGeneratePasswordResponse overwrites any union data inside the GenerateResponse as the provided GeneratePasswordResponse
+func (t *GenerateResponse) FromGeneratePasswordResponse(v GeneratePasswordResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"password"}`))
+	t.union = b
+	return err
+}
+
+// MergeGeneratePasswordResponse performs a merge with any union data inside the GenerateResponse, using the provided GeneratePasswordResponse
+func (t *GenerateResponse) MergeGeneratePasswordResponse(v GeneratePasswordResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"password"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGenerateTokenResponse returns the union data inside the GenerateResponse as a GenerateTokenResponse
+func (t GenerateResponse) AsGenerateTokenResponse() (GenerateTokenResponse, error) {
+	var body GenerateTokenResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGenerateTokenResponse overwrites any union data inside the GenerateResponse as the provided GenerateTokenResponse
+func (t *GenerateResponse) FromGenerateTokenResponse(v GenerateTokenResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"token"}`))
+	t.union = b
+	return err
+}
+
+// MergeGenerateTokenResponse performs a merge with any union data inside the GenerateResponse, using the provided GenerateTokenResponse
+func (t *GenerateResponse) MergeGenerateTokenResponse(v GenerateTokenResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"token"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGenerateSSHKeyPairResponse returns the union data inside the GenerateResponse as a GenerateSSHKeyPairResponse
+func (t GenerateResponse) AsGenerateSSHKeyPairResponse() (GenerateSSHKeyPairResponse, error) {
+	var body GenerateSSHKeyPairResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGenerateSSHKeyPairResponse overwrites any union data inside the GenerateResponse as the provided GenerateSSHKeyPairResponse
+func (t *GenerateResponse) FromGenerateSSHKeyPairResponse(v GenerateSSHKeyPairResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"ssh_keypair"}`))
+	t.union = b
+	return err
+}
+
+// MergeGenerateSSHKeyPairResponse performs a merge with any union data inside the GenerateResponse, using the provided GenerateSSHKeyPairResponse
+func (t *GenerateResponse) MergeGenerateSSHKeyPairResponse(v GenerateSSHKeyPairResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"ssh_keypair"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGenerateAgeIdentityResponse returns the union data inside the GenerateResponse as a GenerateAgeIdentityResponse
+func (t GenerateResponse) AsGenerateAgeIdentityResponse() (GenerateAgeIdentityResponse, error) {
+	var body GenerateAgeIdentityResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGenerateAgeIdentityResponse overwrites any union data inside the GenerateResponse as the provided GenerateAgeIdentityResponse
+func (t *GenerateResponse) FromGenerateAgeIdentityResponse(v GenerateAgeIdentityResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"age_identity"}`))
+	t.union = b
+	return err
+}
+
+// MergeGenerateAgeIdentityResponse performs a merge with any union data inside the GenerateResponse, using the provided GenerateAgeIdentityResponse
+func (t *GenerateResponse) MergeGenerateAgeIdentityResponse(v GenerateAgeIdentityResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"age_identity"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsGenerateX509CSRResponse returns the union data inside the GenerateResponse as a GenerateX509CSRResponse
+func (t GenerateResponse) AsGenerateX509CSRResponse() (GenerateX509CSRResponse, error) {
+	var body GenerateX509CSRResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromGenerateX509CSRResponse overwrites any union data inside the GenerateResponse as the provided GenerateX509CSRResponse
+func (t *GenerateResponse) FromGenerateX509CSRResponse(v GenerateX509CSRResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"x509_csr"}`))
+	t.union = b
+	return err
+}
+
+// MergeGenerateX509CSRResponse performs a merge with any union data inside the GenerateResponse, using the provided GenerateX509CSRResponse
+func (t *GenerateResponse) MergeGenerateX509CSRResponse(v GenerateX509CSRResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	b, err = runtime.JSONMerge(b, []byte(`{"kind":"x509_csr"}`))
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t GenerateResponse) Discriminator() (string, error) {
+	var discriminator struct {
+		Discriminator string `json:"kind"`
+	}
+	err := json.Unmarshal(t.union, &discriminator)
+	return discriminator.Discriminator, err
+}
+
+func (t GenerateResponse) ValueByDiscriminator() (interface{}, error) {
+	discriminator, err := t.Discriminator()
+	if err != nil {
+		return nil, err
+	}
+	switch discriminator {
+	case "age_identity":
+		return t.AsGenerateAgeIdentityResponse()
+	case "password":
+		return t.AsGeneratePasswordResponse()
+	case "ssh_keypair":
+		return t.AsGenerateSSHKeyPairResponse()
+	case "token":
+		return t.AsGenerateTokenResponse()
+	case "x509_csr":
+		return t.AsGenerateX509CSRResponse()
+	default:
+		return nil, errors.New("unknown discriminator value: " + discriminator)
+	}
+}
+
+func (t GenerateResponse) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *GenerateResponse) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
 
 // AsLegacyEncryptRequest returns the union data inside the LegacyOperationRequest as a LegacyEncryptRequest
 func (t LegacyOperationRequest) AsLegacyEncryptRequest() (LegacyEncryptRequest, error) {

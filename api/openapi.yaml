@@ -1,4 +1,5 @@
 openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Vaultsmith REST API
   version: 1.0.0
@@ -270,6 +271,86 @@ paths:
           $ref: "#/components/responses/OperationFailed"
         "503":
           $ref: "#/components/responses/AttestationServiceUnavailable"
+  /api/v1/generate:
+    post:
+      operationId: generateMaterial
+      tags:
+        - Operations
+      summary: Generate and seal private material
+      description: |
+        Generates one password, token, SSH keypair, age X25519 identity, or
+        X.509 private key and PKCS#10 CSR in memory. The exact private
+        serialization is encrypted with the selected server-owned profile and
+        only the resulting Ansible Vault text and kind-specific public companion
+        are returned. Private plaintext is never returned, persisted, or made
+        available through a replay or recovery endpoint. This randomized
+        operation is not idempotent and callers must not retry an ambiguous or
+        failed invocation automatically. An Idempotency-Key header is rejected.
+      security:
+        - SessionCookie: []
+          CsrfHeader: []
+        - BearerAuth: []
+      x-required-bearer-scope: vaultsmith.encrypt
+      x-request-deadline-seconds: 30
+      x-max-body-bytes: 65536
+      x-no-automatic-retry: true
+      x-rejected-request-headers:
+        - Idempotency-Key
+      x-response-compression: false
+      x-etag: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateRequest"
+            example:
+              kind: ssh_keypair
+              profileId: production
+              parameters:
+                algorithm: ed25519
+      responses:
+        "200":
+          description: Newly generated private material sealed as Ansible Vault text, with its permitted public companion.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerateResponse"
+              example:
+                kind: ssh_keypair
+                profileId: production
+                effectiveParameters:
+                  algorithm: ed25519
+                secret:
+                  format: openssh_private_key
+                  vaultText: "$ANSIBLE_VAULT;1.2;AES256;production\n31323334"
+                public:
+                  format: openssh_authorized_key
+                  authorizedKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISyntheticExampleOnly
+                  fingerprint: SHA256:syntheticExampleOnly
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowedPost"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/GenerateOperationFailed"
+        "503":
+          $ref: "#/components/responses/GenerateServiceUnavailable"
   /api/v1/attestations/verify:
     post:
       operationId: verifyAttestation
@@ -701,6 +782,55 @@ components:
             error:
               code: operation_failed
               message: vault operation failed
+    GenerateOperationFailed:
+      description: |
+        Generation, native serialization, consistency validation, or Vault
+        encryption failed. Underlying random, key-library, serialization,
+        profile-password, and Vault errors are intentionally indistinguishable.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: operation_failed
+              message: vault operation failed
+    GenerateServiceUnavailable:
+      description: |
+        Startup state, CSRF setup, a runtime authentication dependency,
+        operation admission, cancellation, or the 30-second application
+        deadline prevented completion. Retry-After is never emitted for this
+        randomized, non-idempotent operation.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            notReady:
+              value:
+                error:
+                  code: not_ready
+                  message: service is not ready
+            csrfUnavailable:
+              value:
+                error:
+                  code: csrf_unavailable
+                  message: service is temporarily unavailable
+            temporarilyUnavailable:
+              value:
+                error:
+                  code: temporarily_unavailable
+                  message: service is temporarily unavailable
     ServiceUnavailable:
       description: |
         Startup state, a runtime authentication dependency, operation admission,
@@ -874,6 +1004,638 @@ components:
           description: Ansible Vault 1.2/AES256 text labeled with the destination profile.
         attestation:
           $ref: "#/components/schemas/RotationAttestation"
+    GenerateRequest:
+      oneOf:
+        - $ref: "#/components/schemas/GeneratePasswordRequest"
+        - $ref: "#/components/schemas/GenerateTokenRequest"
+        - $ref: "#/components/schemas/GenerateSSHKeyPairRequest"
+        - $ref: "#/components/schemas/GenerateAgeIdentityRequest"
+        - $ref: "#/components/schemas/GenerateX509CSRRequest"
+      discriminator:
+        propertyName: kind
+        mapping:
+          password: "#/components/schemas/GeneratePasswordRequest"
+          token: "#/components/schemas/GenerateTokenRequest"
+          ssh_keypair: "#/components/schemas/GenerateSSHKeyPairRequest"
+          age_identity: "#/components/schemas/GenerateAgeIdentityRequest"
+          x509_csr: "#/components/schemas/GenerateX509CSRRequest"
+    GeneratePasswordRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - profileId
+        - parameters
+      properties:
+        kind:
+          type: string
+          const: password
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        parameters:
+          $ref: "#/components/schemas/GeneratePasswordParameters"
+    GenerateTokenRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - profileId
+        - parameters
+      properties:
+        kind:
+          type: string
+          const: token
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        parameters:
+          $ref: "#/components/schemas/GenerateTokenParameters"
+    GenerateSSHKeyPairRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - profileId
+        - parameters
+      properties:
+        kind:
+          type: string
+          const: ssh_keypair
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        parameters:
+          $ref: "#/components/schemas/GenerateSSHKeyPairParameters"
+    GenerateAgeIdentityRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - profileId
+        - parameters
+      properties:
+        kind:
+          type: string
+          const: age_identity
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        parameters:
+          $ref: "#/components/schemas/GenerateAgeIdentityParameters"
+    GenerateX509CSRRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - profileId
+        - parameters
+      properties:
+        kind:
+          type: string
+          const: x509_csr
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        parameters:
+          $ref: "#/components/schemas/GenerateX509CSRParameters"
+    GeneratePasswordParameters:
+      type: object
+      additionalProperties: false
+      description: |
+        Bounded fixed-class password parameters. Runtime validation additionally
+        requires at least one enabled class, rejects non-zero minima for disabled
+        classes, requires the effective minima to fit the length, and requires
+        the exact accepted-set cardinality to be at least 2^128 before consuming
+        randomness.
+      properties:
+        length:
+          type: integer
+          minimum: 22
+          maximum: 128
+          description: Defaults to 32 when omitted.
+          default: 32
+        lowercase:
+          type: boolean
+          description: Defaults to true when omitted.
+          default: true
+        uppercase:
+          type: boolean
+          description: Defaults to true when omitted.
+          default: true
+        digits:
+          type: boolean
+          description: Defaults to true when omitted.
+          default: true
+        symbols:
+          type: boolean
+          description: Defaults to false when omitted.
+          default: false
+        minLowercase:
+          type: integer
+          minimum: 0
+          maximum: 32
+          description: Defaults to 1 when lowercase is enabled and 0 otherwise.
+          x-default: 1 when effective lowercase is true; otherwise 0
+        minUppercase:
+          type: integer
+          minimum: 0
+          maximum: 32
+          description: Defaults to 1 when uppercase is enabled and 0 otherwise.
+          x-default: 1 when effective uppercase is true; otherwise 0
+        minDigits:
+          type: integer
+          minimum: 0
+          maximum: 32
+          description: Defaults to 1 when digits are enabled and 0 otherwise.
+          x-default: 1 when effective digits is true; otherwise 0
+        minSymbols:
+          type: integer
+          minimum: 0
+          maximum: 32
+          description: Defaults to 1 when symbols are enabled and 0 otherwise.
+          x-default: 1 when effective symbols is true; otherwise 0
+        excludeAmbiguous:
+          type: boolean
+          description: Defaults to false when omitted.
+          default: false
+      x-semanticConstraints:
+        - At least one class is enabled
+        - A non-zero minimum requires its corresponding class
+        - The sum of effective minima does not exceed length
+        - The exact accepted-set cardinality N is at least 2^128
+    GenerateTokenParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        encoding:
+          type: string
+          enum:
+            - base64url
+            - hex
+          description: Defaults to base64url when omitted.
+          default: base64url
+        bytes:
+          type: integer
+          minimum: 16
+          maximum: 64
+          description: Defaults to 32 when omitted.
+          default: 32
+    GenerateSSHKeyPairParameters:
+      type: object
+      additionalProperties: false
+      required:
+        - algorithm
+      properties:
+        algorithm:
+          $ref: "#/components/schemas/GenerateSSHKeyAlgorithm"
+    GenerateAgeIdentityParameters:
+      type: object
+      additionalProperties: false
+      properties: {}
+      x-go-type: struct{}
+    GenerateX509CSRParameters:
+      type: object
+      additionalProperties: false
+      required:
+        - algorithm
+      properties:
+        algorithm:
+          $ref: "#/components/schemas/GenerateX509KeyAlgorithm"
+        subject:
+          $ref: "#/components/schemas/GenerateX509Subject"
+        sans:
+          $ref: "#/components/schemas/GenerateX509SANs"
+      x-requiresOneOf:
+        - subject.commonName
+        - at least one item in any sans array
+      x-preservation: Identity string bytes and SAN array order are preserved; repeated DN values are encoded in canonical DER SET order; no case folding, IDNA conversion, Unicode normalization, or cross-field deduplication
+    GenerateSSHKeyAlgorithm:
+      type: string
+      enum:
+        - ed25519
+        - ecdsa_p256
+        - rsa_3072
+        - rsa_4096
+    GenerateX509KeyAlgorithm:
+      type: string
+      enum:
+        - ed25519
+        - ecdsa_p256
+        - ecdsa_p384
+        - rsa_3072
+        - rsa_4096
+    GenerateX509DNValue:
+      type: string
+      minLength: 1
+      x-maxUtf8Bytes: 256
+      x-leadingOrTrailingUnicodeWhitespace: reject
+      x-nulOrAsciiControl: reject
+    GenerateX509DNValues:
+      type: array
+      minItems: 1
+      maxItems: 8
+      uniqueItems: true
+      items:
+        $ref: "#/components/schemas/GenerateX509DNValue"
+    GenerateX509CountryValues:
+      type: array
+      minItems: 1
+      maxItems: 8
+      uniqueItems: true
+      items:
+        type: string
+        pattern: "^[A-Z]{2}$"
+    GenerateX509DNSOrEmailSANs:
+      type: array
+      minItems: 1
+      maxItems: 64
+      uniqueItems: true
+      items:
+        type: string
+        minLength: 1
+        x-asciiOnly: true
+        x-maxAsciiBytes: 253
+        x-leadingOrTrailingUnicodeWhitespace: reject
+        x-nulOrAsciiControl: reject
+    GenerateX509IPSANs:
+      type: array
+      minItems: 1
+      maxItems: 64
+      uniqueItems: true
+      items:
+        type: string
+        minLength: 1
+        x-format: canonical unscoped IPv4 or IPv6 text, excluding IPv4-mapped IPv6
+    GenerateX509URISANs:
+      type: array
+      minItems: 1
+      maxItems: 64
+      uniqueItems: true
+      items:
+        type: string
+        minLength: 1
+        x-asciiOnly: true
+        x-maxAsciiBytes: 2048
+        x-format: RFC 3986 ASCII absolute URI with scheme
+        x-leadingOrTrailingUnicodeWhitespace: reject
+        x-nulOrAsciiControl: reject
+    GenerateX509Subject:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        commonName:
+          $ref: "#/components/schemas/GenerateX509DNValue"
+        serialNumber:
+          $ref: "#/components/schemas/GenerateX509DNValue"
+        country:
+          $ref: "#/components/schemas/GenerateX509CountryValues"
+        organization:
+          $ref: "#/components/schemas/GenerateX509DNValues"
+        organizationalUnit:
+          $ref: "#/components/schemas/GenerateX509DNValues"
+        locality:
+          $ref: "#/components/schemas/GenerateX509DNValues"
+        province:
+          $ref: "#/components/schemas/GenerateX509DNValues"
+        streetAddress:
+          $ref: "#/components/schemas/GenerateX509DNValues"
+        postalCode:
+          $ref: "#/components/schemas/GenerateX509DNValues"
+    GenerateX509SANs:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        dnsNames:
+          $ref: "#/components/schemas/GenerateX509DNSOrEmailSANs"
+          x-format: ASCII DNS A-labels
+        ipAddresses:
+          $ref: "#/components/schemas/GenerateX509IPSANs"
+        emailAddresses:
+          $ref: "#/components/schemas/GenerateX509DNSOrEmailSANs"
+          x-format: addr-spec without display name
+        uris:
+          $ref: "#/components/schemas/GenerateX509URISANs"
+      x-totalItemsMaximum: 64
+    GenerateResponse:
+      description: |
+        Generate success response. The server currently emits only declared
+        properties, while published v1 response schemas remain forward-extensible
+        and clients ignore unknown properties at every response object.
+      oneOf:
+        - $ref: "#/components/schemas/GeneratePasswordResponse"
+        - $ref: "#/components/schemas/GenerateTokenResponse"
+        - $ref: "#/components/schemas/GenerateSSHKeyPairResponse"
+        - $ref: "#/components/schemas/GenerateAgeIdentityResponse"
+        - $ref: "#/components/schemas/GenerateX509CSRResponse"
+      discriminator:
+        propertyName: kind
+        mapping:
+          password: "#/components/schemas/GeneratePasswordResponse"
+          token: "#/components/schemas/GenerateTokenResponse"
+          ssh_keypair: "#/components/schemas/GenerateSSHKeyPairResponse"
+          age_identity: "#/components/schemas/GenerateAgeIdentityResponse"
+          x509_csr: "#/components/schemas/GenerateX509CSRResponse"
+    GeneratePasswordResponse:
+      type: object
+      description: Current password producer shape. Clients ignore unknown properties.
+      required:
+        - kind
+        - profileId
+        - effectiveParameters
+        - secret
+      properties:
+        kind:
+          type: string
+          const: password
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        effectiveParameters:
+          $ref: "#/components/schemas/GeneratePasswordEffectiveParameters"
+        secret:
+          $ref: "#/components/schemas/GeneratePasswordSecret"
+    GenerateTokenResponse:
+      type: object
+      description: Current token producer shape. Clients ignore unknown properties.
+      required:
+        - kind
+        - profileId
+        - effectiveParameters
+        - secret
+      properties:
+        kind:
+          type: string
+          const: token
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        effectiveParameters:
+          $ref: "#/components/schemas/GenerateTokenEffectiveParameters"
+        secret:
+          $ref: "#/components/schemas/GenerateTokenSecret"
+      x-secretFormatByEncoding:
+        base64url: token_base64url
+        hex: token_hex
+    GenerateSSHKeyPairResponse:
+      type: object
+      description: Current SSH keypair producer shape. Clients ignore unknown properties.
+      required:
+        - kind
+        - profileId
+        - effectiveParameters
+        - secret
+        - public
+      properties:
+        kind:
+          type: string
+          const: ssh_keypair
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        effectiveParameters:
+          $ref: "#/components/schemas/GenerateSSHKeyPairEffectiveParameters"
+        secret:
+          $ref: "#/components/schemas/GenerateSSHKeyPairSecret"
+        public:
+          $ref: "#/components/schemas/GenerateSSHKeyPairPublic"
+    GenerateAgeIdentityResponse:
+      type: object
+      description: Current age identity producer shape. Clients ignore unknown properties.
+      required:
+        - kind
+        - profileId
+        - effectiveParameters
+        - secret
+        - public
+      properties:
+        kind:
+          type: string
+          const: age_identity
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        effectiveParameters:
+          $ref: "#/components/schemas/GenerateAgeIdentityEffectiveParameters"
+        secret:
+          $ref: "#/components/schemas/GenerateAgeIdentitySecret"
+        public:
+          $ref: "#/components/schemas/GenerateAgeIdentityPublic"
+    GenerateX509CSRResponse:
+      type: object
+      description: Current X.509 CSR producer shape. Clients ignore unknown properties.
+      required:
+        - kind
+        - profileId
+        - effectiveParameters
+        - secret
+        - public
+      properties:
+        kind:
+          type: string
+          const: x509_csr
+        profileId:
+          $ref: "#/components/schemas/ProfileId"
+        effectiveParameters:
+          $ref: "#/components/schemas/GenerateX509CSREffectiveParameters"
+        secret:
+          $ref: "#/components/schemas/GenerateX509CSRSecret"
+        public:
+          $ref: "#/components/schemas/GenerateX509CSRPublic"
+    GeneratePasswordEffectiveParameters:
+      type: object
+      description: Every applied password default is populated. Clients ignore unknown properties.
+      required:
+        - length
+        - lowercase
+        - uppercase
+        - digits
+        - symbols
+        - minLowercase
+        - minUppercase
+        - minDigits
+        - minSymbols
+        - excludeAmbiguous
+      properties:
+        length:
+          type: integer
+          minimum: 22
+          maximum: 128
+        lowercase:
+          type: boolean
+        uppercase:
+          type: boolean
+        digits:
+          type: boolean
+        symbols:
+          type: boolean
+        minLowercase:
+          type: integer
+          minimum: 0
+          maximum: 32
+        minUppercase:
+          type: integer
+          minimum: 0
+          maximum: 32
+        minDigits:
+          type: integer
+          minimum: 0
+          maximum: 32
+        minSymbols:
+          type: integer
+          minimum: 0
+          maximum: 32
+        excludeAmbiguous:
+          type: boolean
+    GenerateTokenEffectiveParameters:
+      type: object
+      description: Every applied token default is populated. Clients ignore unknown properties.
+      required:
+        - encoding
+        - bytes
+      properties:
+        encoding:
+          type: string
+          enum:
+            - base64url
+            - hex
+        bytes:
+          type: integer
+          minimum: 16
+          maximum: 64
+    GenerateSSHKeyPairEffectiveParameters:
+      type: object
+      description: Selected SSH algorithm. Clients ignore unknown properties.
+      required:
+        - algorithm
+      properties:
+        algorithm:
+          $ref: "#/components/schemas/GenerateSSHKeyAlgorithm"
+    GenerateAgeIdentityEffectiveParameters:
+      type: object
+      description: Fixed age identity algorithm. Clients ignore unknown properties.
+      required:
+        - algorithm
+      properties:
+        algorithm:
+          type: string
+          const: x25519
+    GenerateX509CSREffectiveParameters:
+      type: object
+      description: Selected X.509 private-key algorithm. Clients ignore unknown properties.
+      required:
+        - algorithm
+      properties:
+        algorithm:
+          $ref: "#/components/schemas/GenerateX509KeyAlgorithm"
+    GeneratePasswordSecret:
+      type: object
+      description: Sealed password serialization. Clients ignore unknown properties.
+      required:
+        - format
+        - vaultText
+      properties:
+        format:
+          type: string
+          const: password_ascii
+        vaultText:
+          type: string
+          minLength: 1
+    GenerateTokenSecret:
+      type: object
+      description: Sealed token serialization. Clients ignore unknown properties.
+      required:
+        - format
+        - vaultText
+      properties:
+        format:
+          type: string
+          enum:
+            - token_base64url
+            - token_hex
+        vaultText:
+          type: string
+          minLength: 1
+    GenerateSSHKeyPairSecret:
+      type: object
+      description: Sealed OpenSSH private-key serialization. Clients ignore unknown properties.
+      required:
+        - format
+        - vaultText
+      properties:
+        format:
+          type: string
+          const: openssh_private_key
+        vaultText:
+          type: string
+          minLength: 1
+    GenerateAgeIdentitySecret:
+      type: object
+      description: Sealed native age X25519 identity. Clients ignore unknown properties.
+      required:
+        - format
+        - vaultText
+      properties:
+        format:
+          type: string
+          const: age_x25519_identity
+        vaultText:
+          type: string
+          minLength: 1
+    GenerateX509CSRSecret:
+      type: object
+      description: Sealed PKCS#8 private-key PEM. Clients ignore unknown properties.
+      required:
+        - format
+        - vaultText
+      properties:
+        format:
+          type: string
+          const: pkcs8_private_key_pem
+        vaultText:
+          type: string
+          minLength: 1
+    GenerateSSHKeyPairPublic:
+      type: object
+      description: OpenSSH public companion. Clients ignore unknown properties.
+      required:
+        - format
+        - authorizedKey
+        - fingerprint
+      properties:
+        format:
+          type: string
+          const: openssh_authorized_key
+        authorizedKey:
+          type: string
+          minLength: 1
+        fingerprint:
+          type: string
+          pattern: "^SHA256:[A-Za-z0-9+/]+$"
+    GenerateAgeIdentityPublic:
+      type: object
+      description: Native age X25519 recipient. Clients ignore unknown properties.
+      required:
+        - format
+        - recipient
+      properties:
+        format:
+          type: string
+          const: age_x25519_recipient
+        recipient:
+          type: string
+          pattern: "^age1[0-9a-z]+$"
+    GenerateX509CSRPublic:
+      type: object
+      description: PKCS#10 CSR and its SHA-256 SPKI fingerprint. Clients ignore unknown properties.
+      required:
+        - format
+        - csrPem
+        - fingerprint
+      properties:
+        format:
+          type: string
+          const: pkcs10_csr_pem
+        csrPem:
+          type: string
+          minLength: 1
+          x-format: CERTIFICATE REQUEST PEM with exactly one terminal LF
+        fingerprint:
+          type: string
+          pattern: "^SHA256:[A-Za-z0-9+/]+$"
     RotationAttestationRequest:
       type: object
       additionalProperties: false
@@ -1221,10 +1983,12 @@ components:
             - invalid_request
             - unauthorized
             - forbidden
+            - csrf_failed
             - not_found
             - method_not_allowed
             - operation_failed
             - not_ready
+            - csrf_unavailable
             - temporarily_unavailable
         message:
           type: string
