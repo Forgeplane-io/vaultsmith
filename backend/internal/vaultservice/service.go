@@ -90,6 +90,7 @@ type Service struct {
 	byID               map[string]catalogEntry
 	authorizer         Authorizer
 	admission          *Admission
+	generator          MaterialGenerator
 	ready              bool
 	attestation        AttestationManager
 	attestationEnabled bool

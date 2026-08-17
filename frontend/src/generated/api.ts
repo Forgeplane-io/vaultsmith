@@ -103,6 +103,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate and seal private material
+         * @description Generates one password, token, SSH keypair, age X25519 identity, or
+         *     X.509 private key and PKCS#10 CSR in memory. The exact private
+         *     serialization is encrypted with the selected server-owned profile and
+         *     only the resulting Ansible Vault text and kind-specific public companion
+         *     are returned. Private plaintext is never returned, persisted, or made
+         *     available through a replay or recovery endpoint. This randomized
+         *     operation is not idempotent and callers must not retry an ambiguous or
+         *     failed invocation automatically. An Idempotency-Key header is rejected.
+         */
+        post: operations["generateMaterial"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/attestations/verify": {
         parameters: {
             query?: never;
@@ -262,6 +289,294 @@ export interface components {
             vaultText: string;
             attestation?: components["schemas"]["RotationAttestation"];
         };
+        GenerateRequest: components["schemas"]["GeneratePasswordRequest"] | components["schemas"]["GenerateTokenRequest"] | components["schemas"]["GenerateSSHKeyPairRequest"] | components["schemas"]["GenerateAgeIdentityRequest"] | components["schemas"]["GenerateX509CSRRequest"];
+        GeneratePasswordRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "password";
+            profileId: components["schemas"]["ProfileId"];
+            parameters: components["schemas"]["GeneratePasswordParameters"];
+        };
+        GenerateTokenRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "token";
+            profileId: components["schemas"]["ProfileId"];
+            parameters: components["schemas"]["GenerateTokenParameters"];
+        };
+        GenerateSSHKeyPairRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ssh_keypair";
+            profileId: components["schemas"]["ProfileId"];
+            parameters: components["schemas"]["GenerateSSHKeyPairParameters"];
+        };
+        GenerateAgeIdentityRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "age_identity";
+            profileId: components["schemas"]["ProfileId"];
+            parameters: components["schemas"]["GenerateAgeIdentityParameters"];
+        };
+        GenerateX509CSRRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "x509_csr";
+            profileId: components["schemas"]["ProfileId"];
+            parameters: components["schemas"]["GenerateX509CSRParameters"];
+        };
+        /**
+         * @description Bounded fixed-class password parameters. Runtime validation additionally
+         *     requires at least one enabled class, rejects non-zero minima for disabled
+         *     classes, requires the effective minima to fit the length, and requires
+         *     the exact accepted-set cardinality to be at least 2^128 before consuming
+         *     randomness.
+         */
+        GeneratePasswordParameters: {
+            /**
+             * @description Defaults to 32 when omitted.
+             * @default 32
+             */
+            length?: number;
+            /**
+             * @description Defaults to true when omitted.
+             * @default true
+             */
+            lowercase?: boolean;
+            /**
+             * @description Defaults to true when omitted.
+             * @default true
+             */
+            uppercase?: boolean;
+            /**
+             * @description Defaults to true when omitted.
+             * @default true
+             */
+            digits?: boolean;
+            /**
+             * @description Defaults to false when omitted.
+             * @default false
+             */
+            symbols?: boolean;
+            /** @description Defaults to 1 when lowercase is enabled and 0 otherwise. */
+            minLowercase?: number;
+            /** @description Defaults to 1 when uppercase is enabled and 0 otherwise. */
+            minUppercase?: number;
+            /** @description Defaults to 1 when digits are enabled and 0 otherwise. */
+            minDigits?: number;
+            /** @description Defaults to 1 when symbols are enabled and 0 otherwise. */
+            minSymbols?: number;
+            /**
+             * @description Defaults to false when omitted.
+             * @default false
+             */
+            excludeAmbiguous?: boolean;
+        };
+        GenerateTokenParameters: {
+            /**
+             * @description Defaults to base64url when omitted.
+             * @default base64url
+             * @enum {string}
+             */
+            encoding?: "base64url" | "hex";
+            /**
+             * @description Defaults to 32 when omitted.
+             * @default 32
+             */
+            bytes?: number;
+        };
+        GenerateSSHKeyPairParameters: {
+            algorithm: components["schemas"]["GenerateSSHKeyAlgorithm"];
+        };
+        GenerateAgeIdentityParameters: Record<string, never>;
+        GenerateX509CSRParameters: {
+            algorithm: components["schemas"]["GenerateX509KeyAlgorithm"];
+            subject?: components["schemas"]["GenerateX509Subject"];
+            sans?: components["schemas"]["GenerateX509SANs"];
+        };
+        /** @enum {string} */
+        GenerateSSHKeyAlgorithm: "ed25519" | "ecdsa_p256" | "rsa_3072" | "rsa_4096";
+        /** @enum {string} */
+        GenerateX509KeyAlgorithm: "ed25519" | "ecdsa_p256" | "ecdsa_p384" | "rsa_3072" | "rsa_4096";
+        GenerateX509DNValue: string;
+        GenerateX509DNValues: components["schemas"]["GenerateX509DNValue"][];
+        GenerateX509CountryValues: string[];
+        GenerateX509DNSOrEmailSANs: string[];
+        GenerateX509IPSANs: string[];
+        GenerateX509URISANs: string[];
+        GenerateX509Subject: {
+            commonName?: components["schemas"]["GenerateX509DNValue"];
+            serialNumber?: components["schemas"]["GenerateX509DNValue"];
+            country?: components["schemas"]["GenerateX509CountryValues"];
+            organization?: components["schemas"]["GenerateX509DNValues"];
+            organizationalUnit?: components["schemas"]["GenerateX509DNValues"];
+            locality?: components["schemas"]["GenerateX509DNValues"];
+            province?: components["schemas"]["GenerateX509DNValues"];
+            streetAddress?: components["schemas"]["GenerateX509DNValues"];
+            postalCode?: components["schemas"]["GenerateX509DNValues"];
+        };
+        GenerateX509SANs: {
+            dnsNames?: components["schemas"]["GenerateX509DNSOrEmailSANs"];
+            ipAddresses?: components["schemas"]["GenerateX509IPSANs"];
+            emailAddresses?: components["schemas"]["GenerateX509DNSOrEmailSANs"];
+            uris?: components["schemas"]["GenerateX509URISANs"];
+        };
+        /**
+         * @description Generate success response. The server currently emits only declared
+         *     properties, while published v1 response schemas remain forward-extensible
+         *     and clients ignore unknown properties at every response object.
+         */
+        GenerateResponse: components["schemas"]["GeneratePasswordResponse"] | components["schemas"]["GenerateTokenResponse"] | components["schemas"]["GenerateSSHKeyPairResponse"] | components["schemas"]["GenerateAgeIdentityResponse"] | components["schemas"]["GenerateX509CSRResponse"];
+        /** @description Current password producer shape. Clients ignore unknown properties. */
+        GeneratePasswordResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "password";
+            profileId: components["schemas"]["ProfileId"];
+            effectiveParameters: components["schemas"]["GeneratePasswordEffectiveParameters"];
+            secret: components["schemas"]["GeneratePasswordSecret"];
+        };
+        /** @description Current token producer shape. Clients ignore unknown properties. */
+        GenerateTokenResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "token";
+            profileId: components["schemas"]["ProfileId"];
+            effectiveParameters: components["schemas"]["GenerateTokenEffectiveParameters"];
+            secret: components["schemas"]["GenerateTokenSecret"];
+        };
+        /** @description Current SSH keypair producer shape. Clients ignore unknown properties. */
+        GenerateSSHKeyPairResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "ssh_keypair";
+            profileId: components["schemas"]["ProfileId"];
+            effectiveParameters: components["schemas"]["GenerateSSHKeyPairEffectiveParameters"];
+            secret: components["schemas"]["GenerateSSHKeyPairSecret"];
+            public: components["schemas"]["GenerateSSHKeyPairPublic"];
+        };
+        /** @description Current age identity producer shape. Clients ignore unknown properties. */
+        GenerateAgeIdentityResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "age_identity";
+            profileId: components["schemas"]["ProfileId"];
+            effectiveParameters: components["schemas"]["GenerateAgeIdentityEffectiveParameters"];
+            secret: components["schemas"]["GenerateAgeIdentitySecret"];
+            public: components["schemas"]["GenerateAgeIdentityPublic"];
+        };
+        /** @description Current X.509 CSR producer shape. Clients ignore unknown properties. */
+        GenerateX509CSRResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "x509_csr";
+            profileId: components["schemas"]["ProfileId"];
+            effectiveParameters: components["schemas"]["GenerateX509CSREffectiveParameters"];
+            secret: components["schemas"]["GenerateX509CSRSecret"];
+            public: components["schemas"]["GenerateX509CSRPublic"];
+        };
+        /** @description Every applied password default is populated. Clients ignore unknown properties. */
+        GeneratePasswordEffectiveParameters: {
+            length: number;
+            lowercase: boolean;
+            uppercase: boolean;
+            digits: boolean;
+            symbols: boolean;
+            minLowercase: number;
+            minUppercase: number;
+            minDigits: number;
+            minSymbols: number;
+            excludeAmbiguous: boolean;
+        };
+        /** @description Every applied token default is populated. Clients ignore unknown properties. */
+        GenerateTokenEffectiveParameters: {
+            /** @enum {string} */
+            encoding: "base64url" | "hex";
+            bytes: number;
+        };
+        /** @description Selected SSH algorithm. Clients ignore unknown properties. */
+        GenerateSSHKeyPairEffectiveParameters: {
+            algorithm: components["schemas"]["GenerateSSHKeyAlgorithm"];
+        };
+        /** @description Fixed age identity algorithm. Clients ignore unknown properties. */
+        GenerateAgeIdentityEffectiveParameters: {
+            /** @constant */
+            algorithm: "x25519";
+        };
+        /** @description Selected X.509 private-key algorithm. Clients ignore unknown properties. */
+        GenerateX509CSREffectiveParameters: {
+            algorithm: components["schemas"]["GenerateX509KeyAlgorithm"];
+        };
+        /** @description Sealed password serialization. Clients ignore unknown properties. */
+        GeneratePasswordSecret: {
+            /** @constant */
+            format: "password_ascii";
+            vaultText: string;
+        };
+        /** @description Sealed token serialization. Clients ignore unknown properties. */
+        GenerateTokenSecret: {
+            /** @enum {string} */
+            format: "token_base64url" | "token_hex";
+            vaultText: string;
+        };
+        /** @description Sealed OpenSSH private-key serialization. Clients ignore unknown properties. */
+        GenerateSSHKeyPairSecret: {
+            /** @constant */
+            format: "openssh_private_key";
+            vaultText: string;
+        };
+        /** @description Sealed native age X25519 identity. Clients ignore unknown properties. */
+        GenerateAgeIdentitySecret: {
+            /** @constant */
+            format: "age_x25519_identity";
+            vaultText: string;
+        };
+        /** @description Sealed PKCS#8 private-key PEM. Clients ignore unknown properties. */
+        GenerateX509CSRSecret: {
+            /** @constant */
+            format: "pkcs8_private_key_pem";
+            vaultText: string;
+        };
+        /** @description OpenSSH public companion. Clients ignore unknown properties. */
+        GenerateSSHKeyPairPublic: {
+            /** @constant */
+            format: "openssh_authorized_key";
+            authorizedKey: string;
+            fingerprint: string;
+        };
+        /** @description Native age X25519 recipient. Clients ignore unknown properties. */
+        GenerateAgeIdentityPublic: {
+            /** @constant */
+            format: "age_x25519_recipient";
+            recipient: string;
+        };
+        /** @description PKCS#10 CSR and its SHA-256 SPKI fingerprint. Clients ignore unknown properties. */
+        GenerateX509CSRPublic: {
+            /** @constant */
+            format: "pkcs10_csr_pem";
+            csrPem: string;
+            fingerprint: string;
+        };
         /** @description Optional request to bind the rotation result to caller context. */
         RotationAttestationRequest: {
             binding?: components["schemas"]["RotationBinding"];
@@ -402,7 +717,7 @@ export interface components {
              * @description Stable machine-readable error code.
              * @enum {string}
              */
-            code: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "operation_failed" | "not_ready" | "temporarily_unavailable";
+            code: "invalid_request" | "unauthorized" | "forbidden" | "csrf_failed" | "not_found" | "method_not_allowed" | "operation_failed" | "not_ready" | "csrf_unavailable" | "temporarily_unavailable";
             /** @description Safe human text with no submitted values or underlying failure details. */
             message: string;
         };
@@ -603,6 +918,45 @@ export interface components {
                  *       }
                  *     }
                  */
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /**
+         * @description Generation, native serialization, consistency validation, or Vault
+         *     encryption failed. Underlying random, key-library, serialization,
+         *     profile-password, and Vault errors are intentionally indistinguishable.
+         */
+        GenerateOperationFailed: {
+            headers: {
+                "Cache-Control": components["headers"]["NoStore"];
+                "X-Request-ID": components["headers"]["RequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "error": {
+                 *         "code": "operation_failed",
+                 *         "message": "vault operation failed"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /**
+         * @description Startup state, CSRF setup, a runtime authentication dependency,
+         *     operation admission, cancellation, or the 30-second application
+         *     deadline prevented completion. Retry-After is never emitted for this
+         *     randomized, non-idempotent operation.
+         */
+        GenerateServiceUnavailable: {
+            headers: {
+                "Cache-Control": components["headers"]["NoStore"];
+                "X-Request-ID": components["headers"]["RequestId"];
+                [name: string]: unknown;
+            };
+            content: {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
@@ -828,6 +1182,68 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["OperationFailed"];
             503: components["responses"]["AttestationServiceUnavailable"];
+        };
+    };
+    generateMaterial: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "kind": "ssh_keypair",
+                 *       "profileId": "production",
+                 *       "parameters": {
+                 *         "algorithm": "ed25519"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["GenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Newly generated private material sealed as Ansible Vault text, with its permitted public companion. */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["NoStore"];
+                    "X-Request-ID": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "kind": "ssh_keypair",
+                     *       "profileId": "production",
+                     *       "effectiveParameters": {
+                     *         "algorithm": "ed25519"
+                     *       },
+                     *       "secret": {
+                     *         "format": "openssh_private_key",
+                     *         "vaultText": "$ANSIBLE_VAULT;1.2;AES256;production\n31323334"
+                     *       },
+                     *       "public": {
+                     *         "format": "openssh_authorized_key",
+                     *         "authorizedKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAISyntheticExampleOnly",
+                     *         "fingerprint": "SHA256:syntheticExampleOnly"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["GenerateResponse"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            405: components["responses"]["MethodNotAllowedPost"];
+            413: components["responses"]["RequestTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["GenerateOperationFailed"];
+            503: components["responses"]["GenerateServiceUnavailable"];
         };
     };
     verifyAttestation: {

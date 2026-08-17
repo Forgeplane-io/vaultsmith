@@ -12,6 +12,7 @@ import (
 	"github.com/forgeplane-io/vaultsmith/backend/internal/attestation"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/caller"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/generate"
 )
 
 const ScopeAttestationVerify = "vaultsmith.attestation.verify"
@@ -54,6 +55,7 @@ type AttestationDiscovery interface {
 // ServiceOptions adds dependency injection seams without changing New's
 // existing signature or behavior.
 type ServiceOptions struct {
+	Generator          MaterialGenerator
 	AttestationManager AttestationManager
 	// Attestation is a compatibility spelling for AttestationManager.
 	Attestation        AttestationManager
@@ -79,6 +81,10 @@ func NewWithOptions(profiles []Profile, executor Executor, authorizer Authorizer
 	manager := options.AttestationManager
 	if manager == nil {
 		manager = options.Attestation
+	}
+	generator := options.Generator
+	if generator == nil {
+		generator = generate.New()
 	}
 	entries := make([]catalogEntry, 0, len(profiles))
 	byID := make(map[string]catalogEntry, len(profiles))
@@ -110,6 +116,7 @@ func NewWithOptions(profiles []Profile, executor Executor, authorizer Authorizer
 		byID:               byID,
 		authorizer:         authorizer,
 		admission:          admission,
+		generator:          generator,
 		ready:              ready,
 		attestation:        manager,
 		attestationEnabled: options.AttestationEnabled || options.ProofsEnabled,

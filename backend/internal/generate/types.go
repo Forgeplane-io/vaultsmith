@@ -84,9 +84,11 @@ type SSHKeyPairParameters struct {
 	Algorithm SSHAlgorithm
 }
 
+// X509Subject keeps scalar presence explicit so an omitted field remains
+// distinguishable from a supplied empty string until validation.
 type X509Subject struct {
-	CommonName         string
-	SerialNumber       string
+	CommonName         *string
+	SerialNumber       *string
 	Country            []string
 	Organization       []string
 	OrganizationalUnit []string

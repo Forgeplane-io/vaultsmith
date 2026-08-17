@@ -6,6 +6,7 @@
 - `POST /api/v1/profiles/{profileId}/encrypt`
 - `POST /api/v1/profiles/{profileId}/decrypt`
 - `POST /api/v1/rotations`
+- `POST /api/v1/generate`
 
 The deprecated legacy operation endpoint, `POST /api/v1/operations`, remains only as a compatibility surface for existing v1 callers. New clients must use the canonical REST API.
 

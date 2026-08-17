@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "generate": "openapi-typescript ../openapi.yaml -o ../../frontend/src/generated/api.ts",
+    "generate": "openapi-typescript ../openapi.yaml -o ../../frontend/src/generated/api.ts --default-non-nullable false",
     "typecheck": "tsc --noEmit --skipLibCheck --moduleResolution bundler --module esnext --target es2022 ../../frontend/src/generated/api.ts"
   },
   "devDependencies": {

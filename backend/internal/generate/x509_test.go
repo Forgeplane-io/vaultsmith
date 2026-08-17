@@ -34,7 +34,7 @@ func TestGenerateX509CSRProducesMatchingPKCS8AndPKCS10Artifacts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			result, err := New().GenerateX509CSR(X509CSRParameters{
 				Algorithm: test.algorithm,
-				Subject:   &X509Subject{CommonName: "service.synthetic.test"},
+				Subject:   &X509Subject{CommonName: x509String("service.synthetic.test")},
 			})
 			if err != nil {
 				t.Fatalf("GenerateX509CSR() error = %v", err)
@@ -93,7 +93,7 @@ func TestGenerateX509CSRPreservesTypedIdentities(t *testing.T) {
 	}{
 		{
 			name:    "common name only",
-			subject: &X509Subject{CommonName: "service.synthetic.test"},
+			subject: &X509Subject{CommonName: x509String("service.synthetic.test")},
 		},
 		{
 			name: "SAN only",
@@ -114,8 +114,8 @@ func TestGenerateX509CSRPreservesTypedIdentities(t *testing.T) {
 		{
 			name: "mixed subject and SAN",
 			subject: &X509Subject{
-				CommonName:         "mïxed.synthetic.test",
-				SerialNumber:       "node-0042",
+				CommonName:         x509String("mïxed.synthetic.test"),
+				SerialNumber:       x509String("node-0042"),
 				Country:            []string{"US", "DE"},
 				Organization:       []string{"Forgeplane", "Synthetic Lab"},
 				OrganizationalUnit: []string{"Platform"},
@@ -164,7 +164,7 @@ func TestGenerateX509CSRAcceptsExactBounds(t *testing.T) {
 	result, err := New().GenerateX509CSR(X509CSRParameters{
 		Algorithm: X509AlgorithmEd25519,
 		Subject: &X509Subject{
-			CommonName:   strings.Repeat("c", maximumX509SubjectBytes),
+			CommonName:   x509String(strings.Repeat("c", maximumX509SubjectBytes)),
 			Country:      []string{"AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH"},
 			Organization: []string{"one", "two", "three", "four", "five", "six", "seven", "eight"},
 		},
@@ -188,7 +188,7 @@ func TestGenerateX509CSRAcceptsExactBounds(t *testing.T) {
 }
 
 func TestGenerateX509CSRRejectsInvalidIdentityBeforeRandomness(t *testing.T) {
-	validSubject := func(value string) *X509Subject { return &X509Subject{CommonName: value} }
+	validSubject := func(value string) *X509Subject { return &X509Subject{CommonName: x509String(value)} }
 	validSAN := func() *X509SANs { return &X509SANs{DNSNames: []string{"service.synthetic.test"}} }
 	tests := []struct {
 		name       string
@@ -197,16 +197,18 @@ func TestGenerateX509CSRRejectsInvalidIdentityBeforeRandomness(t *testing.T) {
 		{name: "unsupported algorithm", parameters: X509CSRParameters{Algorithm: "dsa", Subject: validSubject("service.synthetic.test")}},
 		{name: "no identity", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519}},
 		{name: "empty subject object", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{}, SANs: validSAN()}},
+		{name: "empty supplied common name", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{CommonName: x509String("")}, SANs: validSAN()}},
+		{name: "empty supplied serial number", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{CommonName: x509String("service.synthetic.test"), SerialNumber: x509String("")}}},
 		{name: "empty SAN object", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: validSubject("service.synthetic.test"), SANs: &X509SANs{}}},
 		{name: "DN without common name or SAN", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{Organization: []string{"Forgeplane"}}}},
 		{name: "DN leading Unicode whitespace", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: validSubject("\u00a0service.synthetic.test")}},
 		{name: "DN ASCII control", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: validSubject("service\x7f.synthetic.test")}},
 		{name: "DN invalid UTF-8", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: validSubject(string([]byte{0xff}))}},
 		{name: "DN over byte limit", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: validSubject(strings.Repeat("a", maximumX509SubjectBytes+1))}},
-		{name: "empty supplied DN array", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{CommonName: "service.synthetic.test", Organization: []string{}}}},
-		{name: "too many DN values", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{CommonName: "service.synthetic.test", Organization: sequence("org", maximumX509SubjectValues+1)}}},
-		{name: "duplicate DN value", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{CommonName: "service.synthetic.test", Organization: []string{"same", "same"}}}},
-		{name: "invalid country", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{CommonName: "service.synthetic.test", Country: []string{"de"}}}},
+		{name: "empty supplied DN array", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{CommonName: x509String("service.synthetic.test"), Organization: []string{}}}},
+		{name: "too many DN values", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{CommonName: x509String("service.synthetic.test"), Organization: sequence("org", maximumX509SubjectValues+1)}}},
+		{name: "duplicate DN value", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{CommonName: x509String("service.synthetic.test"), Organization: []string{"same", "same"}}}},
+		{name: "invalid country", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, Subject: &X509Subject{CommonName: x509String("service.synthetic.test"), Country: []string{"de"}}}},
 		{name: "DNS non-ASCII", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{DNSNames: []string{"bücher.example"}}}},
 		{name: "DNS empty label", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{DNSNames: []string{"service..example"}}}},
 		{name: "DNS wildcard is not a label", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{DNSNames: []string{"*.example.test"}}}},
@@ -248,7 +250,7 @@ func TestGenerateX509CSRFailsClosedOnRandomnessFailure(t *testing.T) {
 	generator.random = x509ErrorReader{err: sensitiveFailure}
 	result, err := generator.GenerateX509CSR(X509CSRParameters{
 		Algorithm: X509AlgorithmEd25519,
-		Subject:   &X509Subject{CommonName: "service.synthetic.test"},
+		Subject:   &X509Subject{CommonName: x509String("service.synthetic.test")},
 	})
 	if !errors.Is(err, ErrGenerationFailed) || errors.Is(err, sensitiveFailure) || !emptyX509Result(result) {
 		t.Fatalf("random failure result/error = %#v/%v", result, err)
@@ -329,8 +331,8 @@ func assertX509Identities(t *testing.T, csr *x509.CertificateRequest, subject *X
 	if subject == nil {
 		subject = &X509Subject{}
 	}
-	if csr.Subject.CommonName != subject.CommonName || csr.Subject.SerialNumber != subject.SerialNumber {
-		t.Fatalf("CSR scalar subject = %q/%q, want %q/%q", csr.Subject.CommonName, csr.Subject.SerialNumber, subject.CommonName, subject.SerialNumber)
+	if csr.Subject.CommonName != stringValue(subject.CommonName) || csr.Subject.SerialNumber != stringValue(subject.SerialNumber) {
+		t.Fatalf("CSR scalar subject = %q/%q, want %q/%q", csr.Subject.CommonName, csr.Subject.SerialNumber, stringValue(subject.CommonName), stringValue(subject.SerialNumber))
 	}
 	assertStringSet(t, "country", csr.Subject.Country, subject.Country)
 	assertStringSet(t, "organization", csr.Subject.Organization, subject.Organization)
@@ -396,6 +398,10 @@ func sequence(prefix string, count int) []string {
 		values[index] = fmt.Sprintf("%s-%d.example", prefix, index)
 	}
 	return values
+}
+
+func x509String(value string) *string {
+	return &value
 }
 
 type x509ErrorReader struct {

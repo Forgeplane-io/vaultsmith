@@ -149,6 +149,8 @@ func applicationDeadlineApplies(r *http.Request) bool {
 		return true
 	case r.URL.Path == "/api/v1/operations" && r.Method == http.MethodPost:
 		return true
+	case r.URL.Path == "/api/v1/generate" && r.Method == http.MethodPost:
+		return true
 	case r.URL.Path == "/api/v1/rotations" && r.Method == http.MethodPost:
 		return true
 	case canonicalOperationPath(r.URL) && r.Method == http.MethodPost:
@@ -186,7 +188,7 @@ func preflightApplicationRequest(w http.ResponseWriter, r *http.Request, mcpEnab
 			methodNotAllowed(w, http.MethodGet)
 			return r, false
 		}
-	case r.URL.Path == "/api/v1/operations", r.URL.Path == "/api/v1/rotations", r.URL.Path == "/api/v1/attestations/verify", canonicalOperationPath(r.URL):
+	case r.URL.Path == "/api/v1/operations", r.URL.Path == "/api/v1/generate", r.URL.Path == "/api/v1/rotations", r.URL.Path == "/api/v1/attestations/verify", canonicalOperationPath(r.URL):
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
 			return r, false
@@ -197,6 +199,10 @@ func preflightApplicationRequest(w http.ResponseWriter, r *http.Request, mcpEnab
 		}
 		if !supportsIdentityContentEncoding(r.Header) {
 			writeError(w, http.StatusUnsupportedMediaType, "invalid_request", "media type is not supported")
+			return r, false
+		}
+		if r.URL.Path == "/api/v1/generate" && hasIdempotencyKey(r.Header) {
+			writeError(w, http.StatusBadRequest, "invalid_request", "request is invalid")
 			return r, false
 		}
 	case r.URL.Path == "/mcp" && mcpEnabled:
@@ -311,6 +317,8 @@ func bearerRouteRequiredScope(r *http.Request) string {
 	switch r.URL.Path {
 	case "/api/v1/profiles":
 		return vaultservice.ScopeProfileRead
+	case "/api/v1/generate":
+		return vaultservice.ScopeEncrypt
 	case "/api/v1/attestations/verify":
 		return vaultservice.ScopeAttestationVerify
 	case "/api/v1/rotations":
@@ -339,6 +347,9 @@ func preflightBearerRoute(w http.ResponseWriter, r *http.Request, next http.Hand
 	case r.URL.Path == "/api/v1/profiles":
 		scope = vaultservice.ScopeProfileRead
 		err = handler.preflightProfiles(r.Context(), actor)
+	case r.URL.Path == "/api/v1/generate":
+		scope = vaultservice.ScopeEncrypt
+		err = handler.service.PreflightGenerate(r.Context(), actor)
 	case r.URL.Path == "/api/v1/attestations/verify":
 		scope = vaultservice.ScopeAttestationVerify
 		if !actor.HasScope(scope) {
@@ -439,7 +450,7 @@ func classifyCredentialRoute(r *http.Request, mcpEnabled bool) credentialRoute {
 		return credentialRouteSessionFlow
 	case r.URL.Path == "/api/v1/operations":
 		return credentialRouteSessionOnly
-	case r.URL.Path == "/api/v1/profiles" || r.URL.Path == "/api/v1/rotations" || r.URL.Path == "/api/v1/attestations/verify" || canonicalOperationPath(r.URL):
+	case r.URL.Path == "/api/v1/profiles" || r.URL.Path == "/api/v1/generate" || r.URL.Path == "/api/v1/rotations" || r.URL.Path == "/api/v1/attestations/verify" || canonicalOperationPath(r.URL):
 		return credentialRouteSessionOrBearer
 	case r.URL.Path == "/mcp" && mcpEnabled:
 		return credentialRouteMCPBearer
@@ -575,7 +586,7 @@ func corsAllowedHeaders(r *http.Request, cfg config.AuthConfig, mcpEnabled bool)
 			headers = append(headers, "Authorization")
 		}
 	} else if cfg.Mode == config.AuthModeNative {
-		if r.URL.Path == "/api/v1/profiles" || r.URL.Path == "/api/v1/rotations" || r.URL.Path == "/api/v1/attestations/verify" || canonicalOperationPath(r.URL) {
+		if r.URL.Path == "/api/v1/profiles" || r.URL.Path == "/api/v1/generate" || r.URL.Path == "/api/v1/rotations" || r.URL.Path == "/api/v1/attestations/verify" || canonicalOperationPath(r.URL) {
 			headers = append(headers, "Authorization")
 		}
 	}

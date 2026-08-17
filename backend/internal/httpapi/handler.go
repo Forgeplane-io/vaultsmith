@@ -24,9 +24,10 @@ import (
 )
 
 const (
-	MaxPlaintextBytes   = vaultservice.MaxPlaintextBytes
-	MaxVaultTextBytes   = vaultservice.MaxVaultTextBytes
-	MaxRequestBodyBytes = 8 << 20
+	MaxPlaintextBytes           = vaultservice.MaxPlaintextBytes
+	MaxVaultTextBytes           = vaultservice.MaxVaultTextBytes
+	MaxRequestBodyBytes         = 8 << 20
+	MaxGenerateRequestBodyBytes = 64 << 10
 )
 
 type Profile struct {
@@ -93,6 +94,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/v1/profiles":
 		h.serveProfiles(w, r)
+	case "/api/v1/generate":
+		h.serveGenerate(w, r)
 	case "/api/v1/operations":
 		h.serveOperation(w, r)
 	case "/api/v1/rotations":
