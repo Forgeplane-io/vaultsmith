@@ -3,6 +3,7 @@ module github.com/forgeplane-io/vaultsmith
 go 1.25.0
 
 require (
+	filippo.io/age v1.3.1
 	github.com/alexedwards/scs/redisstore v0.0.0-20251002162104-209de6e426de
 	github.com/alexedwards/scs/v2 v2.9.0
 	github.com/alicebob/miniredis/v2 v2.38.0
@@ -14,6 +15,8 @@ require (
 	golang.org/x/crypto v0.54.0
 	golang.org/x/oauth2 v0.36.0
 )
+
+require filippo.io/hpke v0.4.0 // indirect
 
 require github.com/gowebpki/jcs v1.0.1 // Apache-2.0
 

@@ -180,7 +180,7 @@
     "countryPattern": "^[A-Z]{2}$",
     "maximumTotalSans": 64,
     "maximumDnsOrEmailAsciiBytes": 253,
-    "maximumUriUtf8Bytes": 2048,
+    "maximumUriAsciiBytes": 2048,
     "arbitraryExtensions": false,
     "arbitraryAttributes": false,
     "customOids": false,
@@ -402,7 +402,7 @@
         "items": {
           "type": "string",
           "minLength": 1,
-          "x-format": "canonical IPv4 or IPv6 text"
+          "x-format": "canonical unscoped IPv4 or IPv6 text, excluding IPv4-mapped IPv6"
         }
       },
       "uriSanArray": {
@@ -413,8 +413,9 @@
         "items": {
           "type": "string",
           "minLength": 1,
-          "x-maxUtf8Bytes": 2048,
-          "x-format": "absolute URI with scheme",
+          "x-asciiOnly": true,
+          "x-maxAsciiBytes": 2048,
+          "x-format": "RFC 3986 ASCII absolute URI with scheme",
           "x-leadingOrTrailingUnicodeWhitespace": "reject",
           "x-nulOrAsciiControl": "reject"
         }
@@ -505,7 +506,7 @@
           "subject.commonName",
           "at least one item in any sans array"
         ],
-        "x-preservation": "Identity string bytes and array order are preserved; no case folding, IDNA conversion, Unicode normalization, sorting, or cross-field deduplication"
+        "x-preservation": "Identity string bytes and SAN array order are preserved; repeated DN values are encoded in canonical DER SET order; no case folding, IDNA conversion, Unicode normalization, or cross-field deduplication"
       },
       "passwordEffectiveParameters": {
         "type": "object",

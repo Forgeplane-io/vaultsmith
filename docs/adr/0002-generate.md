@@ -213,15 +213,19 @@ Limits are:
 - a country value is exactly two uppercase ASCII letters;
 - all SAN arrays together have at most 64 entries;
 - DNS and email SANs are at most 253 ASCII bytes;
-- URI SANs are at most 2,048 UTF-8 bytes;
-- IP SANs must parse as canonical IPv4 or IPv6 text.
+- URI SANs are at most 2,048 ASCII bytes;
+- IP SANs must parse as canonical, unscoped IPv4 or IPv6 text. IPv4-mapped
+  IPv6 text is rejected because the typed Go X.509 encoder collapses it to an
+  IPv4 SAN.
 
 Values must be non-empty after trimming and contain no NUL or ASCII control
 character. DNS SANs use ASCII labels; callers supply internationalized names in
-A-label/punycode form. URI SANs must be absolute and contain a scheme. Email
+A-label/punycode form. URI SANs must be RFC 3986 ASCII absolute URIs containing
+a scheme; callers percent-encode non-ASCII components rather than supplying an IRI. Email
 SANs must be addr-spec mailbox values without display names. Exact duplicates
-inside one field are rejected. Subject-array and SAN order are otherwise
-preserved.
+inside one field are rejected. SAN order is preserved. Repeated DN values are
+passed to `pkix.Name` in caller order but are encoded as DER SET members, whose
+canonical order is not caller-controlled or protocol-significant.
 
 Vaultsmith is a key-and-CSR factory, not a PKI or CA. It does not expose:
 
@@ -283,11 +287,12 @@ within the same array are rejected. A supplied Subject or SAN object must
 contain at least one member; callers omit an unused object. Omitting `subject`
 is valid for a SAN-only request; omitting `sans` is valid for a CN request.
 
-Identity strings are preserved byte-for-byte in their original array order and
-are not case-folded, IDNA-converted, Unicode-normalized, sorted, or deduplicated
-across fields. Leading or trailing Unicode whitespace is rejected rather than
-silently trimmed. The format and byte ceilings in the X.509 section are
-semantic validation in addition to the structural schema.
+Identity strings are preserved byte-for-byte and are not case-folded,
+IDNA-converted, Unicode-normalized, or deduplicated across fields. SAN array
+order is preserved; repeated DN values retain their bytes but DER SET encoding
+determines their serialized order. Leading or trailing Unicode whitespace is
+rejected rather than silently trimmed. The format and byte ceilings in the
+X.509 section are semantic validation in addition to the structural schema.
 
 Example:
 
