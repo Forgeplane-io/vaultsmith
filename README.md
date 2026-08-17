@@ -187,6 +187,7 @@ The harness removes its containers, volumes, and temporary state on exit unless 
 ```sh
 npm ci --prefix frontend
 npm ci --prefix api/typescript-generator --ignore-scripts
+make lint
 npm test --prefix frontend -- --run
 make typecheck
 make api-check

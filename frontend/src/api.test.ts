@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 let api: typeof import('./api')
 
-const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
+type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue }
+
+const jsonResponse = (body: JsonValue, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
@@ -11,16 +13,24 @@ const jsonResponse = (body: unknown, init: ResponseInit = {}) =>
 
 const emptyResponse = (status = 204) => new Response(null, { status })
 
-const stalledJSONResponse = (signal: AbortSignal | null | undefined, onBodyStart: () => void) => ({
-  ok: true,
-  status: 200,
-  json: () => {
-    onBodyStart()
-    return new Promise<unknown>((_resolve, reject) => {
-      signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+class StalledJsonResponse extends Response {
+  constructor(
+    private readonly signal: AbortSignal | null | undefined,
+    private readonly onBodyStart: () => void,
+  ) {
+    super(null, { status: 200 })
+  }
+
+  override json(): Promise<never> {
+    this.onBodyStart()
+    return new Promise<never>((_resolve, reject) => {
+      this.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
     })
-  },
-}) as Response
+  }
+}
+
+const stalledJSONResponse = (signal: AbortSignal | null | undefined, onBodyStart: () => void) =>
+  new StalledJsonResponse(signal, onBodyStart)
 
 describe('API client', () => {
   beforeEach(async () => {
@@ -120,7 +130,10 @@ describe('API client', () => {
   it('sends the canonical encrypt contract', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ vaultText: 'vault-output' }))
 
-    await expect(api.runOperation({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })).resolves.toBe('vault-output')
+    await expect(api.runOperation({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })).resolves.toEqual({
+      output: 'vault-output',
+      attestation: null,
+    })
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/profiles/dev/encrypt',
       expect.objectContaining({
@@ -134,7 +147,10 @@ describe('API client', () => {
   it('sends the canonical decrypt contract', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ plaintext: 'decrypted-output' }))
 
-    await expect(api.runOperation({ profileId: 'dev', mode: 'decrypt', value: 'vault-input' })).resolves.toBe('decrypted-output')
+    await expect(api.runOperation({ profileId: 'dev', mode: 'decrypt', value: 'vault-input' })).resolves.toEqual({
+      output: 'decrypted-output',
+      attestation: null,
+    })
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/profiles/dev/decrypt',
       expect.objectContaining({
@@ -148,7 +164,10 @@ describe('API client', () => {
   it('sends the canonical rotate operation contract', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ vaultText: 'rotated-vault-output' }))
 
-    await expect(api.runOperation({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: 'vault-input' })).resolves.toBe('rotated-vault-output')
+    await expect(api.runOperation({ mode: 'rotate', sourceProfileId: 'dev', destinationProfileId: 'prod', value: 'vault-input' })).resolves.toEqual({
+      output: 'rotated-vault-output',
+      attestation: null,
+    })
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/rotations',
       expect.objectContaining({
@@ -162,7 +181,7 @@ describe('API client', () => {
   it('sends a canonical rotate request with an optional attestation binding', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
       vaultText: 'rotated-vault-output',
-      attestation: { protected: 'header', payload: 'claims', signature: 'signature' },
+      attestation: { protected: 'header', payload: 'claims', signature: 'signature', futureMember: true },
     }))
 
     await expect(api.runOperation({
@@ -172,7 +191,7 @@ describe('API client', () => {
       value: 'vault-input',
       attestation: { binding: { repository: 'repo', revision: 'rev', path: 'group_vars/app.yml' } },
     })).resolves.toEqual({
-      vaultText: 'rotated-vault-output',
+      output: 'rotated-vault-output',
       attestation: { protected: 'header', payload: 'claims', signature: 'signature' },
     })
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
@@ -180,6 +199,24 @@ describe('API client', () => {
       destinationProfileId: 'prod',
       vaultText: 'vault-input',
       attestation: { binding: { repository: 'repo', revision: 'rev', path: 'group_vars/app.yml' } },
+    })
+  })
+
+  it('rejects a present malformed rotation attestation', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      vaultText: 'rotated-vault-output',
+      attestation: { protected: 'header', payload: 'claims' },
+    }))
+
+    await expect(api.runOperation({
+      mode: 'rotate',
+      sourceProfileId: 'dev',
+      destinationProfileId: 'prod',
+      value: 'vault-input',
+    })).rejects.toMatchObject({
+      name: 'ApiError',
+      code: 'invalid_response',
+      message: 'The service returned an invalid attestation response',
     })
   })
 
@@ -220,7 +257,10 @@ describe('API client', () => {
   it('URL-encodes profile IDs in canonical operation paths', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ vaultText: 'vault-output' }))
 
-    await expect(api.runOperation({ profileId: 'team/prod', mode: 'encrypt', value: 'fixture-value' })).resolves.toBe('vault-output')
+    await expect(api.runOperation({ profileId: 'team/prod', mode: 'encrypt', value: 'fixture-value' })).resolves.toEqual({
+      output: 'vault-output',
+      attestation: null,
+    })
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/profiles/team%2Fprod/encrypt',
@@ -258,6 +298,25 @@ describe('API client', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/v1/session', expect.objectContaining({ method: 'GET' }))
   })
 
+  it('reports a logout timeout when a successful response body stalls', async () => {
+    vi.useFakeTimers()
+    let markBodyStarted!: () => void
+    const bodyStarted = new Promise<void>((resolve) => { markBodyStarted = resolve })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) =>
+      Promise.resolve(stalledJSONResponse(init?.signal, markBodyStarted)))
+
+    try {
+      const logout = api.logout()
+      const timedOut = expect(logout).rejects.toMatchObject({ name: 'ApiError', code: 'logout_timeout' })
+      await bodyStarted
+      await vi.advanceTimersByTimeAsync(10_000)
+      await timedOut
+      expect(fetchMock).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects a non-204 logout response when the session remains authenticated', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(jsonResponse({ accepted: true }))
@@ -289,7 +348,7 @@ describe('API client', () => {
     const logoutRequest = api.logout()
     const outcome = logoutRequest.then(
       () => ({ state: 'resolved' as const, reason: null }),
-      (reason: unknown) => ({ state: 'rejected' as const, reason }),
+      (cause: unknown) => ({ state: 'rejected' as const, reason: cause }),
     )
     let settled = false
     void outcome.then(() => { settled = true })
@@ -334,7 +393,7 @@ describe('API client', () => {
 
     const outcome = api.logout().then(
       () => ({ state: 'resolved' as const, reason: null }),
-      (reason: unknown) => ({ state: 'rejected' as const, reason }),
+      (cause: unknown) => ({ state: 'rejected' as const, reason: cause }),
     )
 
     try {

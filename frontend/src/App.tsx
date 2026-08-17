@@ -9,15 +9,17 @@ import {
   runOperation,
   verifyAttestation,
   type AttestationBinding,
-  type AttestationClaims,
+  type OperationRequest,
   type OperationMode,
   type Profile,
   type Session,
   type SignedAttestation,
+  type VerifyAttestationRequest,
   type VerificationReason,
   type VerificationResult,
   utf8ByteLength,
 } from './api'
+import { parseSignedAttestationText } from './attestation'
 import {
   ansibleVariableValidationMessage,
   formatAnsibleVaultSnippet,
@@ -168,14 +170,14 @@ export default function App() {
           ? 'Your permissions changed. Environments were refreshed; review the selection and try again.'
           : '')
       })
-      .catch((reason: unknown) => {
+      .catch((cause: unknown) => {
         if (!hasAuthority()) return
-        if (reason instanceof ApiError && reason.code === 'unauthorized') {
+        if (cause instanceof ApiError && cause.code === 'unauthorized') {
           redirectToLogin()
           setStatus('Sign-in required…')
           return
         }
-        if (loadStage === 'profiles' && loadedSession?.attestationEnabled === true && reason instanceof ApiError && reason.status === 403) {
+        if (loadStage === 'profiles' && loadedSession?.attestationEnabled === true && cause instanceof ApiError && cause.status === 403) {
           applyLoadedProfiles([], false)
           setProfileSnapshotValid(true)
           setProfileLoadFailed(false)
@@ -188,10 +190,10 @@ export default function App() {
         setProfileLoadFailed(true)
         setLoadFailureStage(loadStage)
         setProfileLoadError(loadStage === 'session'
-          ? safeErrorMessage(reason, 'Session could not be loaded.', 'session')
+          ? safeErrorMessage(cause, 'Session could not be loaded.', 'session')
           : recoveringStaleSnapshot
             ? 'Your permissions changed, but environments could not be refreshed. Check the service and retry loading environments.'
-            : safeErrorMessage(reason, 'Profiles could not be loaded.', 'profiles'))
+            : safeErrorMessage(cause, 'Profiles could not be loaded.', 'profiles'))
         setStatus('')
       })
       .finally(() => {
@@ -474,9 +476,9 @@ export default function App() {
       setProfileSnapshotValid(true)
       setRecoveringStaleCapabilities(false)
       setStatus('Your permissions changed. Environments were refreshed; review the selection and try again.')
-    } catch (reason: unknown) {
+    } catch (cause: unknown) {
       if (profileRefreshControllerRef.current !== controller || controller.signal.aborted) return
-      if (reason instanceof ApiError && reason.code === 'unauthorized') {
+      if (cause instanceof ApiError && cause.code === 'unauthorized') {
         setRecoveringStaleCapabilities(false)
         redirectToLogin()
         setStatus('Sign-in required…')
@@ -582,12 +584,13 @@ export default function App() {
 
     try {
       if (verifyMode && parsedAttestation) {
-        const result = await verifyAttestation({
+        const verificationRequest: VerifyAttestationRequest = {
           attestation: parsedAttestation,
           inputVaultText: verificationInput,
           outputVaultText: verificationOutput,
-          ...(compactExpectedBinding ? { expectedBinding: compactExpectedBinding } : {}),
-        }, controller.signal)
+        }
+        if (compactExpectedBinding) verificationRequest.expectedBinding = compactExpectedBinding
+        const result = await verifyAttestation(verificationRequest, controller.signal)
         if (!isCurrentOperation()) return
         if (controller.signal.aborted) {
           setStatus(operationAbortReasonRef.current === 'timeout' ? 'Verification timed out' : 'Verification cancelled')
@@ -597,15 +600,18 @@ export default function App() {
         setStatus(result.valid ? 'Verified' : 'Not verified')
         return
       }
-      const request = operationMode === 'rotate'
+      const request: OperationRequest = operationMode === 'rotate'
         ? {
           mode: operationMode,
           sourceProfileId: profileId,
           destinationProfileId,
           value,
-          ...(issueAttestation ? { attestation: { ...(compactAttestationBinding ? { binding: compactAttestationBinding } : {}) } } : {}),
         }
         : { profileId, mode: operationMode, value }
+      if (request.mode === 'rotate' && issueAttestation) {
+        request.attestation = {}
+        if (compactAttestationBinding) request.attestation.binding = compactAttestationBinding
+      }
       const result = await runOperation(request, controller.signal)
       if (!isCurrentOperation()) return
       if (controller.signal.aborted) {
@@ -617,10 +623,10 @@ export default function App() {
         }
         return
       }
-      setOutput(typeof result === 'string' ? result : result.vaultText)
-      setAttestation(typeof result === 'string' ? null : result.attestation ?? null)
+      setOutput(result.output)
+      setAttestation(result.attestation)
       setStatus(operationReadyLabel(operationMode))
-    } catch (reason: unknown) {
+    } catch (cause: unknown) {
       if (!isCurrentOperation()) return
       if (controller.signal.aborted) {
         if (operationAbortReasonRef.current === 'timeout') {
@@ -630,12 +636,12 @@ export default function App() {
           setStatus(verifyMode ? 'Verification cancelled' : 'Operation cancelled')
         }
       } else {
-        if (reason instanceof ApiError && reason.code === 'unauthorized') {
+        if (cause instanceof ApiError && cause.code === 'unauthorized') {
           redirectToLogin()
           setStatus('Sign-in required…')
           return
         }
-        if (!verifyMode && reason instanceof ApiError && reason.status === 403 && reason.code === 'forbidden') {
+        if (!verifyMode && cause instanceof ApiError && cause.status === 403 && cause.code === 'forbidden') {
           window.clearTimeout(timeoutId)
           operationControllerRef.current = null
           operationAbortReasonRef.current = null
@@ -643,7 +649,7 @@ export default function App() {
           await refreshCapabilitiesAfterForbidden()
           return
         }
-        setError(operationErrorMessage(reason, operationMode))
+        setError(operationErrorMessage(cause, operationMode))
         setStatus('')
       }
     } finally {
@@ -1503,22 +1509,7 @@ function bindingFieldsWithinLimits(fields: BindingFields): boolean {
   const binding = compactBindingFields(fields)
   if (!binding) return true
   const canonical = JSON.stringify(binding)
-  return typeof canonical === 'string' && utf8ByteLength(canonical) <= MAX_CANONICAL_BINDING_BYTES
-}
-
-function parseSignedAttestationText(value: string): SignedAttestation | null {
-  try {
-    const parsed: unknown = JSON.parse(value)
-    if (!parsed || typeof parsed !== 'object') return null
-    const candidate = parsed as Partial<SignedAttestation>
-    return typeof candidate.protected === 'string'
-      && typeof candidate.payload === 'string'
-      && typeof candidate.signature === 'string'
-      ? candidate as SignedAttestation
-      : null
-  } catch {
-    return null
-  }
+  return utf8ByteLength(canonical) <= MAX_CANONICAL_BINDING_BYTES
 }
 
 function verificationReasonMessage(reason?: VerificationReason): string {
@@ -1673,50 +1664,51 @@ function formatGuidance(inspection: VaultFormatInspection, selectedProfileId: st
 }
 
 function redirectToLogin(): void {
-  if (typeof window === 'undefined') return
-  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`
-  window.location.assign(`/auth/login?return_to=${encodeURIComponent(returnTo || '/')}`)
+  const browserWindow = globalThis.window
+  if (browserWindow === undefined) return
+  const returnTo = `${browserWindow.location.pathname}${browserWindow.location.search}${browserWindow.location.hash}`
+  browserWindow.location.assign(`/auth/login?return_to=${encodeURIComponent(returnTo || '/')}`)
 }
 
-function logoutErrorMessage(reason: unknown): string {
-  if (reason instanceof ApiError) {
-    if (reason.code === 'logout_timeout') {
+function logoutErrorMessage(cause: unknown): string {
+  if (cause instanceof ApiError) {
+    if (cause.code === 'logout_timeout') {
       return 'Sign-out was not confirmed. The request timed out. Retry sign-out.'
     }
-    if (reason.status === 503 || reason.code === 'not_ready') {
+    if (cause.status === 503 || cause.code === 'not_ready') {
       return 'Sign-out was not confirmed. The service is unavailable. Retry sign-out.'
     }
-    if (reason.code === 'network_error') {
+    if (cause.code === 'network_error') {
       return 'Sign-out was not confirmed. The service could not be reached. Retry sign-out.'
     }
   }
   return 'Sign-out was not confirmed. Retry sign-out.'
 }
 
-function safeErrorMessage(reason: unknown, fallback: string, context: 'session' | 'profiles' | 'operation' = 'operation'): string {
-  if (!(reason instanceof ApiError)) return fallback
-  if (reason.code === 'network_error') return 'Unable to reach the Vaultsmith service'
-  if (reason.code === 'session_timeout') return 'Session loading timed out. Check the service and try again.'
-  if (reason.code === 'profiles_timeout') return 'Environment loading timed out. Check the service and try again.'
-  if (reason.code === 'invalid_response') return 'The service returned an invalid response'
-  if (reason.code === 'feature_unavailable') return 'Rotation attestations are not enabled.'
-  if (reason.code === 'attestation_unavailable') return 'Rotation attestation service is unavailable. Try again shortly.'
-  if (reason.code === 'attestation_busy') return 'Rotation attestation service is busy. Try again shortly.'
-  if (reason.code === 'temporarily_unavailable') return 'Vaultsmith service is temporarily unavailable. Try again shortly.'
-  if (reason.code === 'not_ready') return 'Vaultsmith service is not ready. Try again shortly.'
-  if (reason.code === 'not_found') {
+function safeErrorMessage(cause: unknown, fallback: string, context: 'session' | 'profiles' | 'operation' = 'operation'): string {
+  if (!(cause instanceof ApiError)) return fallback
+  if (cause.code === 'network_error') return 'Unable to reach the Vaultsmith service'
+  if (cause.code === 'session_timeout') return 'Session loading timed out. Check the service and try again.'
+  if (cause.code === 'profiles_timeout') return 'Environment loading timed out. Check the service and try again.'
+  if (cause.code === 'invalid_response') return 'The service returned an invalid response'
+  if (cause.code === 'feature_unavailable') return 'Rotation attestations are not enabled.'
+  if (cause.code === 'attestation_unavailable') return 'Rotation attestation service is unavailable. Try again shortly.'
+  if (cause.code === 'attestation_busy') return 'Rotation attestation service is busy. Try again shortly.'
+  if (cause.code === 'temporarily_unavailable') return 'Vaultsmith service is temporarily unavailable. Try again shortly.'
+  if (cause.code === 'not_ready') return 'Vaultsmith service is not ready. Try again shortly.'
+  if (cause.code === 'not_found') {
     if (context === 'session') return 'The session endpoint was not found. Check the service route and try again.'
     return context === 'profiles'
       ? 'The environments endpoint was not found. Check the service route and try again.'
       : 'The selected environment was not found. Reload environments and try again.'
   }
-  if (reason.code === 'invalid_request') return 'The request was not accepted. Check the selected environments and input.'
-  if (reason.code === 'method_not_allowed') return 'The requested operation is not available.'
+  if (cause.code === 'invalid_request') return 'The request was not accepted. Check the selected environments and input.'
+  if (cause.code === 'method_not_allowed') return 'The requested operation is not available.'
   return fallback
 }
 
-function operationErrorMessage(reason: unknown, mode: OperationMode): string {
-  if (reason instanceof ApiError && reason.code === 'operation_failed') {
+function operationErrorMessage(cause: unknown, mode: OperationMode): string {
+  if (cause instanceof ApiError && cause.code === 'operation_failed') {
     if (mode === 'decrypt') {
       return 'Could not decrypt this value. Check the selected environment and paste protected text or a YAML !vault block.'
     }
@@ -1725,7 +1717,7 @@ function operationErrorMessage(reason: unknown, mode: OperationMode): string {
     }
     return 'Could not encrypt this value. Check the selected environment and try again.'
   }
-  return safeErrorMessage(reason, 'Value operation failed')
+  return safeErrorMessage(cause, 'Value operation failed')
 }
 
 function formatLimit(bytes: number): string {

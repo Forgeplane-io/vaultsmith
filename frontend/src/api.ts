@@ -1,9 +1,12 @@
 import type { components } from './generated/api'
+import * as z from 'zod/mini'
+import { signedAttestationSchema, type SignedAttestation } from './attestation'
+
+export type { SignedAttestation } from './attestation'
 
 export type OperationMode = 'encrypt' | 'decrypt' | 'rotate'
 
 export type AttestationBinding = components['schemas']['RotationBinding']
-export type SignedAttestation = components['schemas']['RotationAttestation']
 export type AttestationClaims = components['schemas']['RotationAttestationClaims']
 export type VerificationReason = components['schemas']['AttestationVerificationReason']
 export type VerificationResult = components['schemas']['VerifyAttestationResponse']
@@ -19,6 +22,175 @@ export type GenerateResponse = components['schemas']['GenerateResponse']
 export type GenerateKind = GenerateRequest['kind']
 export type GenerateSSHKeyAlgorithm = components['schemas']['GenerateSSHKeyAlgorithm']
 export type GenerateX509KeyAlgorithm = components['schemas']['GenerateX509KeyAlgorithm']
+
+type GeneratePasswordResponse = components['schemas']['GeneratePasswordResponse']
+type GenerateTokenResponse = components['schemas']['GenerateTokenResponse']
+type GenerateSSHKeyPairResponse = components['schemas']['GenerateSSHKeyPairResponse']
+type GenerateAgeIdentityResponse = components['schemas']['GenerateAgeIdentityResponse']
+type GenerateX509CSRResponse = components['schemas']['GenerateX509CSRResponse']
+type GenerateX509CSRParameters = components['schemas']['GenerateX509CSRParameters']
+
+const unparsedAttestationSchema = z.unknown()
+const errorEnvelopeSchema = z.looseObject({
+  error: z.looseObject({
+    code: z.catch(z.optional(z.string()), undefined),
+    message: z.catch(z.optional(z.string()), undefined),
+  }),
+})
+
+const sessionSchema = z.looseObject({
+  authenticated: z.boolean(),
+  authRequired: z.boolean(),
+  email: z.optional(z.string()),
+  csrfToken: z.string(),
+  attestationEnabled: z.optional(z.boolean()),
+})
+
+const profileSchema = z.looseObject({
+  id: z.string(),
+  label: z.string(),
+  capabilities: z.looseObject({
+    encrypt: z.boolean(),
+    decrypt: z.boolean(),
+    rotateSource: z.boolean(),
+    rotateDestination: z.boolean(),
+  }),
+}) satisfies z.ZodMiniType<Profile>
+
+const profilesResponseSchema = z.looseObject({
+  profiles: z.array(profileSchema),
+})
+
+const attestationBindingSchema = z.looseObject({
+  repository: z.optional(z.string()),
+  revision: z.optional(z.string()),
+  path: z.optional(z.string()),
+  selector: z.optional(z.string()),
+}) satisfies z.ZodMiniType<AttestationBinding>
+
+const attestationClaimsSchema = z.looseObject({
+  issuer: z.string(),
+  issuedAt: z.string(),
+  operation: z.literal('rotate'),
+  sourceProfileId: z.string(),
+  destinationProfileId: z.string(),
+  kid: z.string(),
+  binding: z.optional(attestationBindingSchema),
+}) satisfies z.ZodMiniType<AttestationClaims>
+
+const verificationReasonSchema = z.enum([
+  'signature_invalid',
+  'unknown_key',
+  'key_revoked',
+  'issuer_mismatch',
+  'unsupported_version',
+  'input_digest_mismatch',
+  'output_digest_mismatch',
+  'binding_mismatch',
+] satisfies VerificationReason[])
+
+const verificationResultSchema = z.looseObject({
+  valid: z.boolean(),
+  reason: z.optional(verificationReasonSchema),
+  attestation: z.optional(attestationClaimsSchema),
+}) satisfies z.ZodMiniType<VerificationResult>
+
+const encryptResponseSchema = z.looseObject({ vaultText: z.string() })
+const decryptResponseSchema = z.looseObject({ plaintext: z.string() })
+const rotateResponseSchema = z.looseObject({
+  vaultText: z.string(),
+  attestation: z.optional(unparsedAttestationSchema),
+})
+
+const generatePasswordResponseSchema = z.object({
+  kind: z.literal('password'),
+  profileId: z.string(),
+  effectiveParameters: z.object({
+    length: z.number(),
+    lowercase: z.boolean(),
+    uppercase: z.boolean(),
+    digits: z.boolean(),
+    symbols: z.boolean(),
+    minLowercase: z.number(),
+    minUppercase: z.number(),
+    minDigits: z.number(),
+    minSymbols: z.number(),
+    excludeAmbiguous: z.boolean(),
+  }),
+  secret: z.object({
+    format: z.literal('password_ascii'),
+    vaultText: z.string(),
+  }),
+}) satisfies z.ZodMiniType<GeneratePasswordResponse>
+
+const generateTokenResponseSchema = z.object({
+  kind: z.literal('token'),
+  profileId: z.string(),
+  effectiveParameters: z.object({
+    encoding: z.enum(['base64url', 'hex']),
+    bytes: z.number(),
+  }),
+  secret: z.object({
+    format: z.enum(['token_base64url', 'token_hex']),
+    vaultText: z.string(),
+  }),
+}) satisfies z.ZodMiniType<GenerateTokenResponse>
+
+const generateSSHKeyPairResponseSchema = z.object({
+  kind: z.literal('ssh_keypair'),
+  profileId: z.string(),
+  effectiveParameters: z.object({
+    algorithm: z.enum(['ed25519', 'ecdsa_p256', 'rsa_3072', 'rsa_4096']),
+  }),
+  secret: z.object({
+    format: z.literal('openssh_private_key'),
+    vaultText: z.string(),
+  }),
+  public: z.object({
+    format: z.literal('openssh_authorized_key'),
+    authorizedKey: z.string(),
+    fingerprint: z.string(),
+  }),
+}) satisfies z.ZodMiniType<GenerateSSHKeyPairResponse>
+
+const generateAgeIdentityResponseSchema = z.object({
+  kind: z.literal('age_identity'),
+  profileId: z.string(),
+  effectiveParameters: z.object({ algorithm: z.literal('x25519') }),
+  secret: z.object({
+    format: z.literal('age_x25519_identity'),
+    vaultText: z.string(),
+  }),
+  public: z.object({
+    format: z.literal('age_x25519_recipient'),
+    recipient: z.string(),
+  }),
+}) satisfies z.ZodMiniType<GenerateAgeIdentityResponse>
+
+const generateX509CSRResponseSchema = z.object({
+  kind: z.literal('x509_csr'),
+  profileId: z.string(),
+  effectiveParameters: z.object({
+    algorithm: z.enum(['ed25519', 'ecdsa_p256', 'ecdsa_p384', 'rsa_3072', 'rsa_4096']),
+  }),
+  secret: z.object({
+    format: z.literal('pkcs8_private_key_pem'),
+    vaultText: z.string(),
+  }),
+  public: z.object({
+    format: z.literal('pkcs10_csr_pem'),
+    csrPem: z.string(),
+    fingerprint: z.string(),
+  }),
+}) satisfies z.ZodMiniType<GenerateX509CSRResponse>
+
+const generateResponseSchema = z.union([
+  generatePasswordResponseSchema,
+  generateTokenResponseSchema,
+  generateSSHKeyPairResponseSchema,
+  generateAgeIdentityResponseSchema,
+  generateX509CSRResponseSchema,
+]) satisfies z.ZodMiniType<GenerateResponse>
 
 export type Session = {
   authenticated: boolean
@@ -48,9 +220,9 @@ export type OperationRequest = SingleProfileOperationRequest | RotateOperationRe
 
 export type VerifyAttestationRequest = components['schemas']['VerifyAttestationRequest']
 
-export type RotationResult = {
-  vaultText: string
-  attestation?: SignedAttestation
+export type OperationResult = {
+  output: string
+  attestation: SignedAttestation | null
 }
 
 export const MAX_PLAINTEXT_BYTES = 1 << 20
@@ -71,22 +243,14 @@ export class ApiError extends Error {
   }
 }
 
-type ErrorEnvelope = {
-  error?: {
-    code?: unknown
-    message?: unknown
-  }
-}
-
 let csrfToken = ''
 
-type JSONResponse = {
-  payload: unknown
-  status: number
+type JSONRequestInit = Omit<RequestInit, 'headers'> & {
+  headers?: Readonly<Record<string, string>>
 }
 
-async function requestJSONWithStatus(path: string, init?: RequestInit): Promise<JSONResponse> {
-  const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) }
+async function fetchSameOrigin(path: string, init?: JSONRequestInit): Promise<Response> {
+  const headers = { ...init?.headers }
   const method = (init?.method || 'GET').toUpperCase()
   if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && csrfToken && !Object.prototype.hasOwnProperty.call(headers, 'X-CSRF-Token')) {
     headers['X-CSRF-Token'] = csrfToken
@@ -98,26 +262,46 @@ async function requestJSONWithStatus(path: string, init?: RequestInit): Promise<
     if (reason instanceof Error && reason.name === 'AbortError') throw reason
     throw new ApiError('Unable to reach the Vaultsmith service', 'network_error')
   }
-
-  let payload: unknown = null
-  if (response.status !== 204) {
-    try {
-      payload = await response.json()
-    } catch {
-      payload = null
-    }
-  }
-  if (!response.ok) {
-    const envelope = isErrorEnvelope(payload) ? payload.error : undefined
-    const code = typeof envelope?.code === 'string' ? envelope.code : 'request_failed'
-    const message = typeof envelope?.message === 'string' ? envelope.message : 'Request failed'
-    throw new ApiError(message, code, response.status)
-  }
-  return { payload, status: response.status }
+  return response
 }
 
-async function requestJSON(path: string, init?: RequestInit): Promise<unknown> {
-  return (await requestJSONWithStatus(path, init)).payload
+async function responseError(response: Response): Promise<ApiError> {
+  try {
+    const parsedEnvelope = errorEnvelopeSchema.safeParse(await response.json())
+    const code = parsedEnvelope.success ? parsedEnvelope.data.error.code ?? 'request_failed' : 'request_failed'
+    const message = parsedEnvelope.success ? parsedEnvelope.data.error.message ?? 'Request failed' : 'Request failed'
+    return new ApiError(message, code, response.status)
+  } catch {
+    return new ApiError('Request failed', 'request_failed', response.status)
+  }
+}
+
+async function requestJSON<Output>(
+  path: string,
+  responseSchema: z.ZodMiniType<Output>,
+  invalidResponseMessage: string,
+  init?: JSONRequestInit,
+): Promise<Output> {
+  const response = await fetchSameOrigin(path, init)
+  if (!response.ok) throw await responseError(response)
+  try {
+    return responseSchema.parse(await response.json())
+  } catch {
+    throw new ApiError(invalidResponseMessage, 'invalid_response')
+  }
+}
+
+async function requestStatus(path: string, init?: JSONRequestInit): Promise<number> {
+  const response = await fetchSameOrigin(path, init)
+  if (!response.ok) throw await responseError(response)
+  if (response.status !== 204) {
+    try {
+      await response.json()
+    } catch {
+      // The status is authoritative for successful logout responses.
+    }
+  }
+  return response.status
 }
 
 type RequestTimeoutCode = 'session_timeout' | 'profiles_timeout' | 'logout_timeout'
@@ -146,7 +330,7 @@ function withRequestTimeout<T>(
       cleanup()
       resolve(result)
     }
-    const rejectOnce = (reason: unknown) => {
+    const rejectOnce = (reason: Error) => {
       if (settled) return
       settled = true
       cleanup()
@@ -164,22 +348,28 @@ function withRequestTimeout<T>(
     }, timeoutMs)
 
     try {
-      request(controller.signal).then(resolveOnce, rejectOnce)
-    } catch (reason) {
-      rejectOnce(reason)
+      request(controller.signal).then(resolveOnce, (cause) => rejectOnce(normalizeRequestFailure(cause)))
+    } catch (cause) {
+      rejectOnce(normalizeRequestFailure(cause))
     }
   })
 }
 
+function normalizeRequestFailure(cause: unknown): Error {
+  return cause instanceof Error ? cause : new ApiError('Request failed')
+}
+
 async function requestSession(signal: AbortSignal): Promise<Session> {
-  const payload = await requestJSON('/api/v1/session', {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-    signal,
-  })
-  if (!isSessionEnvelope(payload)) {
-    throw new ApiError('The service returned an invalid session response', 'invalid_response')
-  }
+  const payload = await requestJSON(
+    '/api/v1/session',
+    sessionSchema,
+    'The service returned an invalid session response',
+    {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal,
+    },
+  )
   return {
     ...payload,
     // Older servers did not expose this additive capability field.
@@ -204,15 +394,17 @@ export async function fetchProfiles(signal?: AbortSignal): Promise<Profile[]> {
     BOOTSTRAP_LOAD_TIMEOUT_MS,
     'profiles_timeout',
     'Profile loading timed out',
-    (requestSignal) => requestJSON('/api/v1/profiles', {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      signal: requestSignal,
-    }),
+    (requestSignal) => requestJSON(
+      '/api/v1/profiles',
+      profilesResponseSchema,
+      'The service returned an invalid profile response',
+      {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+        signal: requestSignal,
+      },
+    ),
   )
-  if (!isProfileEnvelope(payload)) {
-    throw new ApiError('The service returned an invalid profile response', 'invalid_response')
-  }
   return payload.profiles
 }
 
@@ -223,12 +415,12 @@ export async function logout(signal?: AbortSignal): Promise<void> {
     'logout_timeout',
     'Sign out timed out',
     async (requestSignal) => {
-      const response = await requestJSONWithStatus('/auth/logout', {
+      const status = await requestStatus('/auth/logout', {
         method: 'POST',
         headers: { Accept: 'application/json' },
         signal: requestSignal,
       })
-      if (response.status === 204) {
+      if (status === 204) {
         return
       }
 
@@ -237,63 +429,90 @@ export async function logout(signal?: AbortSignal): Promise<void> {
       }
       const verifiedSession = await requestSession(requestSignal)
       if (verifiedSession.authenticated) {
-        throw new ApiError('Sign out was not confirmed', 'logout_unconfirmed', response.status)
+        throw new ApiError('Sign out was not confirmed', 'logout_unconfirmed', status)
       }
     },
   )
   csrfToken = ''
 }
 
-export async function runOperation(request: OperationRequest, signal?: AbortSignal): Promise<string | RotationResult> {
-  const operation = request.mode === 'rotate'
-    ? {
-      path: '/api/v1/rotations',
-      body: {
-        sourceProfileId: request.sourceProfileId,
-        destinationProfileId: request.destinationProfileId,
-        vaultText: request.value,
-        ...(request.attestation ? { attestation: request.attestation } : {}),
-      } satisfies RotateRequest,
-      responseField: 'vaultText' as const,
+export async function runOperation(request: OperationRequest, signal?: AbortSignal): Promise<OperationResult> {
+  if (request.mode === 'rotate') {
+    const body = {
+      sourceProfileId: request.sourceProfileId,
+      destinationProfileId: request.destinationProfileId,
+      vaultText: request.value,
+      attestation: request.attestation,
+    } satisfies RotateRequest
+    const payload = await requestJSON(
+      '/api/v1/rotations',
+      rotateResponseSchema,
+      'The service returned an invalid operation response',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      },
+    )
+    if (payload.attestation === undefined) return { output: payload.vaultText, attestation: null }
+
+    const parsedAttestation = signedAttestationSchema.safeParse(payload.attestation)
+    if (!parsedAttestation.success) {
+      throw new ApiError('The service returned an invalid attestation response', 'invalid_response')
     }
-    : {
-      path: `/api/v1/profiles/${encodeURIComponent(request.profileId)}/${request.mode}`,
-      body: request.mode === 'encrypt'
-        ? { plaintext: request.value } satisfies EncryptRequest
-        : { vaultText: request.value } satisfies DecryptRequest,
-      responseField: request.mode === 'encrypt' ? 'vaultText' as const : 'plaintext' as const,
-    }
-  const payload = await requestJSON(operation.path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(operation.body),
-    signal,
-  })
-  if (!isOperationResponse(payload, operation.responseField)) {
-    throw new ApiError('The service returned an invalid operation response', 'invalid_response')
+    return { output: payload.vaultText, attestation: parsedAttestation.data }
   }
-  if (request.mode !== 'rotate') return payload[operation.responseField]
-  const candidate = payload as { vaultText: string; attestation?: unknown }
-  if (candidate.attestation !== undefined && !isSignedAttestation(candidate.attestation)) {
-    throw new ApiError('The service returned an invalid attestation response', 'invalid_response')
+
+  const path = `/api/v1/profiles/${encodeURIComponent(request.profileId)}/${request.mode}`
+  if (request.mode === 'encrypt') {
+    const body = { plaintext: request.value } satisfies EncryptRequest
+    const payload = await requestJSON(
+      path,
+      encryptResponseSchema,
+      'The service returned an invalid operation response',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      },
+    )
+    return { output: payload.vaultText, attestation: null }
   }
-  return candidate.attestation
-    ? { vaultText: candidate.vaultText, attestation: candidate.attestation }
-    : candidate.vaultText
+
+  const body = { vaultText: request.value } satisfies DecryptRequest
+  const payload = await requestJSON(
+    path,
+    decryptResponseSchema,
+    'The service returned an invalid operation response',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    },
+  )
+  return { output: payload.plaintext, attestation: null }
 }
 
 export async function generateMaterial(request: GenerateRequest, signal?: AbortSignal): Promise<GenerateResponse> {
   const wireRequest = toGenerateWireRequest(request)
-  const payload = await requestJSON('/api/v1/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(wireRequest),
-    signal,
-  })
-  if (!isGenerateResponse(payload, wireRequest)) {
+  const payload = await requestJSON(
+    '/api/v1/generate',
+    generateResponseSchema,
+    'The service returned an invalid Generate response',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(wireRequest),
+      signal,
+    },
+  )
+  if (!matchesGenerateRequest(payload, wireRequest)) {
     throw new ApiError('The service returned an invalid Generate response', 'invalid_response')
   }
-  return normalizeGenerateResponse(payload)
+  return payload
 }
 
 function toGenerateWireRequest(request: GenerateRequest): GenerateRequest {
@@ -335,49 +554,49 @@ function toGenerateWireRequest(request: GenerateRequest): GenerateRequest {
     case 'x509_csr': {
       const subject = request.parameters.subject
       const sans = request.parameters.sans
+      const parameters: GenerateX509CSRParameters = { algorithm: request.parameters.algorithm }
+      if (subject) {
+        parameters.subject = {
+          commonName: subject.commonName,
+          serialNumber: subject.serialNumber,
+          country: subject.country,
+          organization: subject.organization,
+          organizationalUnit: subject.organizationalUnit,
+          locality: subject.locality,
+          province: subject.province,
+          streetAddress: subject.streetAddress,
+          postalCode: subject.postalCode,
+        }
+      }
+      if (sans) {
+        parameters.sans = {
+          dnsNames: sans.dnsNames,
+          ipAddresses: sans.ipAddresses,
+          emailAddresses: sans.emailAddresses,
+          uris: sans.uris,
+        }
+      }
       return {
         kind: 'x509_csr',
         profileId: request.profileId,
-        parameters: {
-          algorithm: request.parameters.algorithm,
-          ...(subject ? {
-            subject: {
-              commonName: subject.commonName,
-              serialNumber: subject.serialNumber,
-              country: subject.country,
-              organization: subject.organization,
-              organizationalUnit: subject.organizationalUnit,
-              locality: subject.locality,
-              province: subject.province,
-              streetAddress: subject.streetAddress,
-              postalCode: subject.postalCode,
-            },
-          } : {}),
-          ...(sans ? {
-            sans: {
-              dnsNames: sans.dnsNames,
-              ipAddresses: sans.ipAddresses,
-              emailAddresses: sans.emailAddresses,
-              uris: sans.uris,
-            },
-          } : {}),
-        },
+        parameters,
       }
     }
   }
 }
 
 export async function verifyAttestation(request: VerifyAttestationRequest, signal?: AbortSignal): Promise<VerificationResult> {
-  const payload = await requestJSON('/api/v1/attestations/verify', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(request),
-    signal,
-  })
-  if (!isVerificationResult(payload)) {
-    throw new ApiError('The service returned an invalid verification response', 'invalid_response')
-  }
-  return payload
+  return requestJSON(
+    '/api/v1/attestations/verify',
+    verificationResultSchema,
+    'The service returned an invalid verification response',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+      signal,
+    },
+  )
 }
 
 export function utf8ByteLength(value: string): number {
@@ -387,80 +606,26 @@ export function utf8ByteLength(value: string): number {
 export function maxInputBytes(mode: OperationMode): number {
   return mode === 'encrypt' ? MAX_PLAINTEXT_BYTES : MAX_VAULT_TEXT_BYTES
 }
+function matchesGenerateRequest(response: GenerateResponse, request: GenerateRequest): boolean {
+  if (response.profileId !== request.profileId
+    || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(response.profileId)
+    || !isCanonicalGeneratedVaultText(response.secret.vaultText, response.profileId)) return false
 
-function isErrorEnvelope(value: unknown): value is ErrorEnvelope & { error: NonNullable<ErrorEnvelope['error']> } {
-  if (!value || typeof value !== 'object' || !('error' in value)) return false
-  const error = (value as ErrorEnvelope).error
-  return Boolean(error && typeof error === 'object')
-}
-
-function isSessionEnvelope(value: unknown): value is Session {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Partial<Session>
-  return typeof candidate.authenticated === 'boolean'
-    && typeof candidate.authRequired === 'boolean'
-    && typeof candidate.csrfToken === 'string'
-    && (candidate.email === undefined || typeof candidate.email === 'string')
-    && (candidate.attestationEnabled === undefined || typeof candidate.attestationEnabled === 'boolean')
-}
-
-function isProfileEnvelope(value: unknown): value is { profiles: Profile[] } {
-  if (!value || typeof value !== 'object' || !('profiles' in value)) return false
-  const profiles = (value as { profiles?: unknown }).profiles
-  return Array.isArray(profiles) && profiles.every(isProfile)
-}
-
-function isProfile(value: unknown): value is Profile {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Partial<Profile>
-  const capabilities = candidate.capabilities
-  return typeof candidate.id === 'string'
-    && typeof candidate.label === 'string'
-    && Boolean(capabilities && typeof capabilities === 'object')
-    && typeof capabilities?.encrypt === 'boolean'
-    && typeof capabilities?.decrypt === 'boolean'
-    && typeof capabilities?.rotateSource === 'boolean'
-    && typeof capabilities?.rotateDestination === 'boolean'
-}
-
-function isOperationResponse(
-  value: unknown,
-  field: 'vaultText' | 'plaintext',
-): value is Record<typeof field, string> {
-  if (!value || typeof value !== 'object' || !(field in value)) return false
-  return typeof (value as Record<string, unknown>)[field] === 'string'
-}
-
-function isGenerateResponse(value: unknown, request: GenerateRequest): value is GenerateResponse {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Record<string, unknown>
-  if (candidate.kind !== request.kind
-    || candidate.profileId !== request.profileId
-    || typeof candidate.profileId !== 'string'
-    || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(candidate.profileId)) return false
-  if (!candidate.effectiveParameters || typeof candidate.effectiveParameters !== 'object') return false
-  if (!candidate.secret || typeof candidate.secret !== 'object') return false
-
-  const effective = candidate.effectiveParameters as Record<string, unknown>
-  const secret = candidate.secret as Record<string, unknown>
-  if (!isCanonicalGeneratedVaultText(secret.vaultText, candidate.profileId)) return false
-
-  switch (request.kind) {
+  switch (response.kind) {
     case 'password': {
-      const integerFields = ['length', 'minLowercase', 'minUppercase', 'minDigits', 'minSymbols'] as const
-      const booleanFields = ['lowercase', 'uppercase', 'digits', 'symbols', 'excludeAmbiguous'] as const
-      if (secret.format !== 'password_ascii'
-        || !integerFields.every((field) => Number.isInteger(effective[field]))
-        || !booleanFields.every((field) => typeof effective[field] === 'boolean')) return false
-      const length = effective.length as number
-      const minima = integerFields.slice(1).map((field) => effective[field] as number)
-      const enabledClasses = booleanFields.slice(0, 4).map((field) => effective[field] as boolean)
+      if (request.kind !== 'password') return false
+      const effective = response.effectiveParameters
+      const length = effective.length
+      const minima = [effective.minLowercase, effective.minUppercase, effective.minDigits, effective.minSymbols]
+      const enabledClasses = [effective.lowercase, effective.uppercase, effective.digits, effective.symbols]
       const parameters = request.parameters
       const expectedLowercase = parameters.lowercase ?? true
       const expectedUppercase = parameters.uppercase ?? true
       const expectedDigits = parameters.digits ?? true
       const expectedSymbols = parameters.symbols ?? false
-      return length === (parameters.length ?? 32)
+      return Number.isInteger(length)
+        && minima.every(Number.isInteger)
+        && length === (parameters.length ?? 32)
         && effective.lowercase === expectedLowercase
         && effective.uppercase === expectedUppercase
         && effective.digits === expectedDigits
@@ -477,124 +642,39 @@ function isGenerateResponse(value: unknown, request: GenerateRequest): value is 
         && minima.reduce((sum, minimum) => sum + minimum, 0) <= length
     }
     case 'token': {
-      if (effective.encoding !== 'base64url' && effective.encoding !== 'hex') return false
-      if (!Number.isInteger(effective.bytes) || (effective.bytes as number) < 16 || (effective.bytes as number) > 64) return false
+      if (request.kind !== 'token') return false
+      const effective = response.effectiveParameters
+      if (!Number.isInteger(effective.bytes) || effective.bytes < 16 || effective.bytes > 64) return false
       return effective.encoding === (request.parameters.encoding ?? 'base64url')
         && effective.bytes === (request.parameters.bytes ?? 32)
-        && secret.format === (effective.encoding === 'base64url' ? 'token_base64url' : 'token_hex')
+        && response.secret.format === (effective.encoding === 'base64url' ? 'token_base64url' : 'token_hex')
     }
     case 'ssh_keypair': {
-      if (!isSSHAlgorithm(effective.algorithm)
-        || effective.algorithm !== request.parameters.algorithm
-        || secret.format !== 'openssh_private_key'
-        || !candidate.public || typeof candidate.public !== 'object') return false
-      const publicResult = candidate.public as Record<string, unknown>
-      return publicResult.format === 'openssh_authorized_key'
-        && isCanonicalAuthorizedKey(publicResult.authorizedKey, effective.algorithm)
-        && isSHA256Fingerprint(publicResult.fingerprint)
+      if (request.kind !== 'ssh_keypair') return false
+      const effective = response.effectiveParameters
+      return effective.algorithm === request.parameters.algorithm
+        && isCanonicalAuthorizedKey(response.public.authorizedKey, effective.algorithm)
+        && isSHA256Fingerprint(response.public.fingerprint)
     }
     case 'age_identity': {
-      if (effective.algorithm !== 'x25519'
-        || secret.format !== 'age_x25519_identity'
-        || !candidate.public || typeof candidate.public !== 'object') return false
-      const publicResult = candidate.public as Record<string, unknown>
-      return publicResult.format === 'age_x25519_recipient' && isCanonicalAgeRecipient(publicResult.recipient)
+      return request.kind === 'age_identity' && isCanonicalAgeRecipient(response.public.recipient)
     }
     case 'x509_csr': {
-      if (!isX509Algorithm(effective.algorithm)
-        || effective.algorithm !== request.parameters.algorithm
-        || secret.format !== 'pkcs8_private_key_pem'
-        || !candidate.public || typeof candidate.public !== 'object') return false
-      const publicResult = candidate.public as Record<string, unknown>
-      return publicResult.format === 'pkcs10_csr_pem'
-        && isCanonicalCSRPEM(publicResult.csrPem)
-        && isSHA256Fingerprint(publicResult.fingerprint)
+      if (request.kind !== 'x509_csr') return false
+      return response.effectiveParameters.algorithm === request.parameters.algorithm
+        && isCanonicalCSRPEM(response.public.csrPem)
+        && isSHA256Fingerprint(response.public.fingerprint)
     }
-    default:
-      return false
   }
 }
 
-function normalizeGenerateResponse(value: GenerateResponse): GenerateResponse {
-  switch (value.kind) {
-    case 'password':
-      return {
-        kind: value.kind,
-        profileId: value.profileId,
-        effectiveParameters: {
-          length: value.effectiveParameters.length,
-          lowercase: value.effectiveParameters.lowercase,
-          uppercase: value.effectiveParameters.uppercase,
-          digits: value.effectiveParameters.digits,
-          symbols: value.effectiveParameters.symbols,
-          minLowercase: value.effectiveParameters.minLowercase,
-          minUppercase: value.effectiveParameters.minUppercase,
-          minDigits: value.effectiveParameters.minDigits,
-          minSymbols: value.effectiveParameters.minSymbols,
-          excludeAmbiguous: value.effectiveParameters.excludeAmbiguous,
-        },
-        secret: { format: value.secret.format, vaultText: value.secret.vaultText },
-      }
-    case 'token':
-      return {
-        kind: value.kind,
-        profileId: value.profileId,
-        effectiveParameters: {
-          encoding: value.effectiveParameters.encoding,
-          bytes: value.effectiveParameters.bytes,
-        },
-        secret: { format: value.secret.format, vaultText: value.secret.vaultText },
-      }
-    case 'ssh_keypair':
-      return {
-        kind: value.kind,
-        profileId: value.profileId,
-        effectiveParameters: { algorithm: value.effectiveParameters.algorithm },
-        secret: { format: value.secret.format, vaultText: value.secret.vaultText },
-        public: {
-          format: value.public.format,
-          authorizedKey: value.public.authorizedKey,
-          fingerprint: value.public.fingerprint,
-        },
-      }
-    case 'age_identity':
-      return {
-        kind: value.kind,
-        profileId: value.profileId,
-        effectiveParameters: { algorithm: value.effectiveParameters.algorithm },
-        secret: { format: value.secret.format, vaultText: value.secret.vaultText },
-        public: { format: value.public.format, recipient: value.public.recipient },
-      }
-    case 'x509_csr':
-      return {
-        kind: value.kind,
-        profileId: value.profileId,
-        effectiveParameters: { algorithm: value.effectiveParameters.algorithm },
-        secret: { format: value.secret.format, vaultText: value.secret.vaultText },
-        public: {
-          format: value.public.format,
-          csrPem: value.public.csrPem,
-          fingerprint: value.public.fingerprint,
-        },
-      }
-  }
-}
-
-function isSSHAlgorithm(value: unknown): value is GenerateSSHKeyAlgorithm {
-  return value === 'ed25519' || value === 'ecdsa_p256' || value === 'rsa_3072' || value === 'rsa_4096'
-}
-
-function isX509Algorithm(value: unknown): value is GenerateX509KeyAlgorithm {
-  return value === 'ed25519' || value === 'ecdsa_p256' || value === 'ecdsa_p384' || value === 'rsa_3072' || value === 'rsa_4096'
-}
-
-function isSHA256Fingerprint(value: unknown): value is string {
-  if (typeof value !== 'string' || !/^SHA256:[A-Za-z0-9+/]{43}$/.test(value)) return false
+function isSHA256Fingerprint(value: string): boolean {
+  if (!/^SHA256:[A-Za-z0-9+/]{43}$/.test(value)) return false
   return decodeCanonicalBase64(value.slice('SHA256:'.length), false)?.length === 32
 }
 
-function isCanonicalGeneratedVaultText(value: unknown, profileId: string): value is string {
-  if (typeof value !== 'string' || value.length > MAX_VAULT_TEXT_BYTES || !value.endsWith('\n') || value.endsWith('\n\n') || value.includes('\r')) return false
+function isCanonicalGeneratedVaultText(value: string, profileId: string): boolean {
+  if (value.length > MAX_VAULT_TEXT_BYTES || !value.endsWith('\n') || value.endsWith('\n\n') || value.includes('\r')) return false
   const lines = value.slice(0, -1).split('\n')
   if (lines.shift() !== `$ANSIBLE_VAULT;1.2;AES256;${profileId}` || lines.length === 0) return false
   if (!lines.every((line, index) => line.length > 0
@@ -616,8 +696,8 @@ function isCanonicalGeneratedVaultText(value: unknown, profileId: string): value
     && fields[2].length % 32 === 0
 }
 
-function isCanonicalAuthorizedKey(value: unknown, algorithm: GenerateSSHKeyAlgorithm): value is string {
-  if (typeof value !== 'string' || value.includes('\n') || value.includes('\r')) return false
+function isCanonicalAuthorizedKey(value: string, algorithm: GenerateSSHKeyAlgorithm): boolean {
+  if (value.includes('\n') || value.includes('\r')) return false
   const keyType = algorithm === 'ed25519'
     ? 'ssh-ed25519'
     : algorithm === 'ecdsa_p256'
@@ -656,17 +736,17 @@ function isCanonicalAuthorizedKey(value: unknown, algorithm: GenerateSSHKeyAlgor
     && modulus.next === decoded.length)
 }
 
-function isCanonicalAgeRecipient(value: unknown): value is string {
-  if (typeof value !== 'string' || !/^age1[ac-hj-np-z02-9]{58}$/.test(value)) return false
+function isCanonicalAgeRecipient(value: string): boolean {
+  if (!/^age1[ac-hj-np-z02-9]{58}$/.test(value)) return false
   const alphabet = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
-  const data = [...value.slice(4)].map((character) => alphabet.indexOf(character))
+  const data = Array.from(value.slice(4), (character) => alphabet.indexOf(character))
   if (data.some((part) => part < 0) || (data[51] & 15) !== 0) return false
   const hrp = [...'age'].map((character) => character.charCodeAt(0))
   return bech32Polymod([...hrp.map((part) => part >> 5), 0, ...hrp.map((part) => part & 31), ...data]) === 1
 }
 
-function isCanonicalCSRPEM(value: unknown): value is string {
-  if (typeof value !== 'string' || value.includes('\r') || !value.endsWith('\n') || value.endsWith('\n\n')) return false
+function isCanonicalCSRPEM(value: string): boolean {
+  if (value.includes('\r') || !value.endsWith('\n') || value.endsWith('\n\n')) return false
   const lines = value.slice(0, -1).split('\n')
   if (lines.length < 3
     || lines[0] !== '-----BEGIN CERTIFICATE REQUEST-----'
@@ -858,45 +938,4 @@ function bech32Polymod(values: number[]): number {
     }
   }
   return checksum >>> 0
-}
-
-function isSignedAttestation(value: unknown): value is SignedAttestation {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Partial<SignedAttestation>
-  return typeof candidate.protected === 'string'
-    && typeof candidate.payload === 'string'
-    && typeof candidate.signature === 'string'
-}
-
-function isAttestationBinding(value: unknown): value is AttestationBinding {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Partial<AttestationBinding>
-  return (candidate.repository === undefined || typeof candidate.repository === 'string')
-    && (candidate.revision === undefined || typeof candidate.revision === 'string')
-    && (candidate.path === undefined || typeof candidate.path === 'string')
-    && (candidate.selector === undefined || typeof candidate.selector === 'string')
-}
-
-function isAttestationClaims(value: unknown): value is AttestationClaims {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Partial<AttestationClaims>
-  return typeof candidate.issuer === 'string'
-    && typeof candidate.issuedAt === 'string'
-    && candidate.operation === 'rotate'
-    && typeof candidate.sourceProfileId === 'string'
-    && typeof candidate.destinationProfileId === 'string'
-    && typeof candidate.kid === 'string'
-    && (candidate.binding === undefined || isAttestationBinding(candidate.binding))
-}
-
-function isVerificationResult(value: unknown): value is VerificationResult {
-  if (!value || typeof value !== 'object') return false
-  const candidate = value as Partial<VerificationResult>
-  const reasons: VerificationReason[] = [
-    'signature_invalid', 'unknown_key', 'key_revoked', 'issuer_mismatch',
-    'unsupported_version', 'input_digest_mismatch', 'output_digest_mismatch', 'binding_mismatch',
-  ]
-  return typeof candidate.valid === 'boolean'
-    && (candidate.reason === undefined || reasons.includes(candidate.reason))
-    && (candidate.attestation === undefined || isAttestationClaims(candidate.attestation))
 }

@@ -46,6 +46,10 @@ type X509Fields = {
   uris: string
 }
 
+type GenerateX509Request = Extract<GenerateRequest, { kind: 'x509_csr' }>
+type GenerateX509Subject = NonNullable<GenerateX509Request['parameters']['subject']>
+type GenerateX509SANs = NonNullable<GenerateX509Request['parameters']['sans']>
+
 const emptyX509Fields = (): X509Fields => ({
   commonName: '',
   serialNumber: '',
@@ -197,6 +201,23 @@ export default function GenerateWorkbench({
     clearResult()
   }
 
+  function changeKindSelection(value: string) {
+    switch (value) {
+      case 'password':
+      case 'token':
+      case 'ssh_keypair':
+      case 'age_identity':
+      case 'x509_csr':
+        changeKind(value)
+    }
+  }
+
+  function changeTokenEncoding(value: string) {
+    if (value !== 'base64url' && value !== 'hex') return
+    setTokenEncoding(value)
+    clearResult()
+  }
+
   function updateX509(field: keyof X509Fields, value: string) {
     if (locked) return
     setX509((current) => ({ ...current, [field]: value }))
@@ -241,15 +262,14 @@ export default function GenerateWorkbench({
       case 'x509_csr': {
         const subject = compactX509Subject(x509)
         const sans = compactX509SANs(x509)
-        return {
+        const request: GenerateX509Request = {
           kind,
           profileId,
-          parameters: {
-            algorithm: x509Algorithm,
-            ...(subject ? { subject } : {}),
-            ...(sans ? { sans } : {}),
-          },
+          parameters: { algorithm: x509Algorithm },
         }
+        if (subject) request.parameters.subject = subject
+        if (sans) request.parameters.sans = sans
+        return request
       }
     }
   }
@@ -273,19 +293,19 @@ export default function GenerateWorkbench({
       if (!isCurrent() || controller.signal.aborted) return
       setResult(generated)
       setStatus('Sealed material ready')
-    } catch (reason: unknown) {
+    } catch (cause: unknown) {
       if (!isCurrent()) return
       if (controller.signal.aborted) {
         setError('Generation timed out. The result is unknown; do not retry automatically.')
         setStatus('')
-      } else if (reason instanceof ApiError && reason.code === 'unauthorized') {
+      } else if (cause instanceof ApiError && cause.code === 'unauthorized') {
         onUnauthorized()
         setStatus('Sign-in required…')
-      } else if (reason instanceof ApiError && reason.status === 403 && reason.code === 'forbidden') {
+      } else if (cause instanceof ApiError && cause.status === 403 && cause.code === 'forbidden') {
         setStatus('')
         await onForbidden()
       } else {
-        setError(generateErrorMessage(reason))
+        setError(generateErrorMessage(cause))
         setStatus('')
       }
     } finally {
@@ -363,7 +383,7 @@ export default function GenerateWorkbench({
           </div>
           <div className="field-label">
             <label htmlFor="generate-kind">Material</label>
-            <select id="generate-kind" value={kind} disabled={locked} onChange={(event) => changeKind(event.target.value as GenerateKind)}>
+            <select id="generate-kind" value={kind} disabled={locked} onChange={(event) => changeKindSelection(event.target.value)}>
               <option value="password">Password</option>
               <option value="token">Random token</option>
               <option value="ssh_keypair">SSH keypair</option>
@@ -408,7 +428,7 @@ export default function GenerateWorkbench({
             <div className="generate-settings-grid compact">
               <div className="field-label">
                 <label htmlFor="token-encoding">Encoding</label>
-                <select id="token-encoding" value={tokenEncoding} disabled={locked} onChange={(event) => { setTokenEncoding(event.target.value as 'base64url' | 'hex'); clearResult() }}>
+                <select id="token-encoding" value={tokenEncoding} disabled={locked} onChange={(event) => changeTokenEncoding(event.target.value)}>
                   <option value="base64url">Base64url (unpadded)</option>
                   <option value="hex">Hex (lowercase)</option>
                 </select>
@@ -423,7 +443,7 @@ export default function GenerateWorkbench({
               label="SSH algorithm"
               value={sshAlgorithm}
               disabled={locked}
-              onChange={(value) => { setSSHAlgorithm(value as GenerateSSHKeyAlgorithm); clearResult() }}
+              onChange={(value) => { setSSHAlgorithm(value); clearResult() }}
               options={[
                 ['ed25519', 'Ed25519 — recommended'],
                 ['ecdsa_p256', 'ECDSA P-256 — compatibility'],
@@ -448,7 +468,7 @@ export default function GenerateWorkbench({
                 label="Private-key algorithm"
                 value={x509Algorithm}
                 disabled={locked}
-                onChange={(value) => { setX509Algorithm(value as GenerateX509KeyAlgorithm); clearResult() }}
+                onChange={(value) => { setX509Algorithm(value); clearResult() }}
                 options={[
                   ['ecdsa_p256', 'ECDSA P-256 — recommended compatibility choice'],
                   ['ed25519', 'Ed25519 — modern'],
@@ -665,45 +685,67 @@ function Checkbox({ label, checked, disabled, onChange }: {
   return <label className="checkbox-label"><input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} /><span>{label}</span></label>
 }
 
-function AlgorithmField({ id, label, value, disabled, onChange, options }: {
+function AlgorithmField<Value extends string>({ id, label, value, disabled, onChange, options }: {
   id: string
   label: string
-  value: string
+  value: Value
   disabled: boolean
-  onChange: (value: string) => void
-  options: ReadonlyArray<readonly [string, string]>
+  onChange: (value: Value) => void
+  options: ReadonlyArray<readonly [Value, string]>
 }) {
   return (
     <div className="field-label algorithm-field">
       <label htmlFor={id}>{label}</label>
-      <select id={id} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
+      <select
+        id={id}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => {
+          const selected = options.find(([optionValue]) => optionValue === event.target.value)
+          if (selected) onChange(selected[0])
+        }}
+      >
         {options.map(([optionValue, optionLabel]) => <option key={optionValue} value={optionValue}>{optionLabel}</option>)}
       </select>
     </div>
   )
 }
 
-function compactX509Subject(fields: X509Fields): NonNullable<Extract<GenerateRequest, { kind: 'x509_csr' }>['parameters']['subject']> | undefined {
-  const subject = {
-    ...(fields.commonName !== '' ? { commonName: fields.commonName } : {}),
-    ...(fields.serialNumber !== '' ? { serialNumber: fields.serialNumber } : {}),
-    ...lineListProperties(fields, repeatedSubjectFields.map(([field]) => field)),
-  }
+function compactX509Subject(fields: X509Fields): GenerateX509Subject | undefined {
+  const subject: GenerateX509Subject = {}
+  if (fields.commonName !== '') subject.commonName = fields.commonName
+  if (fields.serialNumber !== '') subject.serialNumber = fields.serialNumber
+
+  const country = splitLines(fields.country)
+  if (country.length > 0) subject.country = country
+  const organization = splitLines(fields.organization)
+  if (organization.length > 0) subject.organization = organization
+  const organizationalUnit = splitLines(fields.organizationalUnit)
+  if (organizationalUnit.length > 0) subject.organizationalUnit = organizationalUnit
+  const locality = splitLines(fields.locality)
+  if (locality.length > 0) subject.locality = locality
+  const province = splitLines(fields.province)
+  if (province.length > 0) subject.province = province
+  const streetAddress = splitLines(fields.streetAddress)
+  if (streetAddress.length > 0) subject.streetAddress = streetAddress
+  const postalCode = splitLines(fields.postalCode)
+  if (postalCode.length > 0) subject.postalCode = postalCode
+
   return Object.keys(subject).length > 0 ? subject : undefined
 }
 
-function compactX509SANs(fields: X509Fields): NonNullable<Extract<GenerateRequest, { kind: 'x509_csr' }>['parameters']['sans']> | undefined {
-  const sans = lineListProperties(fields, sanFields.map(([field]) => field))
-  return Object.keys(sans).length > 0 ? sans : undefined
-}
+function compactX509SANs(fields: X509Fields): GenerateX509SANs | undefined {
+  const sans: GenerateX509SANs = {}
+  const dnsNames = splitLines(fields.dnsNames)
+  if (dnsNames.length > 0) sans.dnsNames = dnsNames
+  const ipAddresses = splitLines(fields.ipAddresses)
+  if (ipAddresses.length > 0) sans.ipAddresses = ipAddresses
+  const emailAddresses = splitLines(fields.emailAddresses)
+  if (emailAddresses.length > 0) sans.emailAddresses = emailAddresses
+  const uris = splitLines(fields.uris)
+  if (uris.length > 0) sans.uris = uris
 
-function lineListProperties<K extends keyof X509Fields>(fields: X509Fields, names: readonly K[]): Partial<Record<K, string[]>> {
-  const values: Partial<Record<K, string[]>> = {}
-  for (const name of names) {
-    const lines = splitLines(fields[name])
-    if (lines.length > 0) values[name] = lines
-  }
-  return values
+  return Object.keys(sans).length > 0 ? sans : undefined
 }
 
 function splitLines(value: string): string[] {
@@ -753,13 +795,13 @@ function generationValidationError(input: {
   return ''
 }
 
-function generateErrorMessage(reason: unknown): string {
-  if (!(reason instanceof ApiError)) return 'Material generation failed. The result is unknown; do not retry automatically.'
-  if (reason.code === 'invalid_response') return 'The service returned an invalid Generate response. The result is unknown; do not retry automatically.'
-  if (reason.code === 'invalid_request') return 'The request was not accepted. Review the generation settings.'
-  if (reason.code === 'operation_failed') return 'Material generation or Vault sealing failed. Do not retry automatically.'
-  if (reason.code === 'not_found') return 'The selected environment is no longer available. Reload environments and try again.'
-  if (reason.code === 'network_error' || reason.code === 'temporarily_unavailable' || reason.code === 'not_ready' || reason.status >= 500) {
+function generateErrorMessage(cause: unknown): string {
+  if (!(cause instanceof ApiError)) return 'Material generation failed. The result is unknown; do not retry automatically.'
+  if (cause.code === 'invalid_response') return 'The service returned an invalid Generate response. The result is unknown; do not retry automatically.'
+  if (cause.code === 'invalid_request') return 'The request was not accepted. Review the generation settings.'
+  if (cause.code === 'operation_failed') return 'Material generation or Vault sealing failed. Do not retry automatically.'
+  if (cause.code === 'not_found') return 'The selected environment is no longer available. Reload environments and try again.'
+  if (cause.code === 'network_error' || cause.code === 'temporarily_unavailable' || cause.code === 'not_ready' || cause.status >= 500) {
     return 'Vaultsmith is temporarily unavailable. The result is unknown; do not retry automatically.'
   }
   return 'Material generation failed. The result is unknown; do not retry automatically.'
