@@ -3,7 +3,27 @@ import type { GenerateRequest } from './api'
 
 let api: typeof import('./api')
 
-const jsonResponse = (body: unknown, init: ResponseInit = {}) => new Response(JSON.stringify(body), {
+type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue }
+type SSHGenerateRequest = Extract<GenerateRequest, { kind: 'ssh_keypair' }>
+type SSHRequestWithAdditions = SSHGenerateRequest & {
+  parameters: SSHGenerateRequest['parameters'] & { ignoredParameter: string }
+  ignoredTopLevel: string
+}
+type X509GenerateRequest = Extract<GenerateRequest, { kind: 'x509_csr' }>
+type X509RequestWithAdditions = X509GenerateRequest & {
+  parameters: X509GenerateRequest['parameters'] & {
+    ignoredParameter: boolean
+    subject: NonNullable<X509GenerateRequest['parameters']['subject']> & { ignoredSubject: boolean }
+    sans: NonNullable<X509GenerateRequest['parameters']['sans']> & { ignoredSAN: boolean }
+  }
+  ignoredTopLevel: boolean
+}
+type PasswordResponseAdditions = {
+  public?: { futureValue: string }
+  futureField?: boolean
+}
+
+const jsonResponse = (body: JsonValue, init: ResponseInit = {}) => new Response(JSON.stringify(body), {
   status: 200,
   headers: { 'Content-Type': 'application/json' },
   ...init,
@@ -28,7 +48,7 @@ const csrPEM = [
 ].join('\n')
 const fingerprint = 'SHA256:NqTDLcU0/nq3jI+Mrf/fqaNvLW0/4hglFn1m1p0Y/OI'
 
-const passwordResponse = (extra: Record<string, unknown> = {}) => ({
+const passwordResponse = (extra: PasswordResponseAdditions = {}) => ({
   kind: 'password',
   profileId: 'dev',
   effectiveParameters: {
@@ -53,7 +73,7 @@ function sshField(value: string): string {
 }
 
 function rsaAuthorizedKey(bits: 3072 | 4096): string {
-  const modulus = String.fromCharCode(0, 0x80) + String.fromCharCode(...new Array<number>(bits / 8 - 1).fill(0))
+  const modulus = String.fromCharCode(0, 0x80) + String.fromCharCode(...new Uint8Array(bits / 8 - 1))
   return `ssh-rsa ${globalThis.btoa(sshField('ssh-rsa') + sshField('\x01\x00\x01') + sshField(modulus))}`
 }
 
@@ -81,7 +101,7 @@ describe('Generate API client', () => {
       profileId: 'dev',
       parameters: { algorithm: 'ed25519', ignoredParameter: 'do not send' },
       ignoredTopLevel: 'do not send',
-    } as unknown as GenerateRequest
+    } satisfies SSHRequestWithAdditions
 
     await api.fetchSession()
     const result = await api.generateMaterial(request)
@@ -121,7 +141,7 @@ describe('Generate API client', () => {
         subject: { commonName: ' service.example ', organization: ['Second', 'First'], ignoredSubject: true },
         sans: { dnsNames: ['b.example', 'a.example'], ignoredSAN: true },
       },
-    } as unknown as GenerateRequest
+    } satisfies X509RequestWithAdditions
 
     await api.generateMaterial(request)
 

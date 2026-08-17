@@ -6,7 +6,11 @@ import {
   isSeq,
   parseDocument,
   Scalar,
+  type Document,
+  type Pair,
+  type ParsedNode,
 } from 'yaml'
+import * as z from 'zod/mini'
 import { inspectVaultFormat } from './vaultFormat'
 
 const VAULT_HEADER_PREFIX = '$ANSIBLE_VAULT'
@@ -14,6 +18,8 @@ const VAULT_TAG = '!vault'
 const HEX_PAYLOAD_LINE_PATTERN = /^[0-9a-f]+$/iu
 const MAX_VAULT_PAYLOAD_LINE_LENGTH = 80
 const UNSAFE_HEADER_ISSUES = new Set(['label-too-long', 'label-unavailable'])
+const vaultScalarValueSchema = z.string()
+const scalarKeySchema = z.union([z.string(), z.null()])
 
 type ParsedVaultScalar = {
   value: string
@@ -24,6 +30,9 @@ type YamlInspection = {
   candidate: ParsedVaultScalar | null
   invalid: boolean
 }
+
+type ParsedYamlPair = Pair<ParsedNode | null, ParsedNode | null>
+type TraversedYamlNode = ParsedNode | ParsedYamlPair | null
 
 /**
  * Normalizes a paste only when it is either a complete supported Vault value
@@ -84,7 +93,7 @@ function trimOuterBlankLines(value: string): string {
 }
 
 function parseSingleVaultScalar(value: string): ParsedVaultScalar | null {
-  let document: ReturnType<typeof parseDocument>
+  let document: Document.Parsed<ParsedNode>
   try {
     document = parseDocument(value, {
       customTags: [],
@@ -115,8 +124,8 @@ function parseSingleVaultScalar(value: string): ParsedVaultScalar | null {
   return inspection.invalid ? null : inspection.candidate
 }
 
-function inspectYamlNodes(root: unknown, inspection: YamlInspection): void {
-  const pending: Array<{ node: unknown, vaultScalarAllowed: boolean }> = [
+function inspectYamlNodes(root: ParsedNode | null, inspection: YamlInspection): void {
+  const pending: Array<{ node: TraversedYamlNode, vaultScalarAllowed: boolean }> = [
     { node: root, vaultScalarAllowed: true },
   ]
 
@@ -124,7 +133,7 @@ function inspectYamlNodes(root: unknown, inspection: YamlInspection): void {
     const { node, vaultScalarAllowed } = pending.pop()!
     if (node === null || node === undefined) continue
 
-    if (isPair(node)) {
+    if (isPair<ParsedNode | null, ParsedNode | null>(node)) {
       pending.push(
         { node: node.value, vaultScalarAllowed },
         { node: node.key, vaultScalarAllowed: false },
@@ -145,7 +154,6 @@ function inspectYamlNodes(root: unknown, inspection: YamlInspection): void {
         node.tag !== VAULT_TAG
         || !vaultScalarAllowed
         || !isScalar(node)
-        || typeof node.value !== 'string'
         || (node.type !== Scalar.BLOCK_LITERAL && node.type !== Scalar.BLOCK_FOLDED)
         || node.range === undefined
         || node.range === null
@@ -153,16 +161,23 @@ function inspectYamlNodes(root: unknown, inspection: YamlInspection): void {
       ) {
         inspection.invalid = true
       } else {
-        inspection.candidate = {
-          value: node.value,
-          range: [...node.range],
+        const scalarValue = vaultScalarValueSchema.safeParse(node.value)
+        if (!scalarValue.success) {
+          inspection.invalid = true
+        } else {
+          inspection.candidate = {
+            value: scalarValue.data,
+            range: [...node.range],
+          }
         }
       }
     }
 
-    if (isMap(node) && hasDuplicateScalarKeys(node.items)) inspection.invalid = true
+    if (isMap<ParsedNode | null, ParsedNode | null>(node) && hasDuplicateScalarKeys(node.items)) {
+      inspection.invalid = true
+    }
 
-    if (isMap(node) || isSeq(node)) {
+    if (isMap<ParsedNode | null, ParsedNode | null>(node) || isSeq<ParsedYamlPair | ParsedNode>(node)) {
       for (let index = node.items.length - 1; index >= 0; index -= 1) {
         pending.push({ node: node.items[index], vaultScalarAllowed })
       }
@@ -170,20 +185,17 @@ function inspectYamlNodes(root: unknown, inspection: YamlInspection): void {
   }
 }
 
-function hasDuplicateScalarKeys(items: readonly unknown[]): boolean {
+function hasDuplicateScalarKeys(items: readonly ParsedYamlPair[]): boolean {
   const keys = new Set<string | null>()
 
   for (const item of items) {
-    if (!isPair(item)) continue
-
     let key: string | null
     if (item.key === null) {
       key = null
-    } else if (
-      isScalar(item.key)
-      && (typeof item.key.value === 'string' || item.key.value === null)
-    ) {
-      key = item.key.value
+    } else if (isScalar(item.key)) {
+      const parsedKey = scalarKeySchema.safeParse(item.key.value)
+      if (!parsedKey.success) continue
+      key = parsedKey.data
     } else {
       continue
     }

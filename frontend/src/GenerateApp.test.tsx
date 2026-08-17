@@ -3,18 +3,26 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
-const jsonResponse = (body: unknown, init: ResponseInit = {}) => new Response(JSON.stringify(body), {
+type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue }
+
+const jsonResponse = (body: JsonValue, init: ResponseInit = {}) => new Response(JSON.stringify(body), {
   status: 200,
   headers: { 'Content-Type': 'application/json' },
   ...init,
 })
 
-const session = (authenticated = false) => jsonResponse({
-  authenticated,
-  authRequired: authenticated,
-  ...(authenticated ? { email: 'operator@example.test' } : {}),
-  csrfToken: authenticated ? 'csrf-fixture' : '',
-})
+const session = (authenticated = false) => authenticated
+  ? jsonResponse({
+    authenticated: true,
+    authRequired: true,
+    email: 'operator@example.test',
+    csrfToken: 'csrf-fixture',
+  })
+  : jsonResponse({
+    authenticated: false,
+    authRequired: false,
+    csrfToken: '',
+  })
 
 const profilesResponse = () => jsonResponse({
   profiles: [

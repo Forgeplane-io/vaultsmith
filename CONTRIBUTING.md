@@ -16,6 +16,7 @@ The repository uses Go 1.25 and Node.js 22. Run the checks relevant to your chan
 ```sh
 npm ci --prefix frontend
 npm ci --prefix api/typescript-generator --ignore-scripts
+make lint
 npm test --prefix frontend -- --run
 npm run typecheck --prefix frontend
 npm run build --prefix frontend

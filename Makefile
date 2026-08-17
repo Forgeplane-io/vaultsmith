@@ -1,9 +1,12 @@
 SHELL := /bin/sh
 
-.PHONY: test typecheck build smoke smoke-attestation compatibility helm-lint chart-test admission-benchmark admission-receipt-check docker release-check release-snapshot generate-api api-compat api-contract-test api-check
+.PHONY: test lint typecheck build smoke smoke-attestation compatibility helm-lint chart-test admission-benchmark admission-receipt-check docker release-check release-snapshot generate-api api-compat api-contract-test api-check
 
 test:
 	go test ./...
+
+lint:
+	npm run lint --prefix frontend
 
 compatibility:
 	go test -tags=ansible_cli ./backend/internal/ansiblevault -run 'TestCLI' -v
