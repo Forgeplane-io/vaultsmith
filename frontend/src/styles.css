@@ -334,7 +334,7 @@ textarea:disabled {
 .generate-section-heading h2 { margin: 0; color: var(--strong); font-size: 1rem; }
 .generate-section-heading p { margin: 0.3rem 0 0; color: var(--muted); font-size: 0.84rem; line-height: 1.45; }
 .result-kind { flex: 0 0 auto; padding: 0.25rem 0.5rem; border: 1px solid #3c7378; border-radius: 999px; background: var(--accent-soft); color: #dffeff; font-size: 0.75rem; font-weight: 700; }
-.generate-settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.8rem; }
+.generate-settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 0.8rem; }
 .generate-settings-grid.compact { grid-template-columns: repeat(2, minmax(0, 18rem)); }
 .generate-checkboxes { display: grid; align-content: start; gap: 0.55rem; padding: 0.65rem 0.75rem; border: 1px solid var(--border-soft); border-radius: 0.55rem; }
 .generate-checkboxes .checkbox-label { font-size: 0.84rem; }
