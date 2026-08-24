@@ -479,59 +479,45 @@ func (h *Handler) serveMetrics(w http.ResponseWriter, r *http.Request) {
 var errBodyTooLarge = errors.New("request body too large")
 
 func decodeOperation(w http.ResponseWriter, r *http.Request) (operationRequest, error) {
-	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes)
-	defer r.Body.Close()
-	raw, err := readRequestBody(r.Context(), r.Body)
-	if err != nil {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			return operationRequest{}, errBodyTooLarge
+	var request operationRequest
+	err := decodeStrictRequestFields(w, r, map[string]struct{}{
+		"profileId":            {},
+		"sourceProfileId":      {},
+		"destinationProfileId": {},
+		"mode":                 {},
+		"value":                {},
+	}, func(fields map[string]json.RawMessage) error {
+		request = operationRequest{present: make(map[string]bool, len(fields))}
+		for key, value := range fields {
+			decoded, decodeErr := decodeOperationString(value)
+			if contextErr := r.Context().Err(); contextErr != nil {
+				return contextErr
+			}
+			if decodeErr != nil {
+				return decodeErr
+			}
+			request.present[key] = true
+			switch key {
+			case "profileId":
+				request.ProfileID = decoded
+			case "sourceProfileId":
+				request.SourceProfileID = decoded
+			case "destinationProfileId":
+				request.DestinationProfileID = decoded
+			case "mode":
+				request.Mode = decoded
+			case "value":
+				request.Value = decoded
+			}
 		}
-		return operationRequest{}, err
-	}
-	validUTF8 := utf8.Valid(raw)
-	if contextErr := r.Context().Err(); contextErr != nil {
-		return operationRequest{}, contextErr
-	}
-	if !validUTF8 {
-		return operationRequest{}, errors.New("request is not valid UTF-8")
-	}
-	fields, decodeErr := decodeStrictOperationObject(raw)
-	if contextErr := r.Context().Err(); contextErr != nil {
-		return operationRequest{}, contextErr
-	}
-	if decodeErr != nil {
-		return operationRequest{}, decodeErr
-	}
-	request := operationRequest{present: make(map[string]bool, len(fields))}
-	for key, value := range fields {
-		decoded, decodeErr := decodeOperationString(value)
+		shapeErr := request.validateShape()
 		if contextErr := r.Context().Err(); contextErr != nil {
-			return operationRequest{}, contextErr
+			return contextErr
 		}
-		if decodeErr != nil {
-			return operationRequest{}, decodeErr
-		}
-		request.present[key] = true
-		switch key {
-		case "profileId":
-			request.ProfileID = decoded
-		case "sourceProfileId":
-			request.SourceProfileID = decoded
-		case "destinationProfileId":
-			request.DestinationProfileID = decoded
-		case "mode":
-			request.Mode = decoded
-		case "value":
-			request.Value = decoded
-		}
-	}
-	shapeErr := request.validateShape()
-	if contextErr := r.Context().Err(); contextErr != nil {
-		return operationRequest{}, contextErr
-	}
-	if shapeErr != nil {
-		return operationRequest{}, shapeErr
+		return shapeErr
+	})
+	if err != nil {
+		return operationRequest{}, err
 	}
 	return request, nil
 }
@@ -558,42 +544,52 @@ func readRequestBody(ctx context.Context, body io.ReadCloser) ([]byte, error) {
 }
 
 func decodeStrictStringFields(w http.ResponseWriter, r *http.Request, allowed map[string]struct{}) (map[string]string, error) {
+	values := make(map[string]string)
+	err := decodeStrictRequestFields(w, r, allowed, func(fields map[string]json.RawMessage) error {
+		for key, value := range fields {
+			decoded, decodeErr := decodeOperationString(value)
+			if contextErr := r.Context().Err(); contextErr != nil {
+				return contextErr
+			}
+			if decodeErr != nil {
+				return decodeErr
+			}
+			values[key] = decoded
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+func decodeStrictRequestFields(w http.ResponseWriter, r *http.Request, allowed map[string]struct{}, consume func(map[string]json.RawMessage) error) error {
 	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes)
 	defer r.Body.Close()
 	raw, err := readRequestBody(r.Context(), r.Body)
 	if err != nil {
 		var maxBytesError *http.MaxBytesError
 		if errors.As(err, &maxBytesError) {
-			return nil, errBodyTooLarge
+			return errBodyTooLarge
 		}
-		return nil, err
+		return err
 	}
 	validUTF8 := utf8.Valid(raw)
 	if contextErr := r.Context().Err(); contextErr != nil {
-		return nil, contextErr
+		return contextErr
 	}
 	if !validUTF8 {
-		return nil, errors.New("request is not valid UTF-8")
+		return errors.New("request is not valid UTF-8")
 	}
 	fields, decodeErr := decodeStrictObject(raw, allowed)
 	if contextErr := r.Context().Err(); contextErr != nil {
-		return nil, contextErr
+		return contextErr
 	}
 	if decodeErr != nil {
-		return nil, decodeErr
+		return decodeErr
 	}
-	values := make(map[string]string, len(fields))
-	for key, value := range fields {
-		decoded, decodeErr := decodeOperationString(value)
-		if contextErr := r.Context().Err(); contextErr != nil {
-			return nil, contextErr
-		}
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		values[key] = decoded
-	}
-	return values, nil
+	return consume(fields)
 }
 
 func decodeStrictObject(raw []byte, allowed map[string]struct{}) (map[string]json.RawMessage, error) {
@@ -642,16 +638,6 @@ func decodeStrictObject(raw []byte, allowed map[string]struct{}) (map[string]jso
 		return nil, errors.New("trailing JSON")
 	}
 	return fields, nil
-}
-
-func decodeStrictOperationObject(raw []byte) (map[string]json.RawMessage, error) {
-	return decodeStrictObject(raw, map[string]struct{}{
-		"profileId":            {},
-		"sourceProfileId":      {},
-		"destinationProfileId": {},
-		"mode":                 {},
-		"value":                {},
-	})
 }
 
 func decodeOperationString(raw json.RawMessage) (string, error) {
