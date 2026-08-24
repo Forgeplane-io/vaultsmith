@@ -106,7 +106,6 @@ func TestGenerateX509CSRPreservesTypedIdentities(t *testing.T) {
 					"https://example.test/caf%C3%A9",
 					"urn:example:animal:ferret:nose",
 					"https://[2001:db8::1]/workload",
-					"example://[v1.future]/path",
 					"https://user:pass@example.test:8443/path",
 				},
 			},
@@ -143,6 +142,41 @@ func TestGenerateX509CSRPreservesTypedIdentities(t *testing.T) {
 				t.Fatalf("CheckSignature() error = %v", err)
 			}
 			assertX509Identities(t, csr, test.subject, test.sans)
+		})
+	}
+}
+
+func TestGenerateX509CSRPreservesIPvFutureURI(t *testing.T) {
+	const wantURI = "example://[v1.future]/path"
+	tests := []struct {
+		name      string
+		algorithm X509Algorithm
+	}{
+		{name: "Ed25519", algorithm: X509AlgorithmEd25519},
+		{name: "ECDSA P-256", algorithm: X509AlgorithmECDSAP256},
+		{name: "ECDSA P-384", algorithm: X509AlgorithmECDSAP384},
+		{name: "RSA-3072", algorithm: X509AlgorithmRSA3072},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := New().GenerateX509CSR(X509CSRParameters{
+				Algorithm: test.algorithm,
+				SANs:      &X509SANs{URIs: []string{wantURI}},
+			})
+			if err != nil {
+				t.Fatalf("GenerateX509CSR() error = %v", err)
+			}
+			block, rest := pem.Decode([]byte(result.CSRPEM()))
+			if block == nil || block.Type != "CERTIFICATE REQUEST" || len(rest) != 0 {
+				t.Fatalf("CSR PEM block = %#v, trailing bytes = %d", block, len(rest))
+			}
+			// Go's public CSR parser rejects IPvFuture literals. GenerateX509CSR's
+			// internal verifier validates the signed request; this assertion verifies
+			// that the supported RFC 3986 URI survives into the emitted DER.
+			if count := bytes.Count(block.Bytes, []byte(wantURI)); count != 1 {
+				t.Fatalf("IPvFuture URI occurrence count = %d, want 1", count)
+			}
 		})
 	}
 }
@@ -224,6 +258,9 @@ func TestGenerateX509CSRRejectsInvalidIdentityBeforeRandomness(t *testing.T) {
 		{name: "opaque URI contains a non-RFC delimiter", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{URIs: []string{"urn:a|b"}}}},
 		{name: "URI query contains invalid percent encoding", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{URIs: []string{"https://example.test/?q=%zz"}}}},
 		{name: "URI bracketed host is not an IP literal", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{URIs: []string{"example://[not-an-ip]/path"}}}},
+		{name: "URI IPvFuture is missing version payload", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{URIs: []string{"example://[v1]/path"}}}},
+		{name: "URI IPvFuture version is not hexadecimal", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{URIs: []string{"example://[vG.future]/path"}}}},
+		{name: "URI IPvFuture payload cannot be percent encoded", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{URIs: []string{"example://[v1.future%2Dvalue]/path"}}}},
 		{name: "URI bracketed IPv6 is malformed", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{URIs: []string{"example://[2001:db8:::1]/path"}}}},
 		{name: "URI IPv6 host lacks brackets", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{URIs: []string{"example://::1/path"}}}},
 		{name: "URI host has two port delimiters", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{URIs: []string{"example://host::80/path"}}}},

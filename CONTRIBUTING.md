@@ -11,7 +11,7 @@ Keep changes small, reviewable, and safe for secret-handling software.
 
 ## Local checks
 
-The repository uses Go 1.25 and Node.js 22. Run the checks relevant to your change:
+The repository uses Go 1.27 and Node.js 22. Run the checks relevant to your change:
 
 ```sh
 npm ci --prefix frontend
