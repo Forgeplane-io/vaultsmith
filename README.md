@@ -107,7 +107,7 @@ Keep plaintext, ciphertext, passwords, cookies, and tokens out of shell history,
 
 Requirements:
 
-- Go 1.25 or newer
+- Go 1.27 or newer
 - Node.js 22 and npm
 - Bash, `curl`, and `tar`
 - Python 3.9 or newer

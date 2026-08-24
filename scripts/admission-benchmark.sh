@@ -19,6 +19,6 @@ docker run --rm \
   -w /workspace \
   -e BENCH_HOST_CPU="$host_cpu" \
   -e BENCH_HOST_RAM_BYTES="$host_ram" \
-  golang:1.25-bookworm \
+  golang:1.27-bookworm \
   go run ./backend/cmd/admissionbench -release -candidates 1,2,4,8,16 -selected 16 -concurrency 32 -duration 5s -profiles 4 \
   | tee "$OUT"

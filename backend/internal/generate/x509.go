@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/pem"
 	"io"
@@ -29,6 +30,10 @@ const (
 	maximumX509DNSBytes      = 253
 	maximumX509EmailBytes    = 253
 	maximumX509URIBytes      = 2048
+
+	// The validated generator inputs keep emitted CSRs well below this bound.
+	// The fallback parser rejects larger DER before doing any ASN.1 allocation.
+	maximumGeneratedX509CSRBytes = 256 << 10
 )
 
 type validatedX509CSR struct {
@@ -156,7 +161,18 @@ func parseAndCheckCSR(csrPEM []byte, expected validatedX509CSR, spki []byte) (*x
 		return nil, ErrGenerationFailed
 	}
 	csr, err := x509.ParseCertificateRequest(block.Bytes)
-	if err != nil || csr.SignatureAlgorithm != expected.signatureAlgorithm {
+	if err != nil {
+		if !containsIPvFutureURI(expected.uris) {
+			return nil, ErrGenerationFailed
+		}
+		// crypto/x509 emits valid RFC 3986 IPvFuture URI SANs but its public
+		// parser rejects them. Use the bounded DER parser only for this case.
+		csr, err = parseCSRWithIPvFuture(block.Bytes)
+		if err != nil {
+			return nil, ErrGenerationFailed
+		}
+	}
+	if csr.SignatureAlgorithm != expected.signatureAlgorithm {
 		return nil, ErrGenerationFailed
 	}
 	if err := csr.CheckSignature(); err != nil {
@@ -169,6 +185,219 @@ func parseAndCheckCSR(csrPEM []byte, expected validatedX509CSR, spki []byte) (*x
 		return nil, ErrGenerationFailed
 	}
 	return csr, nil
+}
+
+type rawX509CSR struct {
+	Raw                asn1.RawContent
+	RequestInfo        rawX509CSRRequestInfo
+	SignatureAlgorithm pkix.AlgorithmIdentifier
+	SignatureValue     asn1.BitString
+}
+
+type rawX509CSRRequestInfo struct {
+	Raw           asn1.RawContent
+	Version       int
+	Subject       asn1.RawValue
+	PublicKey     rawX509CSRPublicKeyInfo
+	RawAttributes []asn1.RawValue `asn1:"tag:0"`
+}
+
+type rawX509CSRPublicKeyInfo struct {
+	Raw       asn1.RawContent
+	Algorithm pkix.AlgorithmIdentifier
+	PublicKey asn1.BitString
+}
+
+func containsIPvFutureURI(uris []*url.URL) bool {
+	for _, uri := range uris {
+		if uri != nil && hasIPvFutureAuthority(uri.String()) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseCSRWithIPvFuture(der []byte) (*x509.CertificateRequest, error) {
+	if len(der) > maximumGeneratedX509CSRBytes {
+		return nil, ErrGenerationFailed
+	}
+	var raw rawX509CSR
+	if rest, err := asn1.Unmarshal(der, &raw); err != nil || len(rest) != 0 {
+		return nil, ErrGenerationFailed
+	}
+	if raw.RequestInfo.Version != 0 || raw.SignatureValue.BitLength == 0 || raw.SignatureValue.BitLength%8 != 0 {
+		return nil, ErrGenerationFailed
+	}
+	signatureAlgorithm, ok := signatureAlgorithmForOID(raw.SignatureAlgorithm.Algorithm)
+	if !ok || !signatureAlgorithmParametersMatch(raw.SignatureAlgorithm, signatureAlgorithm) {
+		return nil, ErrGenerationFailed
+	}
+	publicKey, err := x509.ParsePKIXPublicKey(raw.RequestInfo.PublicKey.Raw)
+	if err != nil {
+		return nil, ErrGenerationFailed
+	}
+	var rdns pkix.RDNSequence
+	if rest, err := asn1.Unmarshal(raw.RequestInfo.Subject.FullBytes, &rdns); err != nil || len(rest) != 0 {
+		return nil, ErrGenerationFailed
+	}
+	var subject pkix.Name
+	subject.FillFromRDNSequence(&rdns)
+	extensions, err := parseCSRRequestedExtensions(raw.RequestInfo.RawAttributes)
+	if err != nil {
+		return nil, ErrGenerationFailed
+	}
+	dnsNames, emailAddresses, ipAddresses, uris, err := parseCSRSubjectAltNames(extensions)
+	if err != nil {
+		return nil, ErrGenerationFailed
+	}
+	rawSignatureAlgorithm, err := asn1.Marshal(raw.SignatureAlgorithm)
+	if err != nil {
+		return nil, ErrGenerationFailed
+	}
+	csr := &x509.CertificateRequest{
+		Raw:                      raw.Raw,
+		RawTBSCertificateRequest: raw.RequestInfo.Raw,
+		RawSubjectPublicKeyInfo:  raw.RequestInfo.PublicKey.Raw,
+		RawSubject:               raw.RequestInfo.Subject.FullBytes,
+		RawSignatureAlgorithm:    rawSignatureAlgorithm,
+		Version:                  raw.RequestInfo.Version,
+		Signature:                raw.SignatureValue.RightAlign(),
+		SignatureAlgorithm:       signatureAlgorithm,
+		PublicKey:                publicKey,
+		Subject:                  subject,
+		DNSNames:                 dnsNames,
+		EmailAddresses:           emailAddresses,
+		IPAddresses:              ipAddresses,
+		URIs:                     uris,
+		Extensions:               extensions,
+	}
+	return csr, nil
+}
+
+func signatureAlgorithmForOID(oid asn1.ObjectIdentifier) (x509.SignatureAlgorithm, bool) {
+	switch oid.String() {
+	case "1.3.101.112":
+		return x509.PureEd25519, true
+	case "1.2.840.10045.4.3.2":
+		return x509.ECDSAWithSHA256, true
+	case "1.2.840.10045.4.3.3":
+		return x509.ECDSAWithSHA384, true
+	case "1.2.840.113549.1.1.11":
+		return x509.SHA256WithRSA, true
+	default:
+		return 0, false
+	}
+}
+
+func signatureAlgorithmParametersMatch(identifier pkix.AlgorithmIdentifier, algorithm x509.SignatureAlgorithm) bool {
+	if algorithm == x509.SHA256WithRSA {
+		return bytes.Equal(identifier.Parameters.FullBytes, []byte{5, 0})
+	}
+	return len(identifier.Parameters.FullBytes) == 0
+}
+
+func parseCSRRequestedExtensions(attributes []asn1.RawValue) ([]pkix.Extension, error) {
+	type csrAttribute struct {
+		ID     asn1.ObjectIdentifier
+		Values []asn1.RawValue `asn1:"set"`
+	}
+	var extensions []pkix.Extension
+	seen := make(map[string]bool)
+	seenExtensionRequest := false
+	for _, rawAttribute := range attributes {
+		var attribute csrAttribute
+		rest, err := asn1.Unmarshal(rawAttribute.FullBytes, &attribute)
+		if err != nil || len(rest) != 0 || len(attribute.Values) == 0 {
+			return nil, ErrGenerationFailed
+		}
+		if !attribute.ID.Equal(asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 14}) {
+			continue
+		}
+		if seenExtensionRequest || len(attribute.Values) != 1 {
+			return nil, ErrGenerationFailed
+		}
+		seenExtensionRequest = true
+		var requested []pkix.Extension
+		if rest, err := asn1.Unmarshal(attribute.Values[0].FullBytes, &requested); err != nil || len(rest) != 0 {
+			return nil, ErrGenerationFailed
+		}
+		for _, extension := range requested {
+			key := extension.Id.String()
+			if seen[key] {
+				return nil, ErrGenerationFailed
+			}
+			seen[key] = true
+			extensions = append(extensions, extension)
+		}
+	}
+	return extensions, nil
+}
+
+func parseCSRSubjectAltNames(extensions []pkix.Extension) (dnsNames, emailAddresses []string, ipAddresses []net.IP, uris []*url.URL, err error) {
+	var sanExtension *pkix.Extension
+	for index := range extensions {
+		if !extensions[index].Id.Equal(asn1.ObjectIdentifier{2, 5, 29, 17}) {
+			continue
+		}
+		if sanExtension != nil {
+			return nil, nil, nil, nil, ErrGenerationFailed
+		}
+		sanExtension = &extensions[index]
+	}
+	if sanExtension == nil {
+		return nil, nil, nil, nil, nil
+	}
+	var names []asn1.RawValue
+	if rest, unmarshalErr := asn1.Unmarshal(sanExtension.Value, &names); unmarshalErr != nil || len(rest) != 0 {
+		return nil, nil, nil, nil, ErrGenerationFailed
+	}
+	for _, name := range names {
+		if name.Class != 2 || name.IsCompound {
+			return nil, nil, nil, nil, ErrGenerationFailed
+		}
+		switch name.Tag {
+		case 1:
+			if !isIA5String(name.Bytes) {
+				return nil, nil, nil, nil, ErrGenerationFailed
+			}
+			emailAddresses = append(emailAddresses, string(name.Bytes))
+		case 2:
+			if !isIA5String(name.Bytes) {
+				return nil, nil, nil, nil, ErrGenerationFailed
+			}
+			dnsNames = append(dnsNames, string(name.Bytes))
+		case 6:
+			if !isIA5String(name.Bytes) {
+				return nil, nil, nil, nil, ErrGenerationFailed
+			}
+			uri, ok := parseAbsoluteURI(string(name.Bytes))
+			if !ok {
+				return nil, nil, nil, nil, ErrGenerationFailed
+			}
+			uris = append(uris, uri)
+		case 7:
+			if len(name.Bytes) != net.IPv4len && len(name.Bytes) != net.IPv6len {
+				return nil, nil, nil, nil, ErrGenerationFailed
+			}
+			ip := net.IP(append([]byte(nil), name.Bytes...))
+			if len(name.Bytes) == net.IPv6len && ip.To4() != nil {
+				return nil, nil, nil, nil, ErrGenerationFailed
+			}
+			ipAddresses = append(ipAddresses, ip)
+		default:
+			return nil, nil, nil, nil, ErrGenerationFailed
+		}
+	}
+	return dnsNames, emailAddresses, ipAddresses, uris, nil
+}
+
+func isIA5String(value []byte) bool {
+	for _, character := range value {
+		if character > 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 func validateX509CSRParameters(parameters X509CSRParameters) (validatedX509CSR, error) {
@@ -373,10 +602,37 @@ func parseAbsoluteURI(value string) (*url.URL, bool) {
 		return nil, false
 	}
 	parsed, err := url.Parse(value)
-	if err != nil || !parsed.IsAbs() || parsed.String() != value {
+	if err == nil && parsed.IsAbs() && parsed.String() == value {
+		return parsed, true
+	}
+	if !hasIPvFutureAuthority(value) {
+		return nil, false
+	}
+	colon := strings.IndexByte(value, ':')
+	parsed = &url.URL{Scheme: value[:colon], Opaque: value[colon+1:]}
+	if !parsed.IsAbs() || parsed.String() != value {
 		return nil, false
 	}
 	return parsed, true
+}
+
+func hasIPvFutureAuthority(value string) bool {
+	colon := strings.IndexByte(value, ':')
+	if colon <= 0 {
+		return false
+	}
+	remainder := value[colon+1:]
+	if !strings.HasPrefix(remainder, "//") {
+		return false
+	}
+	authority := remainder[2:]
+	if delimiter := strings.IndexAny(authority, "/?#"); delimiter >= 0 {
+		authority = authority[:delimiter]
+	}
+	if delimiter := strings.LastIndexByte(authority, '@'); delimiter >= 0 {
+		authority = authority[delimiter+1:]
+	}
+	return len(authority) >= 3 && authority[0] == '[' && (authority[1] == 'v' || authority[1] == 'V')
 }
 
 func validAbsoluteURISyntax(value string) bool {

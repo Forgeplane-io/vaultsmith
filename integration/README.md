@@ -5,7 +5,7 @@ This harness runs Vaultsmith against disposable Redis, Keycloak, and local-TLS c
 ## Requirements
 
 - Docker Engine with Compose v2
-- Go 1.25 or newer
+- Go 1.27 or newer
 - Bash, `openssl`, and Python 3
 
 ## Automated run
