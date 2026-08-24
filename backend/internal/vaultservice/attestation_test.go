@@ -97,6 +97,92 @@ func attestedRotationCommand(input string, binding *attestation.Binding) Command
 	}
 }
 
+func TestAttestationReadinessPreservesAvailabilityErrors(t *testing.T) {
+	notReady := newSyntheticAttestationManager("https://vaultsmith.synthetic.test")
+	notReady.ready = false
+	emptyIssuer := newSyntheticAttestationManager("")
+	valid := newSyntheticAttestationManager("https://vaultsmith.synthetic.test")
+
+	tests := []struct {
+		name    string
+		service *Service
+		manager AttestationManager
+		code    Code
+	}{
+		{name: "nil service", code: CodeFeatureUnavailable},
+		{
+			name:    "disabled feature",
+			service: &Service{attestation: valid},
+			code:    CodeFeatureUnavailable,
+		},
+		{
+			name:    "nil manager",
+			service: &Service{attestationEnabled: true},
+			code:    CodeAttestationUnavailable,
+		},
+		{
+			name:    "not ready manager",
+			service: &Service{attestationEnabled: true, attestation: notReady},
+			code:    CodeAttestationUnavailable,
+		},
+		{
+			name:    "empty issuer",
+			service: &Service{attestationEnabled: true, attestation: emptyIssuer},
+			code:    CodeAttestationUnavailable,
+		},
+		{
+			name:    "ready manager",
+			service: &Service{attestationEnabled: true, attestation: valid},
+			manager: valid,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager, err := test.service.readyAttestationManager()
+			if test.code != "" {
+				if manager != nil || !HasCode(err, test.code) {
+					t.Fatalf("readyAttestationManager() = %v, %v; want nil, %s", manager, err, test.code)
+				}
+				return
+			}
+			if err != nil || manager != test.manager {
+				t.Fatalf("readyAttestationManager() = %v, %v; want %v, nil", manager, err, test.manager)
+			}
+		})
+	}
+}
+
+func TestAttestationCallersPreservePrecedenceBeforeReadiness(t *testing.T) {
+	t.Run("prepare rejects unsupported operation before availability", func(t *testing.T) {
+		admission := testAdmission(t)
+		service := NewWithOptions(testProfiles(), &fakeExecutor{}, nil, admission, ServiceOptions{
+			AttestationEnabled: true,
+		})
+		lease := acquireLease(t, admission)
+		command := Command{
+			Operation: OperationEncrypt,
+			ProfileID: "dev",
+			Value:     "synthetic",
+			Attestation: &AttestationRequest{
+				Binding: syntheticBinding(),
+			},
+		}
+		_, err := service.Prepare(lease.Context(context.Background()), caller.Anonymous(), command, lease)
+		if !HasCode(err, CodeInvalidRequest) || HasCode(err, CodeAttestationUnavailable) {
+			t.Fatalf("Prepare() error = %v, want invalid_request before readiness", err)
+		}
+	})
+
+	t.Run("bearer scope is checked before availability", func(t *testing.T) {
+		service := &Service{}
+		err := service.PreflightAttestationVerify(context.Background(), bearerCaller(t))
+		if !HasCode(err, CodeForbidden) || HasCode(err, CodeFeatureUnavailable) {
+			t.Fatalf("PreflightAttestationVerify() error = %v, want forbidden before readiness", err)
+		}
+	})
+}
+
 func TestAttestedRotationIssuesCanonicalProofAndLegacyRunRemainsString(t *testing.T) {
 	input := syntheticVaultText(t, "synthetic input", "synthetic source password", "dev")
 	output := syntheticVaultText(t, "synthetic output", "synthetic destination password", "prod")

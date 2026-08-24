@@ -183,37 +183,28 @@ func validateAttestationRequest(request *AttestationRequest) error {
 	return nil
 }
 
-func (s *Service) attestationRequestAvailable() error {
+func (s *Service) readyAttestationManager() (AttestationManager, error) {
 	if s == nil || !s.attestationEnabled {
-		return featureUnavailable()
+		return nil, featureUnavailable()
 	}
 	if s.attestation == nil || !s.attestation.Ready() || s.attestation.Issuer() == "" {
-		return attestationUnavailable()
+		return nil, attestationUnavailable()
 	}
-	return nil
+	return s.attestation, nil
+}
+
+func (s *Service) attestationRequestAvailable() error {
+	_, err := s.readyAttestationManager()
+	return err
 }
 
 func (s *Service) discoveryReady() error {
-	if s == nil || !s.attestationEnabled {
-		return featureUnavailable()
-	}
-	if s.attestation == nil {
-		return attestationUnavailable()
-	}
-	if !s.attestation.Ready() {
-		return attestationUnavailable()
-	}
-	if s.attestation.Issuer() == "" {
-		return attestationUnavailable()
-	}
-	return nil
+	_, err := s.readyAttestationManager()
+	return err
 }
 
 func (s *Service) verificationManager() (AttestationManager, error) {
-	if err := s.discoveryReady(); err != nil {
-		return nil, err
-	}
-	return s.attestation, nil
+	return s.readyAttestationManager()
 }
 
 // PreflightAttestationVerify performs availability and caller checks without
