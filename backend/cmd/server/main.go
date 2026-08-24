@@ -46,9 +46,6 @@ func main() {
 }
 
 func run() error {
-	if err := config.RejectMCPGoDebug(os.LookupEnv); err != nil {
-		return err
-	}
 	loaded, err := config.LoadApplicationFromEnv()
 	if err != nil {
 		return err
