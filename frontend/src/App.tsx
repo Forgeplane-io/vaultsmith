@@ -42,6 +42,8 @@ type BindingFields = {
   selector: string
 }
 
+type ActiveView = 'operation' | 'verify' | 'generate'
+
 const MAX_BINDING_FIELD_BYTES = 1 * 1024
 const MAX_CANONICAL_BINDING_BYTES = 4 * 1024
 
@@ -56,8 +58,7 @@ export default function App() {
   const [profileId, setProfileId] = useState('')
   const [destinationProfileId, setDestinationProfileId] = useState('')
   const [mode, setMode] = useState<OperationMode>('encrypt')
-  const [verifyMode, setVerifyMode] = useState(false)
-  const [generateMode, setGenerateMode] = useState(false)
+  const [activeView, setActiveView] = useState<ActiveView>('operation')
   const [issueAttestation, setIssueAttestation] = useState(false)
   const [attestation, setAttestation] = useState<SignedAttestation | null>(null)
   const [attestationBinding, setAttestationBinding] = useState<BindingFields>(emptyBindingFields)
@@ -100,6 +101,8 @@ export default function App() {
   const valueRef = useRef(value)
   modeRef.current = mode
   valueRef.current = value
+  const isVerifyView = activeView === 'verify'
+  const isGenerateView = activeView === 'generate'
 
   function applyLoadedProfiles(loadedProfiles: Profile[], announceModeChange = false) {
     const previousMode = modeRef.current
@@ -235,9 +238,9 @@ export default function App() {
   const proofAvailable = session?.attestationEnabled === true
   const compactAttestationBinding = compactBindingFields(attestationBinding)
   const compactExpectedBinding = compactBindingFields(expectedBinding)
-  const visibleError = verifyMode && (verificationOverLimit || verificationBindingOverLimit)
+  const visibleError = isVerifyView && (verificationOverLimit || verificationBindingOverLimit)
     ? 'Verification input or expected binding is too large.'
-    : !verifyMode && attestationBindingOverLimit
+    : !isVerifyView && attestationBindingOverLimit
       ? 'Attestation binding exceeds its field or canonical size limit.'
       : overLimit ? limitMessage(mode) : error || profileLoadError
   const encryptProfiles = useMemo(() => profilesForMode(profiles, 'encrypt'), [profiles])
@@ -257,15 +260,15 @@ export default function App() {
   const selectedProfileEligible = profileIsEligible(eligibleProfiles, profileId)
   const selectedDestinationEligible = mode !== 'rotate' || profileIsEligible(rotateDestinationProfiles, destinationProfileId)
   const workbenchLocked = busy || signingOut
-  const canSubmit = verifyMode
+  const canSubmit = isVerifyView
     ? proofAvailable && !workbenchLocked && verificationAttestation.length > 0 && verificationInput.length > 0 && verificationOutput.length > 0 && !verificationOverLimit && !verificationBindingOverLimit
     : profileSnapshotReady && !workbenchLocked && modeAvailable && selectedProfileEligible && selectedDestinationEligible && value.length > 0 && !overLimit && !attestationBindingOverLimit
   const canClear = Boolean(value || output || ansibleVariableName || verificationAttestation || verificationInput || verificationOutput || attestation || verificationResult)
   const inputName = mode === 'encrypt' ? 'Value to encrypt' : mode === 'decrypt' ? 'Protected value to decrypt' : 'Protected value to re-key'
   const outputName = mode === 'encrypt' ? 'Encrypted value' : mode === 'decrypt' ? 'Decrypted value' : 'Re-keyed value'
-  const modeGuidance = verifyMode
+  const modeGuidance = isVerifyView
     ? 'Supply a flattened attestation and the original and rotated Vault values to verify the attested rotation statement.'
-    : generateMode
+    : isGenerateView
       ? 'Choose private material and an environment. Vaultsmith returns sealed Vault text and only the defined public companion.'
     : mode === 'encrypt'
       ? 'Choose an environment, then enter a value to encrypt.'
@@ -280,8 +283,8 @@ export default function App() {
   const ansibleVariableValidation = ansibleVariableValidationMessage(ansibleVariableName)
   const handoffTargetProfileId = mode === 'rotate' ? destinationProfileId : profileId
   const handoffTargetMode: OperationMode = mode === 'decrypt' ? 'encrypt' : 'decrypt'
-  const handoffEligible = !verifyMode && profileSnapshotReady && profileIsEligible(profilesForMode(profiles, handoffTargetMode), handoffTargetProfileId)
-  const canUseResultAsInput = !workbenchLocked && !verifyMode && Boolean(output) && handoffEligible
+  const handoffEligible = !isVerifyView && profileSnapshotReady && profileIsEligible(profilesForMode(profiles, handoffTargetMode), handoffTargetProfileId)
+  const canUseResultAsInput = !workbenchLocked && !isVerifyView && Boolean(output) && handoffEligible
   const handoffLabel = mode === 'encrypt'
     ? 'Decrypt this result'
     : mode === 'decrypt'
@@ -293,22 +296,22 @@ export default function App() {
       ? 'The selected environment is not available for decryption.'
       : 'The selected environment is not available for encryption.'
   const formatInspection = useMemo(
-    () => verifyMode || mode === 'encrypt' ? null : inspectVaultFormat(value, profileId, byteLength),
-    [byteLength, mode, profileId, value, verifyMode],
+    () => isVerifyView || mode === 'encrypt' ? null : inspectVaultFormat(value, profileId, byteLength),
+    [byteLength, mode, profileId, value, isVerifyView],
   )
   const suggestedDecryptProfile = useMemo(
-    () => !verifyMode && profileSnapshotReady && mode !== 'encrypt' && formatInspection
+    () => !isVerifyView && profileSnapshotReady && mode !== 'encrypt' && formatInspection
       ? vaultIdSuggestedProfile(formatInspection, profileId, mode === 'rotate' ? rotateSourceProfiles : decryptProfiles)
       : null,
-    [decryptProfiles, formatInspection, mode, profileId, profileSnapshotReady, rotateSourceProfiles, verifyMode],
+    [decryptProfiles, formatInspection, mode, profileId, profileSnapshotReady, rotateSourceProfiles, isVerifyView],
   )
   const selectedProfileLabel = profiles.find((profile) => profile.id === profileId)?.label || profileId
   const inputDescriptionIds = value && formatInspection
     ? 'input-byte-count vault-format-diagnostics'
     : 'input-byte-count'
-  const heading = verifyMode
+  const heading = isVerifyView
     ? 'Verify a rotation attestation'
-    : generateMode
+    : isGenerateView
       ? 'Generate sealed private material'
     : mode === 'encrypt'
       ? 'Encrypt a value'
@@ -334,8 +337,8 @@ export default function App() {
 
   function changeMode(nextMode: OperationMode) {
     if (signingOut) return
-    setGenerateMode(false)
-    leaveVerifyMode()
+    setActiveView('operation')
+    clearVerificationState()
     const retainedInput = Boolean(value) && nextMode !== mode
     const nextProfiles = profilesForMode(profiles, nextMode)
     setProfileId((current) => profileIsEligible(nextProfiles, current) ? current : '')
@@ -353,8 +356,7 @@ export default function App() {
 
   function changeVerifyMode() {
     if (signingOut || !proofAvailable) return
-    setGenerateMode(false)
-    setVerifyMode(true)
+    setActiveView('verify')
     setVerificationResult(null)
     setError('')
     setStatus('')
@@ -364,8 +366,7 @@ export default function App() {
   function changeGenerateMode() {
     if (signingOut || !profileSnapshotReady || !encryptAvailable) return
     clearVerificationState()
-    setVerifyMode(false)
-    setGenerateMode(true)
+    setActiveView('generate')
     setError('')
     setStatus('')
     setModeNotice('')
@@ -379,10 +380,6 @@ export default function App() {
     setVerificationResult(null)
   }
 
-  function leaveVerifyMode() {
-    clearVerificationState()
-    setVerifyMode(false)
-  }
 
   function changeValue(nextValue: string) {
     if (signingOut) return
@@ -513,7 +510,7 @@ export default function App() {
 
   async function submit() {
     if (signingOut) return
-    if (verifyMode) {
+    if (isVerifyView) {
       if (!proofAvailable) {
         setError('Rotation attestation verification is unavailable.')
         return
@@ -548,8 +545,8 @@ export default function App() {
     }
 
     const operationMode = mode
-    const parsedAttestation = verifyMode ? parseSignedAttestationText(verificationAttestation) : null
-    if (verifyMode && !parsedAttestation) {
+    const parsedAttestation = isVerifyView ? parseSignedAttestationText(verificationAttestation) : null
+    if (isVerifyView && !parsedAttestation) {
       setError('Enter a valid flattened attestation JSON object.')
       return
     }
@@ -570,7 +567,7 @@ export default function App() {
     attestationCopyRequestRef.current += 1
     setError('')
     setVerificationResult(null)
-    if (!verifyMode) {
+    if (!isVerifyView) {
       setOutput('')
       setAttestation(null)
       setAttestationCopyFeedback(null)
@@ -580,10 +577,10 @@ export default function App() {
       setRevealed(false)
     }
     setModeNotice('')
-    setStatus(verifyMode ? 'Verifying attestation…' : operationProgressLabel(operationMode))
+    setStatus(isVerifyView ? 'Verifying attestation…' : operationProgressLabel(operationMode))
 
     try {
-      if (verifyMode && parsedAttestation) {
+      if (isVerifyView && parsedAttestation) {
         const verificationRequest: VerifyAttestationRequest = {
           attestation: parsedAttestation,
           inputVaultText: verificationInput,
@@ -630,10 +627,10 @@ export default function App() {
       if (!isCurrentOperation()) return
       if (controller.signal.aborted) {
         if (operationAbortReasonRef.current === 'timeout') {
-          setError(verifyMode ? 'Verification timed out. Check the service and try again.' : 'The operation timed out. Check the service and try again.')
-          setStatus(verifyMode ? 'Verification timed out' : 'Operation timed out')
+          setError(isVerifyView ? 'Verification timed out. Check the service and try again.' : 'The operation timed out. Check the service and try again.')
+          setStatus(isVerifyView ? 'Verification timed out' : 'Operation timed out')
         } else {
-          setStatus(verifyMode ? 'Verification cancelled' : 'Operation cancelled')
+          setStatus(isVerifyView ? 'Verification cancelled' : 'Operation cancelled')
         }
       } else {
         if (cause instanceof ApiError && cause.code === 'unauthorized') {
@@ -641,7 +638,7 @@ export default function App() {
           setStatus('Sign-in required…')
           return
         }
-        if (!verifyMode && cause instanceof ApiError && cause.status === 403 && cause.code === 'forbidden') {
+        if (!isVerifyView && cause instanceof ApiError && cause.status === 403 && cause.code === 'forbidden') {
           window.clearTimeout(timeoutId)
           operationControllerRef.current = null
           operationAbortReasonRef.current = null
@@ -710,7 +707,7 @@ export default function App() {
 
   function verifyAttestedResult() {
     if (!attestation || signingOut) return
-    setVerifyMode(true)
+    setActiveView('verify')
     setVerificationAttestation(JSON.stringify(attestation, null, 2))
     setVerificationInput(value)
     setVerificationOutput(output)
@@ -790,8 +787,7 @@ export default function App() {
     setVerificationOutput('')
     setExpectedBinding(emptyBindingFields())
     setVerificationResult(null)
-    setVerifyMode(false)
-    setGenerateMode(false)
+    setActiveView('operation')
   }
 
   async function handleLogout() {
@@ -856,14 +852,14 @@ export default function App() {
     setVerificationOutput('')
     setExpectedBinding(emptyBindingFields())
     setVerificationResult(null)
-    setVerifyMode(false)
+    setActiveView('operation')
     setError('')
     if (!recoveringStaleCapabilities) setStatus('')
     setModeNotice('')
   }
 
-  function renderModeSwitch(activeView: 'operation' | 'verify' | 'generate') {
-    const specialView = activeView !== 'operation'
+  function renderModeSwitch(view: ActiveView) {
+    const specialView = view !== 'operation'
     const operationDisabled = (available: boolean) => specialView
       ? workbenchLocked
       : workbenchLocked || !profileSnapshotReady || !available
@@ -902,9 +898,9 @@ export default function App() {
         </button>
         <button
           type="button"
-          className={activeView === 'generate' ? 'mode-button active' : 'mode-button'}
+          className={view === 'generate' ? 'mode-button active' : 'mode-button'}
           aria-label="Set generate mode"
-          aria-pressed={activeView === 'generate'}
+          aria-pressed={view === 'generate'}
           onClick={changeGenerateMode}
           disabled={workbenchLocked || !profileSnapshotReady || !encryptAvailable}
         >
@@ -912,9 +908,9 @@ export default function App() {
         </button>
         <button
           type="button"
-          className={activeView === 'verify' ? 'mode-button active' : 'mode-button'}
+          className={view === 'verify' ? 'mode-button active' : 'mode-button'}
           aria-label="Set verify mode"
-          aria-pressed={activeView === 'verify'}
+          aria-pressed={view === 'verify'}
           onClick={changeVerifyMode}
           disabled={workbenchLocked || !proofAvailable}
         >
@@ -977,8 +973,8 @@ export default function App() {
           </div>
         </div>
 
-        <section className="workbench-card" aria-label={generateMode ? 'Generate material' : 'Vault operation'}>
-          {generateMode ? (
+        <section className="workbench-card" aria-label={isGenerateView ? 'Generate material' : 'Vault operation'}>
+          {isGenerateView ? (
             <GenerateWorkbench
               profiles={encryptProfiles}
               profilesReady={profileSnapshotReady}
@@ -1011,7 +1007,7 @@ export default function App() {
             }}
           >
             <div className="control-strip">
-              {verifyMode ? (
+              {isVerifyView ? (
                 <div className="verify-mode-controls">
                   <p className="field-help">Verification uses the canonical REST endpoint and does not require a profile selection.</p>
                   <div className="operation-controls">
@@ -1094,7 +1090,7 @@ export default function App() {
               )}
             </div>
 
-            {!verifyMode && mode === 'rotate' && proofAvailable && (
+            {!isVerifyView && mode === 'rotate' && proofAvailable && (
               <div className="attestation-options" role="group" aria-labelledby="rotation-attestation-heading">
                 <div className="attestation-options-header">
                   <h2 id="rotation-attestation-heading">Rotation attestation</h2>
@@ -1146,7 +1142,7 @@ export default function App() {
               {modeNotice ? <p className="mode-notice" aria-live="polite">{modeNotice}</p> : <span className="feedback-placeholder" aria-hidden="true">&nbsp;</span>}
             </div>
 
-            {verifyMode ? (
+            {isVerifyView ? (
               <VerificationWorkbench
                 attestation={verificationAttestation}
                 inputVaultText={verificationInput}
