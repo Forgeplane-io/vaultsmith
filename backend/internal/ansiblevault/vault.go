@@ -92,18 +92,7 @@ func encryptWithHeader(plaintext, password []byte, header string) (string, error
 	}, "\n")
 	body := hex.EncodeToString([]byte(inner))
 
-	var out strings.Builder
-	out.Grow(len(header) + 1 + len(body) + len(body)/lineWidth + 1)
-	out.WriteString(header)
-	out.WriteByte('\n')
-	for len(body) > lineWidth {
-		out.WriteString(body[:lineWidth])
-		out.WriteByte('\n')
-		body = body[lineWidth:]
-	}
-	out.WriteString(body)
-	out.WriteByte('\n')
-	return out.String(), nil
+	return serializeVaultEnvelope(header, body), nil
 }
 
 // Decrypt decodes an Ansible Vault 1.1 or 1.2/AES256 value. All malformed input and
@@ -158,9 +147,13 @@ func CanonicalEnvelope(text string) ([]byte, error) {
 	}
 
 	body := strings.ToLower(envelope.body)
+	return []byte(serializeVaultEnvelope(envelope.header, body)), nil
+}
+
+func serializeVaultEnvelope(header, body string) string {
 	var canonical strings.Builder
-	canonical.Grow(len(envelope.header) + 1 + len(body) + len(body)/lineWidth + 1)
-	canonical.WriteString(envelope.header)
+	canonical.Grow(len(header) + 1 + len(body) + len(body)/lineWidth + 1)
+	canonical.WriteString(header)
 	canonical.WriteByte('\n')
 	for len(body) > lineWidth {
 		canonical.WriteString(body[:lineWidth])
@@ -169,7 +162,7 @@ func CanonicalEnvelope(text string) ([]byte, error) {
 	}
 	canonical.WriteString(body)
 	canonical.WriteByte('\n')
-	return []byte(canonical.String()), nil
+	return canonical.String()
 }
 
 // parsedEnvelope contains only the encoded Vault envelope fields needed by
