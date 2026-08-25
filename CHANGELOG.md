@@ -10,6 +10,27 @@ All notable changes to Vaultsmith are documented here. Release Please maintains 
 - Proofs use `PUBLIC_BASE_URL` as the issuer and reload a valid changed keyring without restart. A malformed replacement keeps the previous valid keyring active.
 - When proofs are disabled, normal encrypt, decrypt, and rotate behavior remains available and no signing Secret is required.
 
+## [0.7.1](https://github.com/Forgeplane-io/vaultsmith/compare/v0.7.0...v0.7.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* **ci:** refresh embedded frontend entrypoint ([b9b8456](https://github.com/Forgeplane-io/vaultsmith/commit/b9b8456a8e8305300ba96b1c2a82cf2ad3f556a6))
+* **ci:** remove embedded frontend diff gate ([aa892c4](https://github.com/Forgeplane-io/vaultsmith/commit/aa892c40f630325b71a38c771ed21c8521dea681))
+* **ci:** use root Go version for API contract ([2d68aba](https://github.com/Forgeplane-io/vaultsmith/commit/2d68abad7828ea5ce59f67148a88a49c8763d4de))
+* **generate:** preserve IPvFuture URI SANs ([7f53c48](https://github.com/Forgeplane-io/vaultsmith/commit/7f53c487e054fd9fdd2517743174719f459e8b23))
+
+
+### Refactoring
+
+* **ansiblevault:** share envelope serialization ([9296491](https://github.com/Forgeplane-io/vaultsmith/commit/9296491a03a8045c4fb20ee19062b366c8fed825))
+* **attestationkeyring:** share bounded file reader ([f0af3ff](https://github.com/Forgeplane-io/vaultsmith/commit/f0af3ff3e1ab3ce30be39d85b9c5c356b41c6233))
+* **frontend:** carry dictionary classification ([2d0f40b](https://github.com/Forgeplane-io/vaultsmith/commit/2d0f40b2f7c7ae98650b3478eb7cfb90e1fc4303))
+* **frontend:** centralize module mock methods ([0d9a7c6](https://github.com/Forgeplane-io/vaultsmith/commit/0d9a7c626af3315e2c189bbd98b9e6e159b6700d))
+* **frontend:** consolidate active view state ([2ac817f](https://github.com/Forgeplane-io/vaultsmith/commit/2ac817f1b93808be444e0641f83c3ca8c2a2f501))
+* **httpapi:** share strict request decoding ([600b3e1](https://github.com/Forgeplane-io/vaultsmith/commit/600b3e101fa008f630c7efc0da3cf0904f82861e))
+* **vaultservice:** share attestation readiness checks ([0b80eb0](https://github.com/Forgeplane-io/vaultsmith/commit/0b80eb0f9f7d637b490f3b64ded1e6effc336f82))
+
 ## [0.7.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.6.0...v0.7.0) (2026-08-24)
 
 
