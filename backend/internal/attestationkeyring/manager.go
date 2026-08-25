@@ -79,17 +79,9 @@ func LoadFile(path, issuer string) (*Snapshot, error) {
 	if path == "" {
 		return nil, ErrKeyringUnavailable
 	}
-	file, err := os.Open(path)
+	data, err := readBoundedFile(path)
 	if err != nil {
-		return nil, ErrKeyringUnavailable
-	}
-	data, readErr := io.ReadAll(io.LimitReader(file, MaxFileBytes+1))
-	closeErr := file.Close()
-	if readErr != nil || closeErr != nil {
-		return nil, ErrKeyringUnavailable
-	}
-	if len(data) > MaxFileBytes {
-		return nil, ErrKeyringTooLarge
+		return nil, err
 	}
 	return Parse(data, issuer)
 }
