@@ -2,6 +2,7 @@ package ansiblevault
 
 import (
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,21 @@ func TestCanonicalEnvelopeNormalizesSupportedFormats(t *testing.T) {
 				t.Fatalf("refactored parser error = %v, want ErrInvalidVault", err)
 			}
 		})
+	}
+}
+
+func TestSerializeVaultEnvelopePreservesExactBytes(t *testing.T) {
+	for _, header := range []string{Header11, Header12Prefix, Header12Prefix + ";dev"} {
+		for _, length := range []int{lineWidth - 1, lineWidth, lineWidth + 1} {
+			t.Run(header+"/"+strconv.Itoa(length), func(t *testing.T) {
+				body := strings.Repeat("a", length-1) + "B"
+				got := serializeVaultEnvelope(header, body)
+				want := formatEnvelope(header, body, lineWidth, "\n", true)
+				if got != want {
+					t.Fatalf("serialized envelope mismatch\n got: %q\nwant: %q", got, want)
+				}
+			})
+		}
 	}
 }
 
