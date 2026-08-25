@@ -108,6 +108,36 @@ func assertInvalid(t *testing.T, data []byte) {
 	}
 }
 
+func TestLoadFilePreservesBoundedReadErrors(t *testing.T) {
+	if _, err := LoadFile("", testIssuer); !errors.Is(err, ErrKeyringUnavailable) {
+		t.Fatalf("empty path error = %v, want ErrKeyringUnavailable", err)
+	}
+	if _, err := LoadFile(filepath.Join(t.TempDir(), "missing.json"), testIssuer); !errors.Is(err, ErrKeyringUnavailable) {
+		t.Fatalf("missing file error = %v, want ErrKeyringUnavailable", err)
+	}
+
+	active := makeTestKey("rotation-2026-08", StateActive, 1)
+	validPath := writeKeyring(t, makeKeyringJSON(active.id, active))
+	if _, err := LoadFile(validPath, testIssuer); err != nil {
+		t.Fatalf("valid file error = %v", err)
+	}
+
+	invalidPath := writeKeyring(t, []byte(`{"version":1,"active":"bad","keys":[]}`))
+	if _, err := LoadFile(invalidPath, testIssuer); !errors.Is(err, ErrInvalidKeyring) {
+		t.Fatalf("malformed file error = %v, want ErrInvalidKeyring", err)
+	}
+
+	exactLimitPath := writeKeyring(t, bytes.Repeat([]byte{'x'}, MaxFileBytes))
+	if _, err := LoadFile(exactLimitPath, testIssuer); !errors.Is(err, ErrInvalidKeyring) {
+		t.Fatalf("exact-limit file error = %v, want ErrInvalidKeyring after bounded read", err)
+	}
+
+	overLimitPath := writeKeyring(t, bytes.Repeat([]byte{'x'}, MaxFileBytes+1))
+	if _, err := LoadFile(overLimitPath, testIssuer); !errors.Is(err, ErrKeyringTooLarge) {
+		t.Fatalf("over-limit file error = %v, want ErrKeyringTooLarge", err)
+	}
+}
+
 func TestParseValidatesOneActiveKeyAndMaterial(t *testing.T) {
 	active := makeTestKey("rotation-2026-08", StateActive, 1)
 	snapshot, err := Parse(makeKeyringJSON(active.id, active), testIssuer)
