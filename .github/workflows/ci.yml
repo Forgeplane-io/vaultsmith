@@ -521,13 +521,13 @@ jobs:
       - name: Install Syft
         id: syft_primary
         continue-on-error: true
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           syft-version: v1.50.0
       - name: Retry Syft installation
         if: steps.syft_primary.outcome == 'failure'
         id: syft_retry
-        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           syft-version: v1.50.0
       - name: Add Syft to PATH
