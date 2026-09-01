@@ -20,6 +20,11 @@ auth:
   oidc:
     issuerURL: ""
     clientID: ""
+    # Use a Secret when the client ID is generated outside Helm, for example
+    # by a Terraform-managed identity provider application.
+    clientIDSecret:
+      existingSecret: ""
+      key: oidc-client-id
     clientSecret:
       existingSecret: ""
       key: oidc-client-secret

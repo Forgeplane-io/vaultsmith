@@ -69,7 +69,9 @@ auth:
     key: csrf-secret
   oidc:
     issuerURL: https://id.example.test/realms/vaultsmith
-    clientID: vaultsmith
+    clientIDSecret:
+      existingSecret: vaultsmith-auth
+      key: oidc-client-id
     clientSecret:
       existingSecret: vaultsmith-auth
       key: oidc-client-secret

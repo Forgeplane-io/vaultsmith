@@ -173,7 +173,9 @@ auth:
     key: csrf-secret
   oidc:
     issuerURL: https://idp.example.test/realms/vaultsmith
-    clientID: vaultsmith
+    clientIDSecret:
+      existingSecret: vaultsmith-auth
+      key: oidc-client-id
     clientSecret:
       existingSecret: vaultsmith-auth
       key: oidc-client-secret
@@ -232,6 +234,7 @@ render -f "$TMP_DIR/native.yaml" > "$TMP_DIR/native-render.yaml"
 grep -Fq 'name: AUTH_MODE' "$TMP_DIR/native-render.yaml" || fail 'native auth mode env is missing'
 assert_contains_block "$TMP_DIR/native-render.yaml" $'- name: CSRF_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: "vaultsmith-auth"\n                  key: "csrf-secret"\n                  optional: false' 'native CSRF Secret name/key relationship is wrong'
 assert_contains_block "$TMP_DIR/native-render.yaml" $'- name: OIDC_CLIENT_SECRET\n              valueFrom:\n                secretKeyRef:\n                  name: "vaultsmith-auth"\n                  key: "oidc-client-secret"\n                  optional: false' 'native OIDC Secret name/key relationship is wrong'
+assert_contains_block "$TMP_DIR/native-render.yaml" $'- name: OIDC_CLIENT_ID\n              valueFrom:\n                secretKeyRef:\n                  name: "vaultsmith-auth"\n                  key: "oidc-client-id"\n                  optional: false' 'native OIDC client ID Secret name/key relationship is wrong'
 assert_contains_block "$TMP_DIR/native-render.yaml" $'- name: OIDC_CA_FILE\n              value: /etc/vaultsmith/oidc-ca/ca.crt' 'native OIDC CA env path is wrong'
 assert_contains_block "$TMP_DIR/native-render.yaml" $'- name: oidc-ca\n          configMap:\n            name: "vaultsmith-oidc-ca"\n            items:\n              - key: "ca.crt"\n                path: ca.crt' 'native OIDC CA ConfigMap/key relationship is wrong'
 assert_contains_block "$TMP_DIR/native-render.yaml" $'- name: oidc-ca\n              mountPath: /etc/vaultsmith/oidc-ca\n              readOnly: true' 'native OIDC CA mount relationship is wrong'
@@ -322,6 +325,7 @@ egress_error='networkPolicy.allowedEgress must allow OIDC and Redis egress in na
 assert_render_fails_with "$egress_error" -f "$TMP_DIR/native.yaml" --set-json 'networkPolicy.allowedEgress=[]'
 assert_render_fails_with "$egress_error" -f "$TMP_DIR/native.yaml" --set-json 'networkPolicy.allowedEgress=[]' --skip-schema-validation
 assert_render_fails_with "$egress_error" -f "$TMP_DIR/native.yaml" --set-json 'networkPolicy.allowedEgress=[]' --show-only templates/networkpolicy.yaml --skip-schema-validation
+assert_render_fails_with 'auth.oidc.clientID and auth.oidc.clientIDSecret.existingSecret are mutually exclusive' -f "$TMP_DIR/bundled-native.yaml" --set auth.oidc.clientIDSecret.existingSecret=vaultsmith-auth --skip-schema-validation
 
 cat > "$TMP_DIR/incomplete-native.yaml" <<'VALUES'
 auth:

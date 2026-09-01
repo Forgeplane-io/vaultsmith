@@ -70,8 +70,17 @@ spec:
               value: {{ .Values.auth.mode | quote }}
             - name: OIDC_ISSUER_URL
               value: {{ .Values.auth.oidc.issuerURL | quote }}
+            {{- if .Values.auth.oidc.clientID }}
             - name: OIDC_CLIENT_ID
               value: {{ .Values.auth.oidc.clientID | quote }}
+            {{- else if .Values.auth.oidc.clientIDSecret.existingSecret }}
+            - name: OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.oidc.clientIDSecret.existingSecret | quote }}
+                  key: {{ .Values.auth.oidc.clientIDSecret.key | quote }}
+                  optional: false
+            {{- end }}
             - name: OIDC_REDIRECT_URL
               value: {{ .Values.auth.oidc.redirectURL | quote }}
             - name: PUBLIC_BASE_URL
