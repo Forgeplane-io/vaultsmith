@@ -117,7 +117,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if eq $mode "native" }}
 {{- $_ := required "auth.csrf.existingSecret is required in native mode" .Values.auth.csrf.existingSecret }}
 {{- $_ := required "auth.oidc.issuerURL is required in native mode" .Values.auth.oidc.issuerURL }}
-{{- $_ := required "auth.oidc.clientID is required in native mode" .Values.auth.oidc.clientID }}
+{{- if and (not .Values.auth.oidc.clientID) (not .Values.auth.oidc.clientIDSecret.existingSecret) }}{{ fail "auth.oidc.clientID or auth.oidc.clientIDSecret.existingSecret is required in native mode" }}{{ end }}
+{{- if and .Values.auth.oidc.clientID .Values.auth.oidc.clientIDSecret.existingSecret }}{{ fail "auth.oidc.clientID and auth.oidc.clientIDSecret.existingSecret are mutually exclusive" }}{{ end }}
 {{- $_ := required "auth.oidc.clientSecret.existingSecret is required in native mode" .Values.auth.oidc.clientSecret.existingSecret }}
 {{- $_ := required "auth.oidc.redirectURL is required in native mode" .Values.auth.oidc.redirectURL }}
 {{- $_ := required "auth.oidc.publicBaseURL is required in native mode" .Values.auth.oidc.publicBaseURL }}

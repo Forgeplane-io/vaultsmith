@@ -223,6 +223,14 @@
           "properties": {
             "issuerURL": { "type": "string" },
             "clientID": { "type": "string" },
+            "clientIDSecret": {
+              "type": "object",
+              "required": ["existingSecret", "key"],
+              "properties": {
+                "existingSecret": { "type": "string" },
+                "key": { "type": "string", "minLength": 1 }
+              }
+            },
             "clientSecret": {
               "type": "object",
               "required": ["existingSecret", "key"],
@@ -308,10 +316,9 @@
             "required": ["oidc", "redis", "policy"],
             "properties": {
               "oidc": {
-                "required": ["issuerURL", "clientID", "clientSecret", "redirectURL", "publicBaseURL"],
+                "required": ["issuerURL", "clientSecret", "redirectURL", "publicBaseURL"],
                 "properties": {
                   "issuerURL": { "minLength": 1, "pattern": "^https://" },
-                  "clientID": { "minLength": 1 },
                   "clientSecret": {
                     "properties": {
                       "existingSecret": { "minLength": 1 }
@@ -319,7 +326,41 @@
                   },
                   "redirectURL": { "minLength": 1, "pattern": "^https://" },
                   "publicBaseURL": { "minLength": 1, "pattern": "^https://" }
-                }
+                },
+                "oneOf": [
+                  {
+                    "properties": {
+                      "clientID": { "minLength": 1 }
+                    },
+                    "required": ["clientID"],
+                    "not": {
+                      "properties": {
+                        "clientIDSecret": {
+                          "properties": {
+                            "existingSecret": { "minLength": 1 }
+                          }
+                        }
+                      },
+                      "required": ["clientIDSecret"]
+                    }
+                  },
+                  {
+                    "properties": {
+                      "clientIDSecret": {
+                        "properties": {
+                          "existingSecret": { "minLength": 1 }
+                        }
+                      }
+                    },
+                    "required": ["clientIDSecret"],
+                    "not": {
+                      "properties": {
+                        "clientID": { "minLength": 1 }
+                      },
+                      "required": ["clientID"]
+                    }
+                  }
+                ]
               },
               "csrf": {
                 "required": ["existingSecret"],
