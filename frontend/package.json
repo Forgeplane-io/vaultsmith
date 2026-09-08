@@ -14,7 +14,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "yaml": "^2.9.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.81.0",
