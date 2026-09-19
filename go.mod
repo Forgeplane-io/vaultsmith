@@ -15,9 +15,9 @@ require (
 	github.com/gowebpki/jcs v1.0.1 // Apache-2.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/oapi-codegen/runtime v1.7.0
-	golang.org/x/crypto v0.56.0
-	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/crypto v0.57.0
+	golang.org/x/oauth2 v0.37.0
+	golang.org/x/sync v0.23.0
 )
 
 require (
@@ -31,6 +31,6 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
