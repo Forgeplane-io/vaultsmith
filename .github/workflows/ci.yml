@@ -15,8 +15,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      full: ${{ steps.full.outputs.run }}
+      ci: ${{ steps.filter.outputs.ci }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+      api_contract: ${{ steps.filter.outputs.api_contract }}
+      compatibility: ${{ steps.filter.outputs.compatibility }}
+      helm: ${{ steps.filter.outputs.helm }}
+      helm_kind: ${{ steps.filter.outputs.helm_kind }}
+      smoke: ${{ steps.filter.outputs.smoke }}
+      attestation: ${{ steps.filter.outputs.attestation }}
+      native_integration: ${{ steps.filter.outputs.native_integration }}
+      container: ${{ steps.filter.outputs.container }}
+      release_snapshot: ${{ steps.filter.outputs.release_snapshot }}
+      dependencies: ${{ steps.filter.outputs.dependencies }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Release acceptance requires full CI for the exact pushed commit.
+      - name: Run full CI outside pull requests
+        if: github.event_name != 'pull_request'
+        id: full
+        run: echo 'run=true' >> "$GITHUB_OUTPUT"
+      - name: Detect pull request changes
+        if: github.event_name == 'pull_request'
+        id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: .github/ci-paths.yml
+
   frontend:
     name: Frontend
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.frontend == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -44,6 +83,8 @@ jobs:
 
   backend:
     name: Backend
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.backend == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -65,6 +106,8 @@ jobs:
 
   api-contract:
     name: API contract
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.api_contract == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -95,6 +138,8 @@ jobs:
 
   compatibility:
     name: Ansible Vault compatibility
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.compatibility == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -116,6 +161,8 @@ jobs:
 
   helm:
     name: Helm chart
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.helm == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -132,6 +179,8 @@ jobs:
 
   helm-kind:
     name: Helm kind integration
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.helm_kind == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -413,6 +462,8 @@ jobs:
 
   smoke:
     name: Smoke round trip
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.smoke == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -440,6 +491,8 @@ jobs:
 
   attestation-smoke:
     name: Attestation qualification
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.attestation == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -455,6 +508,8 @@ jobs:
 
   attestation-fuzz:
     name: Attestation fuzz smoke
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.attestation == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -475,6 +530,8 @@ jobs:
 
   native-integration:
     name: Native authentication integration
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.native_integration == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -490,6 +547,8 @@ jobs:
 
   container:
     name: Container build
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.container == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -500,6 +559,8 @@ jobs:
 
   release-snapshot:
     name: Release snapshot
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.release_snapshot == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -574,7 +635,8 @@ jobs:
 
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && (needs.changes.result != 'success' || needs.changes.outputs.ci == 'true' || needs.changes.outputs.dependencies == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

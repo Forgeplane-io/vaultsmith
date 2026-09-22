@@ -1,0 +1,101 @@
+ci:
+  - '.github/ci-paths.yml'
+  - '.github/workflows/ci.yml'
+  - 'Makefile'
+
+frontend:
+  - '.nvmrc'
+  - 'frontend/**'
+
+backend:
+  - 'go.mod'
+  - 'go.sum'
+  - 'backend/**'
+  - 'scripts/check_admission_receipt.py'
+  - 'scripts/check_admission_receipt_test.py'
+  - 'docs/benchmarks/admission-linux-amd64-2026-08-12.md'
+
+api_contract:
+  - 'go.mod'
+  - 'go.sum'
+  - 'api/**'
+  - 'backend/internal/apimodels/**'
+  - 'frontend/src/generated/api.ts'
+  - 'docs/api-reference.md'
+
+compatibility:
+  - 'go.mod'
+  - 'go.sum'
+  - 'backend/internal/ansiblevault/**'
+
+helm:
+  - 'deploy/helm/**'
+
+helm_kind:
+  - '.dockerignore'
+  - 'Dockerfile'
+  - 'go.mod'
+  - 'go.sum'
+  - 'backend/**'
+  - 'frontend/**'
+  - 'deploy/helm/**'
+
+smoke:
+  - 'go.mod'
+  - 'go.sum'
+  - 'backend/**'
+  - 'frontend/**'
+  - 'scripts/smoke.sh'
+
+attestation:
+  - 'go.mod'
+  - 'go.sum'
+  - 'backend/cmd/server/**'
+  - 'backend/internal/ansiblevault/**'
+  - 'backend/internal/attestation/**'
+  - 'backend/internal/attestationkeyring/**'
+  - 'backend/internal/config/**'
+  - 'backend/internal/httpapi/**'
+  - 'backend/internal/vaultservice/**'
+  - 'scripts/smoke-attestation.sh'
+
+native_integration:
+  - 'go.mod'
+  - 'go.sum'
+  - 'backend/**'
+  - 'integration/Caddyfile'
+  - 'integration/docker-compose.yml'
+  - 'scripts/integration-native.sh'
+
+container:
+  - '.dockerignore'
+  - 'Dockerfile'
+  - 'go.mod'
+  - 'go.sum'
+  - 'backend/**'
+  - 'frontend/**'
+
+release_snapshot:
+  - '.goreleaser.yaml'
+  - '.nvmrc'
+  - 'go.mod'
+  - 'go.sum'
+  - 'backend/**'
+  - 'frontend/**'
+  - 'api/openapi.yaml'
+  - 'docs/api-reference.md'
+  - 'CHANGELOG.md'
+  - 'LICENSE'
+  - 'README.md'
+
+dependencies:
+  - '**/go.mod'
+  - '**/go.sum'
+  - '**/package.json'
+  - '**/package-lock.json'
+  - '.github/dependabot.yml'
+  - '.github/workflows/**'
+  - 'Dockerfile'
+  - 'deploy/helm/**/Chart.yaml'
+  - 'deploy/helm/**/Chart.lock'
+  - 'deploy/helm/**/charts/**'
