@@ -767,6 +767,11 @@ var (
 
 func decodeMCPMetaObject(raw []byte, required map[string]struct{}) (map[string]json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := validateMCPJSONValue(decoder); err != nil {
+		return nil, err
+	}
+	decoder = json.NewDecoder(bytes.NewReader(raw))
 	first, err := decoder.Token()
 	if err != nil {
 		return nil, err
@@ -807,6 +812,52 @@ func decodeMCPMetaObject(raw []byte, required map[string]struct{}) (map[string]j
 		return nil, errors.New("trailing JSON")
 	}
 	return fields, nil
+}
+
+// validateMCPJSONValue rejects duplicate decoded keys, including in opaque
+// extension values, without imposing metadata-name rules on nested objects.
+func validateMCPJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	var seen map[string]struct{}
+	end := json.Delim(']')
+	if delimiter == '{' {
+		seen = make(map[string]struct{})
+		end = '}'
+	}
+	for decoder.More() {
+		if delimiter == '{' {
+			token, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := token.(string)
+			if !ok {
+				return errors.New("object key is invalid")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return errors.New("duplicate object key")
+			}
+			seen[key] = struct{}{}
+		}
+		if err := validateMCPJSONValue(decoder); err != nil {
+			return err
+		}
+	}
+	last, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if last != end {
+		return errors.New("JSON value is invalid")
+	}
+	return nil
 }
 
 func validMCPMetaKey(key string) bool {
