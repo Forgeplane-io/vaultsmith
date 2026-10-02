@@ -1,0 +1,105 @@
+{
+  "phase": "before",
+  "source": "626d9c9aae3cc9a83183245126821073937f4e94",
+  "browser": "Chrome/154.0.8037.98",
+  "route": "/",
+  "role": "Loopback-only auth-off development with proofs; synthetic dev/prod profiles and ephemeral keyring",
+  "viewports": {
+    "desktop": [
+      1440,
+      1000
+    ],
+    "mobile": [
+      390,
+      844
+    ]
+  },
+  "checks": [
+    {
+      "name": "desktop: rotation field ceiling retained",
+      "passed": true
+    },
+    {
+      "name": "desktop: hidden binding does not block encrypt",
+      "passed": false
+    },
+    {
+      "name": "desktop: rotation field ceiling retained",
+      "passed": true
+    },
+    {
+      "name": "desktop: hidden binding does not block decrypt",
+      "passed": false
+    },
+    {
+      "name": "desktop: Verify has no hidden input error",
+      "passed": false
+    },
+    {
+      "name": "desktop: operation ceiling retained",
+      "passed": true
+    },
+    {
+      "name": "desktop: handoff removes proof",
+      "passed": false
+    },
+    {
+      "name": "desktop: clear removes proof and copy feedback",
+      "passed": false
+    },
+    {
+      "name": "desktop: toggle removes proof and copy feedback",
+      "passed": false
+    },
+    {
+      "name": "desktop: binding removes proof and copy feedback",
+      "passed": false
+    },
+    {
+      "name": "mobile: rotation field ceiling retained",
+      "passed": true
+    },
+    {
+      "name": "mobile: hidden binding does not block encrypt",
+      "passed": false
+    },
+    {
+      "name": "mobile: rotation field ceiling retained",
+      "passed": true
+    },
+    {
+      "name": "mobile: hidden binding does not block decrypt",
+      "passed": false
+    },
+    {
+      "name": "mobile: Verify has no hidden input error",
+      "passed": false
+    },
+    {
+      "name": "mobile: operation ceiling retained",
+      "passed": true
+    },
+    {
+      "name": "mobile: handoff removes proof",
+      "passed": false
+    },
+    {
+      "name": "mobile: clear removes proof and copy feedback",
+      "passed": false
+    },
+    {
+      "name": "mobile: toggle removes proof and copy feedback",
+      "passed": false
+    },
+    {
+      "name": "mobile: binding removes proof and copy feedback",
+      "passed": false
+    }
+  ],
+  "fixture": "Fresh page reset per scenario; server-encrypted synthetic-issue-106; rotation verified cryptographically and decrypted with destination; no request bodies logged.",
+  "clipboard": "Deferred clipboard completion is injected, not a real clipboard permission delay.",
+  "gaps": [
+    "Native sign-out, cancellation and clipboard rejection covered by DOM regressions, not live native auth",
+    "Mobile-width rendering uses desktop browser emulation; no physical mobile or screen reader"
+  ]
+}
