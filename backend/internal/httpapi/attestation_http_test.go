@@ -16,6 +16,7 @@ import (
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/ansiblevault"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/attestation"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
 )
 
@@ -28,6 +29,7 @@ type httpSyntheticAttestationManager struct {
 	signErr    error
 	metadata   []byte
 	jwks       []byte
+	onResolve  func()
 }
 
 func newHTTPSyntheticAttestationManager(issuer string) *httpSyntheticAttestationManager {
@@ -70,6 +72,9 @@ func (m *httpSyntheticAttestationManager) Sign(claims attestation.RotationClaims
 func (m *httpSyntheticAttestationManager) Resolve(issuer, kid string) (attestation.KeyResolution, error) {
 	if m == nil || issuer != m.issuer || kid != m.kid {
 		return attestation.KeyResolution{}, nil
+	}
+	if m.onResolve != nil {
+		m.onResolve()
 	}
 	publicKey := make(ed25519.PublicKey, len(m.publicKey))
 	copy(publicKey, m.publicKey)
@@ -224,6 +229,40 @@ func TestAttestationVerifyHTTPReturnsSemanticResult(t *testing.T) {
 	invalid := decodeJSONBody[verifyAttestationResponse](t, badResponse)
 	if invalid.Valid || invalid.Reason != "output_digest_mismatch" {
 		t.Fatalf("semantic failure response = %#v", invalid)
+	}
+
+	for _, transport := range []string{"REST", "MCP"} {
+		t.Run(transport+" cancellation during verification", func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			manager.onResolve = cancel
+			defer func() { manager.onResolve = nil }()
+			body := mustJSON(t, httpVerifyRequest{
+				Attestation: *rotation.Attestation, InputVaultText: input, OutputVaultText: output, ExpectedBinding: binding,
+			})
+			handler := attestationHTTPHandler(t, service)
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/attestations/verify", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			wantStatus := http.StatusServiceUnavailable
+			if transport == "MCP" {
+				body = `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"verify_rotation_attestation","arguments":` + body + `,` + mcpMeta + `}}`
+				request = newMCPRequest("tools/call", body)
+				request.Header.Set("Mcp-Name", "verify_rotation_attestation")
+				handler = WrapSecurityWithOptions(handler, config.AuthConfig{Mode: config.AuthModeOff}, SecurityOptions{MCPEnabled: true})
+				wantStatus = http.StatusOK
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request.WithContext(ctx))
+			if response.Code != wantStatus || !strings.Contains(response.Body.String(), `"code":"temporarily_unavailable"`) || strings.Contains(response.Body.String(), `"attestation":`) {
+				t.Fatalf("cancelled verification must return a safe error without claims (status %d)", response.Code)
+			}
+			if transport == "MCP" && !strings.Contains(response.Body.String(), `"isError":true`) {
+				t.Error("MCP cancellation must be a tool error")
+			}
+			if service.VerifierAdmission().InUse() != 0 {
+				t.Error("handler did not release verifier admission")
+			}
+		})
 	}
 }
 

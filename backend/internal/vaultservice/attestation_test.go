@@ -21,6 +21,7 @@ type syntheticAttestationManager struct {
 	signErr      error
 	signCalls    int
 	resolveCalls int
+	onResolve    func()
 }
 
 func newSyntheticAttestationManager(issuer string) *syntheticAttestationManager {
@@ -61,6 +62,9 @@ func (m *syntheticAttestationManager) Sign(claims attestation.RotationClaims) (a
 
 func (m *syntheticAttestationManager) Resolve(issuer, kid string) (attestation.KeyResolution, error) {
 	m.resolveCalls++
+	if m.onResolve != nil {
+		m.onResolve()
+	}
 	if issuer != m.issuer || kid != m.kid {
 		return attestation.KeyResolution{}, errors.New("synthetic key lookup failed")
 	}
@@ -392,6 +396,70 @@ func TestVerifyAttestationUsesKeyringOnlyAndVerifierAdmissionIsBounded(t *testin
 	}
 	if manager.resolveCalls == 0 {
 		t.Fatal("verification did not use the issuer-bound key resolver")
+	}
+
+	for _, test := range []struct {
+		name     string
+		provided bool
+		detached bool
+		before   bool
+		pool     string
+	}{
+		{name: "internal cancellation during verification"},
+		{name: "provided cancellation during verification", provided: true},
+		{name: "detached origin cancellation during verification", provided: true, detached: true},
+		{name: "detached origin cancelled before verification", provided: true, detached: true, before: true},
+		{name: "detached operation origin cancellation during verification", provided: true, detached: true, pool: "operation"},
+		{name: "detached foreign verifier origin cancellation during verification", provided: true, detached: true, pool: "foreign verifier"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var provided *VerifierLease
+			providedAdmission := verifierAdmission
+			switch test.pool {
+			case "operation":
+				providedAdmission, err = NewAdmission(1)
+			case "foreign verifier":
+				providedAdmission, err = NewVerifierAdmission(1)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.provided {
+				provided, err = providedAdmission.TryAcquire(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer provided.Release()
+				ctx = provided.Context(ctx)
+			}
+			if test.detached {
+				ctx = context.WithoutCancel(ctx)
+			}
+			if test.before {
+				cancel()
+			}
+			manager.onResolve = cancel
+			defer func() { manager.onResolve = nil }()
+			claims, verifyErr := service.VerifyAttestation(ctx, signed, input, output, syntheticBinding())
+			if claims != (attestation.RotationClaims{}) || !HasCode(verifyErr, CodeTemporarilyUnavailable) || !errors.Is(verifyErr, context.Canceled) {
+				t.Error("cancelled verification must return empty claims and temporarily_unavailable wrapping context.Canceled")
+			}
+			if provided != nil {
+				if providedAdmission.InUse() != 1 {
+					t.Error("verification released the caller-owned lease")
+				}
+				provided.Release()
+			}
+			if verifierAdmission.InUse() != 0 || providedAdmission.InUse() != 0 {
+				t.Error("verification did not restore admission capacity after owner release")
+			}
+			manager.onResolve = nil
+			if _, err := service.VerifyAttestation(context.Background(), signed, input, output, syntheticBinding()); err != nil {
+				t.Fatalf("non-cancelled verification after release failed: %v", err)
+			}
+		})
 	}
 }
 

@@ -268,7 +268,8 @@ func (s *Service) VerifyAttestation(ctx context.Context, signed attestation.Sign
 	if err != nil {
 		return attestation.RotationClaims{}, err
 	}
-	if err := contextError(ctx); err != nil {
+	lease := leaseFromContext(ctx)
+	if err := leaseBoundContextError(ctx, lease); err != nil {
 		return attestation.RotationClaims{}, err
 	}
 	if !utf8.ValidString(inputEnvelope) || !utf8.ValidString(outputEnvelope) || inputEnvelope == "" || outputEnvelope == "" || len(inputEnvelope) > MaxVaultTextBytes || len(outputEnvelope) > MaxVaultTextBytes {
@@ -276,17 +277,16 @@ func (s *Service) VerifyAttestation(ctx context.Context, signed attestation.Sign
 	}
 
 	var release func()
-	provided := leaseFromContext(ctx)
-	if provided != nil && provided.liveForContext(ctx, s.verifierAdmission) {
-		if !provided.holdForContext(ctx, s.verifierAdmission) {
+	if lease != nil && lease.liveForContext(ctx, s.verifierAdmission) {
+		if !lease.holdForContext(ctx, s.verifierAdmission) {
 			return attestation.RotationClaims{}, attestationBusy()
 		}
-		release = provided.releaseHold
+		release = lease.releaseHold
 	} else {
 		if s.verifierAdmission == nil {
 			return attestation.RotationClaims{}, attestationUnavailable()
 		}
-		lease, acquireErr := s.verifierAdmission.TryAcquire(ctx)
+		verifierLease, acquireErr := s.verifierAdmission.TryAcquire(ctx)
 		if acquireErr != nil {
 			if errors.Is(acquireErr, ErrVerifierAdmissionSaturated) || errors.Is(acquireErr, ErrAdmissionSaturated) {
 				return attestation.RotationClaims{}, attestationBusy()
@@ -296,10 +296,10 @@ func (s *Service) VerifyAttestation(ctx context.Context, signed attestation.Sign
 			}
 			return attestation.RotationClaims{}, attestationUnavailable()
 		}
-		release = lease.Release
+		release = verifierLease.Release
 	}
 	defer release()
-	if err := contextError(ctx); err != nil {
+	if err := leaseBoundContextError(ctx, lease); err != nil {
 		return attestation.RotationClaims{}, err
 	}
 
@@ -310,6 +310,9 @@ func (s *Service) VerifyAttestation(ctx context.Context, signed attestation.Sign
 		ExpectedIssuer: manager.Issuer(),
 		Resolver:       manager,
 	})
+	if err := leaseBoundContextError(ctx, lease); err != nil {
+		return attestation.RotationClaims{}, err
+	}
 	if !manager.Ready() {
 		return attestation.RotationClaims{}, attestationUnavailable()
 	}
