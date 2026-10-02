@@ -5,6 +5,7 @@ import {
   fetchSession,
   logout,
   maxInputBytes,
+  MAX_VAULT_TEXT_BYTES,
   OPERATION_TIMEOUT_MS,
   runOperation,
   verifyAttestation,
@@ -46,6 +47,7 @@ type ActiveView = 'operation' | 'verify' | 'generate'
 
 const MAX_BINDING_FIELD_BYTES = 1 * 1024
 const MAX_CANONICAL_BINDING_BYTES = 4 * 1024
+const MAX_ATTESTATION_BYTES = 192 * 1024
 
 const emptyBindingFields = (): BindingFields => ({ repository: '', revision: '', path: '', selector: '' })
 
@@ -230,9 +232,9 @@ export default function App() {
   const verificationAttestationBytes = useMemo(() => utf8ByteLength(verificationAttestation), [verificationAttestation])
   const verificationInputBytes = useMemo(() => utf8ByteLength(verificationInput), [verificationInput])
   const verificationOutputBytes = useMemo(() => utf8ByteLength(verificationOutput), [verificationOutput])
-  const verificationOverLimit = verificationAttestationBytes > 192 * 1024
-    || verificationInputBytes > 5 * 1024 * 1024
-    || verificationOutputBytes > 5 * 1024 * 1024
+  const verificationOverLimit = verificationAttestationBytes > MAX_ATTESTATION_BYTES
+    || verificationInputBytes > MAX_VAULT_TEXT_BYTES
+    || verificationOutputBytes > MAX_VAULT_TEXT_BYTES
   const verificationBindingOverLimit = !bindingFieldsWithinLimits(expectedBinding)
   const attestationBindingOverLimit = issueAttestation && !bindingFieldsWithinLimits(attestationBinding)
   const proofAvailable = session?.attestationEnabled === true
@@ -306,9 +308,7 @@ export default function App() {
     [decryptProfiles, formatInspection, mode, profileId, profileSnapshotReady, rotateSourceProfiles, isVerifyView],
   )
   const selectedProfileLabel = profiles.find((profile) => profile.id === profileId)?.label || profileId
-  const inputDescriptionIds = value && formatInspection
-    ? 'input-byte-count vault-format-diagnostics'
-    : 'input-byte-count'
+  const inputDescriptionIds = `input-byte-count${overLimit ? ' input-size-error' : ''}${value && formatInspection ? ' vault-format-diagnostics' : ''}`
   const heading = isVerifyView
     ? 'Verify a rotation attestation'
     : isGenerateView
@@ -1181,9 +1181,11 @@ export default function App() {
                     autoCorrect="off"
                     autoCapitalize="off"
                     aria-describedby={inputDescriptionIds}
+                    aria-invalid={overLimit}
                     rows={12}
                   />
                   <div className="editor-card-footer" id="input-byte-count"><span>Input size</span><strong>{byteLength.toLocaleString()} / {byteLimit.toLocaleString()} bytes</strong></div>
+                  {overLimit && <p className="field-help" id="input-size-error">{limitMessage(mode)}. Reduce the input to {byteLimit.toLocaleString()} bytes or fewer.</p>}
                 </section>
 
                 <div className="auxiliary-slot input-auxiliary-slot">
@@ -1359,6 +1361,10 @@ function VerificationWorkbench({
   onBindingChange: (field: keyof BindingFields, value: string) => void
   onClear: () => void
 }) {
+  const attestationOverLimit = attestationBytes > MAX_ATTESTATION_BYTES
+  const inputOverLimit = inputBytes > MAX_VAULT_TEXT_BYTES
+  const outputOverLimit = outputBytes > MAX_VAULT_TEXT_BYTES
+
   return (
     <>
       <div className="editor-panes verification-panes">
@@ -1378,9 +1384,12 @@ function VerificationWorkbench({
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
+              aria-invalid={attestationOverLimit}
+              aria-describedby={`verification-attestation-byte-count${attestationOverLimit ? ' verification-attestation-size-error' : ''}`}
               rows={10}
             />
-            <div className="editor-card-footer"><span>Attestation size</span><strong>{attestationBytes.toLocaleString()} / {(192 * 1024).toLocaleString()} bytes</strong></div>
+            <div className="editor-card-footer" id="verification-attestation-byte-count"><span>Attestation size</span><strong>{attestationBytes.toLocaleString()} / {MAX_ATTESTATION_BYTES.toLocaleString()} bytes</strong></div>
+            {attestationOverLimit && <p className="field-help" id="verification-attestation-size-error">Attestation exceeds the 192 KiB limit. Reduce the input to {MAX_ATTESTATION_BYTES.toLocaleString()} bytes or fewer.</p>}
           </section>
         </div>
         <div className="editor-pane">
@@ -1399,9 +1408,12 @@ function VerificationWorkbench({
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
+              aria-invalid={inputOverLimit}
+              aria-describedby={`verification-input-byte-count${inputOverLimit ? ' verification-input-size-error' : ''}`}
               rows={10}
             />
-            <div className="editor-card-footer"><span>Input size</span><strong>{inputBytes.toLocaleString()} / {(5 * 1024 * 1024).toLocaleString()} bytes</strong></div>
+            <div className="editor-card-footer" id="verification-input-byte-count"><span>Input size</span><strong>{inputBytes.toLocaleString()} / {MAX_VAULT_TEXT_BYTES.toLocaleString()} bytes</strong></div>
+            {inputOverLimit && <p className="field-help" id="verification-input-size-error">Original Vault exceeds the 5 MiB limit. Reduce the input to {MAX_VAULT_TEXT_BYTES.toLocaleString()} bytes or fewer.</p>}
           </section>
         </div>
         <div className="editor-pane">
@@ -1420,9 +1432,12 @@ function VerificationWorkbench({
               autoComplete="off"
               autoCorrect="off"
               autoCapitalize="off"
+              aria-invalid={outputOverLimit}
+              aria-describedby={`verification-output-byte-count${outputOverLimit ? ' verification-output-size-error' : ''}`}
               rows={10}
             />
-            <div className="editor-card-footer"><span>Output size</span><strong>{outputBytes.toLocaleString()} / {(5 * 1024 * 1024).toLocaleString()} bytes</strong></div>
+            <div className="editor-card-footer" id="verification-output-byte-count"><span>Output size</span><strong>{outputBytes.toLocaleString()} / {MAX_VAULT_TEXT_BYTES.toLocaleString()} bytes</strong></div>
+            {outputOverLimit && <p className="field-help" id="verification-output-size-error">Rotated Vault exceeds the 5 MiB limit. Reduce the input to {MAX_VAULT_TEXT_BYTES.toLocaleString()} bytes or fewer.</p>}
           </section>
         </div>
       </div>

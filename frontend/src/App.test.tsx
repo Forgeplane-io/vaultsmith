@@ -1,7 +1,7 @@
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { MAX_PLAINTEXT_BYTES, OPERATION_TIMEOUT_MS } from './api'
+import { MAX_PLAINTEXT_BYTES, MAX_VAULT_TEXT_BYTES, OPERATION_TIMEOUT_MS } from './api'
 import App from './App'
 
 type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue }
@@ -871,6 +871,45 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled()
   })
 
+  it.each([
+    ['Attestation', 192 * 1024, '192 KiB'],
+    ['Original Vault', MAX_VAULT_TEXT_BYTES, '5 MiB'],
+    ['Rotated Vault', MAX_VAULT_TEXT_BYTES, '5 MiB'],
+  ] as const)('associates the %s byte limit with only the oversized editor', async (label, limit, formattedLimit) => {
+    const fetchMock = mockAttestedProfileLoad()
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByRole('option', { name: 'Development' })
+    await user.click(screen.getByRole('button', { name: 'Set verify mode' }))
+
+    const labels = ['Attestation', 'Original Vault', 'Rotated Vault']
+    for (const name of labels) {
+      fireEvent.change(screen.getByRole('textbox', { name }), { target: { value: 'synthetic' } })
+    }
+    const input = screen.getByRole('textbox', { name: label })
+    const boundary = 'é'.repeat(limit / 2)
+    fireEvent.change(input, { target: { value: boundary } })
+    expect(input).toHaveAttribute('aria-invalid', 'false')
+    expect(input).toHaveAccessibleDescription(expect.stringContaining(`${limit.toLocaleString()} / ${limit.toLocaleString()} bytes`))
+    expect(screen.getByRole('button', { name: 'Verify' })).toBeEnabled()
+
+    fireEvent.change(input, { target: { value: `${boundary}x` } })
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(input).toHaveAccessibleDescription(expect.stringContaining(`${label} exceeds the ${formattedLimit} limit`))
+    expect(input).toHaveAccessibleDescription(expect.stringContaining(`${(limit + 1).toLocaleString()} / ${limit.toLocaleString()} bytes`))
+    for (const name of labels.filter((name) => name !== label)) {
+      expect(screen.getByRole('textbox', { name })).toHaveAttribute('aria-invalid', 'false')
+    }
+    expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    fireEvent.change(input, { target: { value: boundary } })
+    expect(input).toHaveAttribute('aria-invalid', 'false')
+    expect(input).not.toHaveAccessibleDescription(expect.stringContaining('exceeds'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Verify' })).toBeEnabled()
+  })
+
   it('offers verify without profiles and shows only a stable semantic failure', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(attestedSessionResponse())
@@ -1069,9 +1108,17 @@ describe('Vaultsmith operator experience', () => {
     const overLimit = '🙂'.repeat(MAX_PLAINTEXT_BYTES / 4 + 1)
     fireEvent.change(input, { target: { value: overLimit } })
 
-    expect(screen.getByText(`${MAX_PLAINTEXT_BYTES.toLocaleString()} bytes`, { exact: false })).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('Value exceeds the 1 MiB limit')
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(input).toHaveAccessibleDescription(expect.stringContaining('Value exceeds the 1 MiB limit'))
+    expect(input).toHaveAccessibleDescription(expect.stringContaining(`${(MAX_PLAINTEXT_BYTES + 4).toLocaleString()} / ${MAX_PLAINTEXT_BYTES.toLocaleString()} bytes`))
     expect(screen.getByRole('button', { name: 'Encrypt' })).toBeDisabled()
+
+    fireEvent.change(input, { target: { value: '🙂'.repeat(MAX_PLAINTEXT_BYTES / 4) } })
+    expect(input).toHaveAttribute('aria-invalid', 'false')
+    expect(input).not.toHaveAccessibleDescription(expect.stringContaining('exceeds'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Encrypt' })).toBeEnabled()
   })
 
   it('hands off an encrypted result into decrypt input without retaining output state', async () => {
