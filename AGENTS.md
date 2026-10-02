@@ -61,3 +61,54 @@ and what was not exercised.
 
 If an environment-dependent check cannot run, state the missing prerequisite
 and the remaining coverage gap instead of substituting an unrelated check.
+
+## Visual verification
+
+- At task start and whenever scope changes, assess whether customer-visible
+  rendered UI could change, directly or indirectly. If not, state that in
+  the completion report.
+- If UI impact is possible or uncertain, capture a genuine baseline in the
+  running app before relevant edits, then capture the result under equivalent
+  conditions. Cover distinct visual effects, states, and breakpoints.
+  Representative captures are sufficient for identical repeated changes;
+  list affected screens or states not shown.
+- Record the source commit and relevant uncommitted changes, browser, route,
+  viewport, role, interaction state, and fixture/reset reference.
+- Use only synthetic fixtures. Retain sanitized, clearly labeled before/after
+  evidence and link it in the completion report and PR, when one exists.
+- For new screens, show and label the closest existing flow. If UI impact is
+  discovered after edits, recover the baseline from the pre-edit source state
+  when possible. Disclose missing captures or differing conditions; do not
+  claim visual verification without evidence.
+- For server-backed UI actions, verify the completed server outcome, not just
+  a displayed success message. Screenshots supplement required tests;
+  structural diagrams explain changes but do not verify rendered UI.
+
+## Workflow, review, and publication
+
+- Follow the nearest applicable nested `AGENTS.md` and update guidance made
+  inaccurate by your changes.
+- Protect dirty user work. Use an isolated worktree when implementation would
+  interfere with a shared checkout.
+- For requested visual explanations and authorized PR work, use concise
+  `show-me`/`visual-pr` conventions: prefer diffs, component trees, call trees,
+  or pseudocode over lengthy prose. Use HTML only when simpler views cannot
+  explain the change. Invoke skills only when available and their invocation
+  conditions are met; otherwise apply these conventions directly and disclose
+  unavailable skill support. Repository safety and required PR information
+  take precedence over skill templates. Use repository-local scratch paths
+  such as `.tmp/`; do not require Humanlayer tooling, artifact hooks, cloud
+  permalinks, or skill installation.
+- Skill workflows do not authorize publication. Do not commit, push, create,
+  or update a PR without explicit authorization. Merge, release, deploy,
+  restart, and visibility changes require separate explicit authorization.
+- Preserve the PR information required by `CONTRIBUTING.md`: behavior change,
+  validation performed, security impact, and migration or compatibility
+  effects, even when a skill template omits them.
+- Before opening or updating a PR, inspect affected README, API,
+  authentication, deployment, and operator documentation. Update documentation
+  in its owning repository within the authorized task scope and record updates
+  or why none are needed.
+- Record the exact base and HEAD, relevant uncommitted changes, changed files,
+  commands and results, skipped checks, and remaining gaps. If reviewed source
+  changes, refresh the review and affected verification before claiming approval.
