@@ -605,6 +605,45 @@ mcp = json_response(bearer_request("/mcp", machine, mcp_body, {
 }))
 assert mcp["result"]["supportedVersions"] == ["2026-07-28"], mcp
 
+metadata_cases = [
+    ("client info", '"io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"synthetic","name":"other","version":"1"}', False),
+    ("roots capability", '"io.modelcontextprotocol/clientCapabilities":{"roots":{"listChanged":true,"listChanged":false}}', False),
+    ("extension object", '"io.modelcontextprotocol/clientCapabilities":{},"com.example/extension":{"field":1,"field":2}', False),
+    ("valid metadata", '"io.modelcontextprotocol/clientCapabilities":{"roots":{"listChanged":true},"vendor/custom":{}},"io.modelcontextprotocol/clientInfo":{"name":"synthetic","version":"1"},"":null,"com.example/":[{"bad prefix/key":1,"":false},{"field":2}]', True),
+]
+for method in ("server/discover", "tools/list", "tools/call"):
+    for case, fields, valid in metadata_cases:
+        params = '"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28",' + fields + '}'
+        if method == "tools/call":
+            params += ',"name":"list_profiles","arguments":{}'
+        body = ('{"jsonrpc":"2.0","id":"metadata","method":' + json.dumps(method) + ',"params":{' + params + '}}').encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2026-07-28",
+            "Mcp-Method": method,
+        }
+        if method == "tools/call":
+            headers["Mcp-Name"] = "list_profiles"
+        try:
+            response = bearer_request("/mcp", machine, body, headers)
+        except urllib.error.HTTPError as error:
+            response = error
+        with response:
+            assert response.code == (200 if valid else 400), (method, case, response.code)
+            assert response.headers.get("Cache-Control") == "no-store", (method, case)
+            assert response.headers.get("X-Request-ID"), (method, case)
+            envelope = json_response(response)
+        assert envelope["jsonrpc"] == "2.0" and envelope["id"] == "metadata", (method, case)
+        if valid:
+            assert "error" not in envelope and envelope["result"]["resultType"] == "complete", (method, case)
+            if method == "tools/call":
+                assert envelope["result"]["isError"] is False, (method, case)
+                assert {profile["id"] for profile in envelope["result"]["structuredContent"]["profiles"]} == {"dev", "prod"}, (method, case)
+        else:
+            assert "result" not in envelope and envelope["error"] == {"code": -32602, "message": "invalid params"}, (method, case)
+        print(f"native integration: MCP metadata {method} / {case}: ok")
+
 for private_path in ("/healthz", "/readyz"):
     try:
         urllib.request.urlopen(base + private_path, context=context)

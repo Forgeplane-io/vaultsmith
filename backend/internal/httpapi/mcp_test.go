@@ -560,6 +560,73 @@ func TestMCPMetaValidatesSDKClientFields(t *testing.T) {
 	}
 }
 
+func TestMCPMetaRecursiveDuplicateKeys(t *testing.T) {
+	const capabilities = `"io.modelcontextprotocol/clientCapabilities":{}`
+	tests := []struct {
+		name   string
+		fields string
+		valid  bool
+	}{
+		{name: "client info", fields: capabilities + `,"io.modelcontextprotocol/clientInfo":{"name":"synthetic","name":"other","version":"1"}`},
+		{name: "roots capability", fields: `"io.modelcontextprotocol/clientCapabilities":{"roots":{"listChanged":true,"listChanged":false}}`},
+		{name: "extension object", fields: capabilities + `,"com.example/extension":{"field":1,"field":2}`},
+		{name: "extension array", fields: capabilities + `,"com.example/extension":[null,[{"field":1,"field":1}]]`},
+		{name: "escaped key", fields: capabilities + `,"com.example/extension":{"field":1,"\u0066ield":2}`},
+		{name: "empty nested key", fields: capabilities + `,"com.example/":{"":1,"":2}`},
+		{name: "custom capability", fields: `"io.modelcontextprotocol/clientCapabilities":{"vendor/custom":{"field":1,"field":2}}`},
+		{name: "valid metadata", fields: `"io.modelcontextprotocol/clientCapabilities":{"roots":{"listChanged":true},"vendor/custom":{}},"io.modelcontextprotocol/clientInfo":{"name":"synthetic","version":"1"}`, valid: true},
+		{name: "open extension values and empty names", fields: capabilities + `,"":null,"com.example/":[{"bad prefix/key":1,"":false,"Field":2,"field":3},{"field":4}],"com.example/number":1e1000,"com.example/string":"{\"field\":1,\"field\":2}"`, valid: true},
+		{name: "deep extension", fields: capabilities + `,"com.example/extension":` + strings.Repeat(`{"child":`, 40) + `null` + strings.Repeat(`}`, 40), valid: true},
+	}
+	for _, method := range []string{"server/discover", "tools/list", "tools/call"} {
+		t.Run(method, func(t *testing.T) {
+			for _, test := range tests {
+				t.Run(test.name, func(t *testing.T) {
+					params := `"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28",` + test.fields + `}`
+					if method == "tools/call" {
+						params += `,"name":"list_profiles","arguments":{}`
+					}
+					request := newMCPRequest(method, `{"jsonrpc":"2.0","id":"metadata","method":"`+method+`","params":{`+params+`}}`)
+					if method == "tools/call" {
+						request.Header.Set("Mcp-Name", "list_profiles")
+					}
+					response := httptest.NewRecorder()
+					mcpOffHandler().ServeHTTP(response, request)
+					wantStatus := http.StatusBadRequest
+					if test.valid {
+						wantStatus = http.StatusOK
+					}
+					if response.Code != wantStatus {
+						t.Fatalf("status = %d, want %d", response.Code, wantStatus)
+					}
+					if response.Header().Get("Cache-Control") != "no-store" || response.Header().Get("X-Request-ID") == "" {
+						t.Fatal("missing safe response headers")
+					}
+					var envelope struct {
+						JSONRPC string           `json:"jsonrpc"`
+						ID      string           `json:"id"`
+						Error   *mcpJSONRPCError `json:"error"`
+						Result  *json.RawMessage `json:"result"`
+					}
+					if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+						t.Fatal(err)
+					}
+					if envelope.JSONRPC != "2.0" || envelope.ID != "metadata" {
+						t.Fatal("response did not preserve the JSON-RPC envelope")
+					}
+					if test.valid {
+						if envelope.Error != nil || envelope.Result == nil {
+							t.Fatal("valid metadata did not produce a result")
+						}
+					} else if envelope.Result != nil || envelope.Error == nil || envelope.Error.Code != mcpErrorInvalidParams || envelope.Error.Message != "invalid params" || envelope.Error.Data != nil {
+						t.Fatal("duplicate metadata did not produce a safe invalid-params error")
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestMCPMetaRejectsMalformedProtocolVersionAsInvalidParams(t *testing.T) {
 	handler := mcpOffHandler()
 	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":true,"io.modelcontextprotocol/clientCapabilities":{}}}}`
