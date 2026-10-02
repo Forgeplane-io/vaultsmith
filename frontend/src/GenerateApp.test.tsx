@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { OPERATION_TIMEOUT_MS } from './api'
 import App from './App'
 
 type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue }
@@ -57,6 +58,7 @@ const passwordResult = {
 
 describe('Generate view integration', () => {
   afterEach(() => {
+    vi.useRealTimers()
     cleanup()
     vi.restoreAllMocks()
   })
@@ -96,6 +98,77 @@ describe('Generate view integration', () => {
         excludeAmbiguous: false,
       },
     })
+  })
+
+  it('cancels Generate without losing settings or letting a late result unlock a newer request', async () => {
+    let resolveCancelled!: (response: Response) => void
+    let resolveCurrent!: (response: Response) => void
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(session())
+      .mockResolvedValueOnce(profilesResponse())
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveCancelled = resolve }))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveCurrent = resolve }))
+    const user = userEvent.setup()
+
+    render(<App />)
+    const generateMode = await screen.findByRole('button', { name: 'Set generate mode' })
+    await waitFor(() => expect(generateMode).toBeEnabled())
+    await user.click(generateMode)
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Length' }), { target: { value: 64 } })
+    await user.click(screen.getByRole('button', { name: 'Generate sealed material' }))
+
+    const signal = fetchMock.mock.calls[2]?.[1]?.signal
+    const aborted = vi.fn()
+    signal?.addEventListener('abort', aborted)
+    expect(signal?.aborted).toBe(false)
+    expect(screen.getByRole('button', { name: 'Clear Generate form' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(signal?.aborted).toBe(true)
+    expect(aborted).toHaveBeenCalledOnce()
+    expect(screen.getByRole('alert')).toHaveTextContent('Generation cancelled. The result is unknown; do not retry automatically.')
+    expect(screen.getByRole('spinbutton', { name: 'Length' })).toHaveValue(64)
+    expect(screen.getByRole('button', { name: 'Generate sealed material' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+
+    await user.click(screen.getByRole('button', { name: 'Generate sealed material' }))
+    const result = { ...passwordResult, effectiveParameters: { ...passwordResult.effectiveParameters, length: 64 } }
+    await act(async () => resolveCancelled(jsonResponse(result)))
+    expect(screen.queryByRole('textbox', { name: 'Sealed Vault value' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generating and sealing…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toBeDisabled()
+
+    await act(async () => resolveCurrent(jsonResponse(result)))
+    expect(await screen.findByRole('textbox', { name: 'Sealed Vault value' })).toHaveValue(passwordResult.secret.vaultText)
+    expect(screen.getByRole('button', { name: 'Generate sealed material' })).toBeEnabled()
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('distinguishes a Generate timeout from cancellation without retrying', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(session())
+      .mockResolvedValueOnce(profilesResponse())
+      .mockImplementationOnce((_input, init) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+      }))
+    const user = userEvent.setup()
+    render(<App />)
+    const generateMode = await screen.findByRole('button', { name: 'Set generate mode' })
+    await waitFor(() => expect(generateMode).toBeEnabled())
+    await user.click(generateMode)
+
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: 'Generate sealed material' }))
+    await act(async () => { await vi.advanceTimersByTimeAsync(OPERATION_TIMEOUT_MS) })
+
+    expect(fetchMock.mock.calls[2]?.[1]?.signal?.aborted).toBe(true)
+    expect(screen.getByRole('alert')).toHaveTextContent('Generation timed out. The result is unknown; do not retry automatically.')
+    expect(screen.getByRole('button', { name: 'Generate sealed material' })).toBeEnabled()
+    expect(screen.queryByRole('textbox', { name: 'Sealed Vault value' })).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   it('keeps Generate disabled until a ready catalog has an encrypt-capable environment', async () => {

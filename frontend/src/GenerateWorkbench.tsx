@@ -283,6 +283,7 @@ export default function GenerateWorkbench({
     requestControllerRef.current = controller
     const isCurrent = () => requestGenerationRef.current === generation && requestControllerRef.current === controller
     const timeout = window.setTimeout(() => controller.abort(), OPERATION_TIMEOUT_MS)
+    controller.signal.addEventListener('abort', () => window.clearTimeout(timeout), { once: true })
 
     // A prior randomized result must not survive dispatch of another request.
     clearResult()
@@ -315,6 +316,17 @@ export default function GenerateWorkbench({
         setBusy(false)
       }
     }
+  }
+
+  function cancelGeneration() {
+    if (disabled || !busy || !requestControllerRef.current) return
+    const controller = requestControllerRef.current
+    requestGenerationRef.current += 1
+    requestControllerRef.current = null
+    controller.abort()
+    setBusy(false)
+    setStatus('')
+    setError('Generation cancelled. The result is unknown; do not retry automatically.')
   }
 
   async function copyText(value: string, successMessage: string) {
@@ -503,6 +515,7 @@ export default function GenerateWorkbench({
 
         <div className="generate-submit-row">
           <button className="primary-button" type="submit" disabled={locked || Boolean(validationError)}>{busy ? 'Generating and sealing…' : 'Generate sealed material'}</button>
+          {busy && <button className="secondary-button" type="button" disabled={disabled} onClick={cancelGeneration}>Cancel</button>}
           <button className="quiet-button" type="button" disabled={locked} onClick={resetGenerateForm}>Clear Generate form</button>
           <span className="field-help">This randomized operation is not retried automatically.</span>
         </div>
