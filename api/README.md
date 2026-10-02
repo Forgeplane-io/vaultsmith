@@ -12,7 +12,7 @@ The deprecated legacy operation endpoint, `POST /api/v1/operations`, remains onl
 
 ## Requirements
 
-- Go 1.25
+- Go matching the root [`go.mod`](../go.mod) for repository-wide API checks. Standalone API tooling uses this directory's [`go.mod`](go.mod).
 - Node.js 22 and npm
 - Python 3.9 or newer
 - Bash, `curl`, `tar`, and either `sha256sum` or `shasum`
