@@ -74,6 +74,7 @@ container:
   - 'go.sum'
   - 'backend/**'
   - 'frontend/**'
+  - 'scripts/check-container-architecture.sh'
 
 release_snapshot:
   - '.goreleaser.yaml'
