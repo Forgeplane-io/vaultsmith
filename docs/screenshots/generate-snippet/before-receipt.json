@@ -1,0 +1,27 @@
+{
+  "phase": "before",
+  "source": "51affceebadf4b33844ed4268beb1c038357b244",
+  "browser": "Chrome/154.0.8037.98",
+  "route": "/",
+  "role": "Loopback-only auth-off synthetic development",
+  "viewports": {
+    "desktop": [
+      1440,
+      1000
+    ],
+    "narrow": [
+      390,
+      844
+    ]
+  },
+  "fixture": "Fresh page load per viewport, dev profile, default generated ASCII password (32 characters), no stored browser session; private plaintext never pictured.",
+  "relevantChanges": "No behavior edits; generated asset hash from baseline build and test-only additions.",
+  "checks": [
+    "real server Generate/decrypt outcome"
+  ],
+  "gaps": [
+    "Headless keyboard/mouse browser, not physical touch or screen-reader announcements",
+    "Native OIDC role not visually checked",
+    "Password is representative; other material kinds are component-tested"
+  ]
+}
