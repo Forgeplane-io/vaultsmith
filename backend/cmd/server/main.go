@@ -144,17 +144,24 @@ func run() error {
 		MaxHeaderBytes:    16 * 1024,
 	}
 
-	go func() {
-		<-shutdownContext.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = server.Shutdown(ctx)
-	}()
-
 	log.Printf("listening on %s", address)
-	err = server.ListenAndServe()
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	serveErrors := make(chan error)
+	go func() { serveErrors <- server.ListenAndServe() }()
+	select {
+	case err := <-serveErrors:
+		return err
+	case <-shutdownContext.Done():
 	}
-	return err
+
+	ctx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelShutdown()
+	shutdownErr := server.Shutdown(ctx)
+	if shutdownErr != nil {
+		shutdownErr = fmt.Errorf("HTTP shutdown: %w", shutdownErr)
+	}
+	err = <-serveErrors
+	if errors.Is(err, http.ErrServerClosed) {
+		err = nil
+	}
+	return errors.Join(err, shutdownErr)
 }
