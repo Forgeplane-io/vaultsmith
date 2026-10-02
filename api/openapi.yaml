@@ -365,6 +365,7 @@ paths:
         false and a closed verification reason.
       security:
         - SessionCookie: []
+          CsrfHeader: []
         - BearerAuth: []
       x-required-bearer-scope: vaultsmith.attestation.verify
       x-request-deadline-seconds: 30
@@ -859,7 +860,11 @@ components:
                   code: temporarily_unavailable
                   message: service is temporarily unavailable
     AttestationServiceUnavailable:
-      description: The rotation-attestation subsystem is disabled, unavailable, or saturated.
+      description: |
+        Startup state, an authentication dependency, operation admission, or the
+        application request deadline prevented completion, or the rotation-attestation
+        subsystem is disabled, unavailable, or saturated. Retry-After is present
+        only for immediate admission saturation.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
@@ -1791,6 +1796,9 @@ components:
         code:
           type: string
           enum:
+            - not_ready
+            - temporarily_unavailable
+            - csrf_unavailable
             - feature_unavailable
             - attestation_unavailable
             - attestation_busy

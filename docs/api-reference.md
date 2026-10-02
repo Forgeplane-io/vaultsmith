@@ -34,7 +34,7 @@ This is the static reference for the released REST contract. The canonical sourc
 | --- | --- | --- |
 | `200` | Deterministic non-secret local attestation metadata. | `application/json` [AttestationMetadata](#schema-attestationmetadata) |
 | `405` | The resource accepts GET only. | [MethodNotAllowedGet](#response-methodnotallowedget) |
-| `503` | The rotation-attestation subsystem is disabled, unavailable, or saturated. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
+| `503` | Startup state, an authentication dependency, operation admission, or the application request deadline prevented completion, or the rotation-attestation subsystem is disabled, unavailable, or saturated. Retry-After is present only for immediate admission saturation. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
 
 ## `GET /.well-known/vaultsmith-attestation/jwks.json`
 
@@ -48,7 +48,7 @@ This is the static reference for the released REST contract. The canonical sourc
 | --- | --- | --- |
 | `200` | Deterministic public-only Ed25519 JWKS. | `application/json` [AttestationJWKS](#schema-attestationjwks) |
 | `405` | The resource accepts GET only. | [MethodNotAllowedGet](#response-methodnotallowedget) |
-| `503` | The rotation-attestation subsystem is disabled, unavailable, or saturated. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
+| `503` | Startup state, an authentication dependency, operation admission, or the application request deadline prevented completion, or the rotation-attestation subsystem is disabled, unavailable, or saturated. Retry-After is present only for immediate admission saturation. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
 
 ## `POST /api/v1/attestations/verify`
 
@@ -58,7 +58,7 @@ This is the static reference for the released REST contract. The canonical sourc
 
 Verifies a flattened JWS rotation attestation against the local issuer, immutable keyring, and supplied Vault envelopes. Verification never decrypts either envelope or resolves configured profiles. A syntactically valid attestation with a semantic mismatch returns HTTP 200 with valid false and a closed verification reason.
 
-**Authentication:** `SessionCookie` or `BearerAuth`
+**Authentication:** `CsrfHeader` + `SessionCookie` or `BearerAuth`
 
 **Required Bearer scope:** `vaultsmith.attestation.verify`
 
@@ -85,7 +85,7 @@ Verifies a flattened JWS rotation attestation against the local issuer, immutabl
 | `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |
 | `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
 | `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
-| `503` | The rotation-attestation subsystem is disabled, unavailable, or saturated. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
+| `503` | Startup state, an authentication dependency, operation admission, or the application request deadline prevented completion, or the rotation-attestation subsystem is disabled, unavailable, or saturated. Retry-After is present only for immediate admission saturation. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
 
 ## `POST /api/v1/generate`
 
@@ -276,7 +276,7 @@ Decrypts with the source profile and re-encrypts with the destination profile. P
 | `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
 | `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
 | `422` | The Vault operation failed. Wrong passwords, malformed Vault text, MAC failures, invalid or oversized decrypted plaintext, and other Vault failures are intentionally indistinguishable. | [OperationFailed](#response-operationfailed) |
-| `503` | The rotation-attestation subsystem is disabled, unavailable, or saturated. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
+| `503` | Startup state, an authentication dependency, operation admission, or the application request deadline prevented completion, or the rotation-attestation subsystem is disabled, unavailable, or saturated. Retry-After is present only for immediate admission saturation. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
 
 ## `GET /api/v1/session`
 
@@ -355,7 +355,7 @@ Safe stable code and human text. Clients ignore unknown properties.
 
 | Property | Type and limits | Required | Description |
 | --- | --- | --- | --- |
-| `code` | string; values `feature_unavailable`, `attestation_unavailable`, `attestation_busy` | yes |  |
+| `code` | string; values `not_ready`, `temporarily_unavailable`, `csrf_unavailable`, `feature_unavailable`, `attestation_unavailable`, `attestation_busy` | yes |  |
 | `message` | string | yes |  |
 
 ## Schema `AttestationErrorResponse`
@@ -1038,7 +1038,7 @@ Partial exact-match binding. At least one field is required.
 
 ## Response `AttestationServiceUnavailable`
 
-The rotation-attestation subsystem is disabled, unavailable, or saturated.
+Startup state, an authentication dependency, operation admission, or the application request deadline prevented completion, or the rotation-attestation subsystem is disabled, unavailable, or saturated. Retry-After is present only for immediate admission saturation.
 
 - `application/json`: [AttestationErrorResponse](#schema-attestationerrorresponse)
 

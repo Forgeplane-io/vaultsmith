@@ -55,19 +55,28 @@ func (e ApiErrorCode) Valid() bool {
 
 // Defines values for AttestationErrorCode.
 const (
-	AttestationBusy        AttestationErrorCode = "attestation_busy"
-	AttestationUnavailable AttestationErrorCode = "attestation_unavailable"
-	FeatureUnavailable     AttestationErrorCode = "feature_unavailable"
+	AttestationErrorCodeAttestationBusy        AttestationErrorCode = "attestation_busy"
+	AttestationErrorCodeAttestationUnavailable AttestationErrorCode = "attestation_unavailable"
+	AttestationErrorCodeCsrfUnavailable        AttestationErrorCode = "csrf_unavailable"
+	AttestationErrorCodeFeatureUnavailable     AttestationErrorCode = "feature_unavailable"
+	AttestationErrorCodeNotReady               AttestationErrorCode = "not_ready"
+	AttestationErrorCodeTemporarilyUnavailable AttestationErrorCode = "temporarily_unavailable"
 )
 
 // Valid indicates whether the value is a known member of the AttestationErrorCode enum.
 func (e AttestationErrorCode) Valid() bool {
 	switch e {
-	case AttestationBusy:
+	case AttestationErrorCodeAttestationBusy:
 		return true
-	case AttestationUnavailable:
+	case AttestationErrorCodeAttestationUnavailable:
 		return true
-	case FeatureUnavailable:
+	case AttestationErrorCodeCsrfUnavailable:
+		return true
+	case AttestationErrorCodeFeatureUnavailable:
+		return true
+	case AttestationErrorCodeNotReady:
+		return true
+	case AttestationErrorCodeTemporarilyUnavailable:
 		return true
 	default:
 		return false

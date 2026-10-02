@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/ansiblevault"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/apimodels"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/attestation"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
@@ -137,6 +138,107 @@ type httpVerifyRequest struct {
 	InputVaultText  string               `json:"inputVaultText"`
 	OutputVaultText string               `json:"outputVaultText"`
 	ExpectedBinding *attestation.Binding `json:"expectedBinding,omitempty"`
+}
+
+func assertAttestation503Contract(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", response.Code)
+	}
+	result := decodeJSONBody[apimodels.AttestationServiceUnavailable](t, response)
+	if !result.Error.Code.Valid() || result.Error.Message == "" {
+		t.Fatalf("503 code %q is outside the generated attestation error contract or has no message", result.Error.Code)
+	}
+	t.Logf("HTTP 503 %s matches the generated attestation error contract", result.Error.Code)
+}
+
+func TestAttestationHTTPReadinessAndRotationAdmissionMatchContract(t *testing.T) {
+	for _, path := range []string{"/api/v1/rotations", "/api/v1/attestations/verify"} {
+		t.Run(path+" readiness", func(t *testing.T) {
+			handler := NewWithDependencies(nil, nil, Dependencies{AuthConfig: config.AuthConfig{Mode: config.AuthModeNative}})
+			request := httptest.NewRequest(http.MethodPost, path, nil)
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if result := decodeJSONBody[apimodels.AttestationServiceUnavailable](t, response); result.Error.Code != "not_ready" {
+				t.Fatalf("readiness code = %q, want not_ready", result.Error.Code)
+			}
+			assertAttestation503Contract(t, response)
+		})
+	}
+
+	t.Run("rotation admission", func(t *testing.T) {
+		service, _ := newHTTPAttestationService(t, nil, false, 1)
+		for range service.Admission().Capacity() {
+			lease, err := service.Admission().TryAcquire(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lease.Release()
+		}
+		body := &trackingReader{}
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/rotations", body)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		attestationHTTPHandler(t, service).ServeHTTP(response, request)
+		if body.read || response.Header().Get("Retry-After") == "" {
+			t.Fatal("saturated rotation must reject before body read with Retry-After")
+		}
+		assertAttestation503Contract(t, response)
+	})
+}
+
+func TestNativeAttestationVerifySessionRequiresCSRF(t *testing.T) {
+	handler, authenticator, cfg, _, _ := nativeHTTPFixture(t)
+	session := seedNativeSession(t, authenticator)
+	csrf, err := issueCSRFToken([]byte(cfg.CSRF.Secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		header string
+		status int
+		code   string
+	}{
+		{name: "missing CSRF", status: http.StatusForbidden, code: "csrf_failed"},
+		{name: "invalid CSRF", header: "synthetic-invalid", status: http.StatusForbidden, code: "csrf_failed"},
+		{name: "valid CSRF reaches disabled service", header: csrf, status: http.StatusServiceUnavailable, code: "feature_unavailable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "https://example.test/api/v1/attestations/verify", nil)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Origin", "https://example.test")
+			request.Header.Set(csrfHeaderName, test.header)
+			request.AddCookie(&http.Cookie{Name: cfg.Session.CookieName, Value: session})
+			request.AddCookie(&http.Cookie{Name: csrfCookieName(cfg), Value: csrf})
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			result := decodeJSONBody[apimodels.ErrorResponse](t, response)
+			if response.Code != test.status || string(result.Error.Code) != test.code {
+				t.Fatalf("status/code = %d/%s, want %d/%s", response.Code, result.Error.Code, test.status, test.code)
+			}
+			if response.Code == http.StatusServiceUnavailable {
+				assertAttestation503Contract(t, response)
+			} else if !result.Error.Code.Valid() {
+				t.Fatalf("403 code %q is outside the generated error contract", result.Error.Code)
+			}
+		})
+	}
+}
+
+func TestNativeAttestationVerifyBearerDoesNotRequireCSRF(t *testing.T) {
+	handler, issuer, _ := bearerHTTPFixture(t)
+	request := httptest.NewRequest(http.MethodPost, "https://vaultsmith.example.test/api/v1/attestations/verify", nil)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+issuer.token(t, "https://vaultsmith.example.test", vaultservice.ScopeAttestationVerify))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	result := decodeJSONBody[apimodels.AttestationServiceUnavailable](t, response)
+	if result.Error.Code != "feature_unavailable" || len(response.Result().Cookies()) != 0 {
+		t.Fatalf("Bearer must reach disabled service without session/CSRF cookies; code = %q", result.Error.Code)
+	}
+	assertAttestation503Contract(t, response)
 }
 
 func TestAttestedRotationHTTPReturnsVaultTextAndProof(t *testing.T) {
@@ -391,6 +493,7 @@ func TestVerifierSaturationHappensBeforeBodyRead(t *testing.T) {
 	if reader.read {
 		t.Fatal("verification body was read while verifier capacity was saturated")
 	}
+	assertAttestation503Contract(t, response)
 }
 
 func TestAttestationMetadataAndSessionCapability(t *testing.T) {
@@ -509,6 +612,7 @@ func TestAttestationBodyReadContextCancellationReturnsTemporarilyUnavailable(t *
 			if !strings.Contains(response.Body.String(), `"code":"temporarily_unavailable"`) {
 				t.Fatalf("body = %s", response.Body.String())
 			}
+			assertAttestation503Contract(t, response)
 		})
 	}
 }
