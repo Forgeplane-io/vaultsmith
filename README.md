@@ -8,7 +8,7 @@ Vaultsmith is a web UI and HTTP API for encrypting, decrypting, and re-keying An
 - Decrypt an existing Ansible Vault value.
 - Re-key a value from one profile to another.
 - Generate passwords, tokens, SSH keypairs, age identities, and X.509 private keys with CSRs, returning the sealed Vault text and permitted public companion without private plaintext.
-- Copy an Ansible `!vault` variable snippet from the result.
+- Copy an Ansible `!vault` variable snippet from an encrypted, re-keyed, or generated result.
 
 The server reads vault passwords from environment variables. It does not persist submitted values or accept file uploads. Native mode uses an opaque, HTTP-only session cookie and a separate readable CSRF cookie; passwords and plaintext are not stored in browser state. Request bodies are not logged.
 

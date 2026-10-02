@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ansibleVariableValidationMessage, formatAnsibleVaultSnippet, isValidAnsibleVariableIdentifier } from './ansibleSnippet'
 import {
   ApiError,
   generateMaterial,
@@ -560,6 +561,43 @@ function GenerateResult({
   onCopy: (value: string, successMessage: string) => void
   onDownload: (value: string, filename: string) => void
 }) {
+  const [variableName, setVariableName] = useState('')
+  const [snippetFallback, setSnippetFallback] = useState('')
+  const [snippetFeedback, setSnippetFeedback] = useState<CopyFeedback | null>(null)
+  const snippetCopyRequestRef = useRef(0)
+  const variableValidation = ansibleVariableValidationMessage(variableName)
+
+  useEffect(() => () => { snippetCopyRequestRef.current += 1 }, [])
+
+  async function copySnippet() {
+    if (disabled || !isValidAnsibleVariableIdentifier(variableName)) return
+    const requestId = ++snippetCopyRequestRef.current
+    setSnippetFeedback(null)
+    let snippet: string
+    try {
+      snippet = formatAnsibleVaultSnippet(variableName, result.secret.vaultText)
+    } catch {
+      setSnippetFallback('')
+      setSnippetFeedback({ tone: 'error', message: 'Could not prepare the Ansible snippet; copy the result manually' })
+      return
+    }
+    if (!navigator.clipboard?.writeText) {
+      setSnippetFallback(snippet)
+      setSnippetFeedback({ tone: 'error', message: 'Clipboard access was unavailable; copy the Ansible snippet manually' })
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(snippet)
+      if (snippetCopyRequestRef.current !== requestId) return
+      setSnippetFallback('')
+      setSnippetFeedback({ tone: 'success', message: 'Copied Ansible snippet' })
+    } catch {
+      if (snippetCopyRequestRef.current !== requestId) return
+      setSnippetFallback(snippet)
+      setSnippetFeedback({ tone: 'error', message: 'Clipboard access was blocked; copy the Ansible snippet manually' })
+    }
+  }
+
   const publicArtifact = result.kind === 'ssh_keypair'
     ? { label: 'SSH public key', value: result.public.authorizedKey, filename: 'vaultsmith-ssh-public-key.pub' }
     : result.kind === 'age_identity'
@@ -588,6 +626,47 @@ function GenerateResult({
           <div className="panel-actions">
             <button className="secondary-button" type="button" disabled={disabled} onClick={() => onCopy(result.secret.vaultText, 'Copied sealed Vault value')}>Copy sealed Vault value</button>
           </div>
+          <div className="snippet-controls">
+            <div className="field-label">
+              <label htmlFor="generated-ansible-variable-name">Ansible variable name</label>
+              <input
+                id="generated-ansible-variable-name"
+                value={variableName}
+                onChange={(event) => {
+                  snippetCopyRequestRef.current += 1
+                  setVariableName(event.target.value)
+                  setSnippetFallback('')
+                  setSnippetFeedback(null)
+                }}
+                onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault() }}
+                placeholder="app_secret"
+                autoComplete="off"
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                aria-describedby="generated-ansible-variable-name-help"
+                aria-invalid={Boolean(variableValidation)}
+                disabled={disabled}
+              />
+              <span className="field-help" id="generated-ansible-variable-name-help">{variableValidation || 'Use letters, numbers, and underscores. Start with a letter or underscore. Reserved Ansible names are not allowed.'}</span>
+            </div>
+            <button className="secondary-button" type="button" disabled={disabled || !isValidAnsibleVariableIdentifier(variableName)} onClick={() => void copySnippet()}>Copy Ansible snippet</button>
+            {snippetFeedback && <span className={`copy-feedback ${snippetFeedback.tone}`} role={snippetFeedback.tone === 'error' ? 'alert' : 'status'}>{snippetFeedback.message}</span>}
+          </div>
+          {snippetFallback && (
+            <div className="snippet-fallback">
+              <label htmlFor="generated-ansible-snippet-fallback">Ansible snippet to copy manually</label>
+              <textarea
+                id="generated-ansible-snippet-fallback"
+                value={snippetFallback}
+                readOnly
+                spellCheck={false}
+                aria-describedby="generated-ansible-snippet-fallback-help"
+                rows={8}
+              />
+              <span className="field-help" id="generated-ansible-snippet-fallback-help">Clipboard access failed. Select this formatted snippet and copy it manually.</span>
+            </div>
+          )}
         </div>
 
         <div className="generate-result-column">
