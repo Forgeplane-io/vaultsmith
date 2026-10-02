@@ -22,6 +22,10 @@ updates:
       timezone: Europe/Berlin
     allow:
       - dependency-type: all
+    # Dependabot mistakes parent scs tags for redisstore releases.
+    # Update this untagged submodule manually until fixed upstream.
+    ignore:
+      - dependency-name: github.com/alexedwards/scs/redisstore
     open-pull-requests-limit: 5
     groups:
       go-dependencies:
