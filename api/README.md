@@ -37,7 +37,7 @@ The generated files are committed:
 - `frontend/src/generated/api.ts`
 - `docs/api-reference.md`
 
-The runtime router is still hand-written. Generated code supplies request, response, and contract types. The Markdown reference is a release artifact, not a runtime route. Both generator lockfiles must remain unchanged unless a reviewed contract change requires regeneration.
+The runtime router is still hand-written. Generated code supplies request, response, and contract types. The Markdown reference is a release artifact, not a runtime route. Only change generator lockfiles for reviewed contract changes or dependency updates; run `make api-check` afterward.
 
 `api/go.mod` isolates `oapi-codegen` 2.8.0 from the application module. `typescript-generator/package.json` pins `openapi-typescript` 7.13.0 and TypeScript 5.9.3. It also pins `js-yaml` 4.3.1 because 4.3.0 is affected by GHSA-5p4m-2wfm-xmqj.
 
