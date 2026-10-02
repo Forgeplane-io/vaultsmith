@@ -184,6 +184,46 @@ assert_json() {
   jq -e "$expression" "$file" >/dev/null || fail "$description"
 }
 
+check_discovery() {
+  local proofs_enabled="$1"
+  local expected_status=503
+  local path status
+  if [[ "$proofs_enabled" == "true" ]]; then
+    expected_status=200
+  fi
+  for path in '/.well-known/vaultsmith-attestation' '/.well-known/vaultsmith-attestation/jwks.json'; do
+    status="$(curl -sS -D "$TMP_DIR/discovery.headers" -o "$TMP_DIR/discovery.json" \
+      -w '%{http_code}' "http://127.0.0.1:${PORT}${path}")"
+    [[ "$status" == "$expected_status" ]] || fail "discovery $path (proofs=$proofs_enabled) returned HTTP $status, expected $expected_status"
+    grep -qi '^Content-Type: application/json; charset=utf-8' "$TMP_DIR/discovery.headers" || fail "discovery $path did not return JSON"
+    grep -qi '^Cache-Control: no-store' "$TMP_DIR/discovery.headers" || fail "discovery $path did not disable caching"
+    grep -qi '^X-Request-ID: [^[:space:]]' "$TMP_DIR/discovery.headers" || fail "discovery $path omitted request ID"
+    if [[ "$proofs_enabled" == "false" ]]; then
+      assert_json "$TMP_DIR/discovery.json" '.error.code == "feature_unavailable"' "disabled discovery $path did not return feature_unavailable"
+    elif [[ "$path" == '/.well-known/vaultsmith-attestation' ]]; then
+      assert_json "$TMP_DIR/discovery.json" '
+        keys == ["activeKid", "attestationVersions", "issuer", "jwksUri", "revokedKids"] and
+        .issuer == "https://vaultsmith.synthetic.test" and .activeKid == "synthetic-key-a" and
+        .attestationVersions == [1] and .revokedKids == [] and
+        .jwksUri == "https://vaultsmith.synthetic.test/.well-known/vaultsmith-attestation/jwks.json"
+      ' 'discovery metadata did not match public fixture'
+    else
+      assert_json "$TMP_DIR/discovery.json" '
+        keys == ["keys"] and (.keys | length) == 1 and
+        (.keys[0] | keys == ["alg", "crv", "kid", "kty", "use", "x"] and
+          .alg == "Ed25519" and .crv == "Ed25519" and .kid == "synthetic-key-a" and
+          .kty == "OKP" and .use == "sig")
+      ' 'discovery JWKS did not contain only the public fixture key'
+      [[ "$(jq -r '.keys[0].x' "$TMP_DIR/discovery.json")" == "$(jq -r '.keys[0].publicKey' "$TMP_DIR/key-a.json")" ]] || fail 'discovery JWKS public key did not match fixture'
+    fi
+    status="$(curl -sS -X POST -D "$TMP_DIR/discovery.headers" -o "$TMP_DIR/discovery.json" \
+      -w '%{http_code}' "http://127.0.0.1:${PORT}${path}")"
+    [[ "$status" == "405" ]] || fail "discovery $path accepted POST (HTTP $status)"
+    grep -qi '^Allow: GET' "$TMP_DIR/discovery.headers" || fail "discovery $path omitted Allow: GET"
+    assert_json "$TMP_DIR/discovery.json" '.error.code == "method_not_allowed"' "discovery $path did not reject POST as JSON"
+  done
+}
+
 encrypt_profile() {
   local profile="$1"
   local plaintext="$2"
@@ -244,6 +284,7 @@ wait_for_metric() {
 
 cp "$TMP_DIR/keyring-a.json" "$TMP_DIR/keyring.json"
 start_server "$profiles" true
+check_discovery true
 
 binding_file="$TMP_DIR/binding.json"
 jq -n '{repository:"synthetic/project", revision:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", path:"synthetic/path", selector:"synthetic"}' >"$binding_file"
@@ -312,6 +353,7 @@ verify_expected "$TMP_DIR/proof-b.json" "$input_file" "$TMP_DIR/output-b.vault" 
 
 stop_server
 start_server "$prod_only_profiles" false
+check_discovery false
 jq -n '{attestation:{}, inputVaultText:"", outputVaultText:""}' >"$TMP_DIR/off-request.json"
 status="$(request_status "$TMP_DIR/off-request.json" "/api/v1/attestations/verify" "$TMP_DIR/off-response.json")"
 [[ "$status" == "503" ]] || fail "disabled verification returned HTTP $status"
@@ -319,4 +361,4 @@ assert_json "$TMP_DIR/off-response.json" '.error.code == "feature_unavailable"' 
 curl -fsS "http://127.0.0.1:${PORT}/api/v1/session" >"$TMP_DIR/off-session.json"
 assert_json "$TMP_DIR/off-session.json" '.attestationEnabled == false' 'off mode advertised attestation capability'
 
-printf 'attestation smoke: ok (rotation, semantic failures, restart, reload, revocation, REST, MCP, off-mode)\n'
+printf 'attestation smoke: ok (discovery enabled/disabled, rotation, semantic failures, restart, reload, revocation, REST, MCP, off-mode)\n'

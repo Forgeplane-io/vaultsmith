@@ -75,6 +75,8 @@ func TestAPIRoutesDelegate(t *testing.T) {
 	for _, route := range []string{
 		"/api/v1/profiles",
 		"/.well-known/oauth-protected-resource",
+		"/.well-known/vaultsmith-attestation",
+		"/.well-known/vaultsmith-attestation/jwks.json",
 		"/metrics",
 		"/mcp",
 	} {
