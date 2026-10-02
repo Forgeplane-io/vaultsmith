@@ -236,7 +236,7 @@ export default function App() {
     || verificationInputBytes > MAX_VAULT_TEXT_BYTES
     || verificationOutputBytes > MAX_VAULT_TEXT_BYTES
   const verificationBindingOverLimit = !bindingFieldsWithinLimits(expectedBinding)
-  const attestationBindingOverLimit = issueAttestation && !bindingFieldsWithinLimits(attestationBinding)
+  const attestationBindingOverLimit = activeView === 'operation' && mode === 'rotate' && issueAttestation && !bindingFieldsWithinLimits(attestationBinding)
   const proofAvailable = session?.attestationEnabled === true
   const compactAttestationBinding = compactBindingFields(attestationBinding)
   const compactExpectedBinding = compactBindingFields(expectedBinding)
@@ -244,7 +244,7 @@ export default function App() {
     ? 'Verification input or expected binding is too large.'
     : !isVerifyView && attestationBindingOverLimit
       ? 'Attestation binding exceeds its field or canonical size limit.'
-      : overLimit ? limitMessage(mode) : error || profileLoadError
+      : activeView === 'operation' && overLimit ? limitMessage(mode) : error || profileLoadError
   const encryptProfiles = useMemo(() => profilesForMode(profiles, 'encrypt'), [profiles])
   const decryptProfiles = useMemo(() => profilesForMode(profiles, 'decrypt'), [profiles])
   const rotateSourceProfiles = useMemo(() => profilesForCapability(profiles, 'rotateSource'), [profiles])
@@ -319,14 +319,18 @@ export default function App() {
         ? 'Decrypt a protected value'
         : 'Re-key a protected value'
 
-  function invalidateOutput() {
-    snippetCopyRequestRef.current += 1
-    resultCopyRequestRef.current += 1
+  function invalidateAttestation() {
     attestationCopyRequestRef.current += 1
-    setOutput('')
     setAttestation(null)
     setAttestationCopyFeedback(null)
     setVerificationResult(null)
+  }
+
+  function invalidateOutput() {
+    snippetCopyRequestRef.current += 1
+    resultCopyRequestRef.current += 1
+    invalidateAttestation()
+    setOutput('')
     setRevealed(false)
     setAnsibleSnippetFallback('')
     setResultCopyFeedback(null)
@@ -430,15 +434,9 @@ export default function App() {
     if (mode === 'rotate') setProfileId(destinationProfileId || profileId)
     setMode(nextMode)
     setValue(result)
-    snippetCopyRequestRef.current += 1
-    resultCopyRequestRef.current += 1
-    setOutput('')
+    invalidateOutput()
+    clearVerificationState()
     setAnsibleVariableName('')
-    setAnsibleSnippetFallback('')
-    setResultCopyFeedback(null)
-    setSnippetCopyFeedback(null)
-    setRevealed(false)
-    setError('')
     setModeNotice('')
     setStatus(nextMode === 'decrypt'
       ? 'Switched to Decrypt mode and placed the result in the protected value input.'
@@ -538,7 +536,7 @@ export default function App() {
         setError(limitMessage(mode))
         return
       }
-      if (mode === 'rotate' && issueAttestation && !bindingFieldsWithinLimits(attestationBinding)) {
+      if (attestationBindingOverLimit) {
         setError('Attestation binding exceeds its field or canonical size limit.')
         return
       }
@@ -834,27 +832,13 @@ export default function App() {
   function clearAll() {
     if (workbenchLocked || !canClear) return
     operationGenerationRef.current += 1
-    snippetCopyRequestRef.current += 1
-    resultCopyRequestRef.current += 1
+    invalidateOutput()
+    clearVerificationState()
     setValue('')
-    setOutput('')
     setAnsibleVariableName('')
-    setAnsibleSnippetFallback('')
-    setResultCopyFeedback(null)
-    setSnippetCopyFeedback(null)
-    setRevealed(false)
-    setAttestation(null)
-    setAttestationCopyFeedback(null)
     setIssueAttestation(false)
     setAttestationBinding(emptyBindingFields())
-    setVerificationAttestation('')
-    setVerificationInput('')
-    setVerificationOutput('')
-    setExpectedBinding(emptyBindingFields())
-    setVerificationResult(null)
     setActiveView('operation')
-    setError('')
-    if (!recoveringStaleCapabilities) setStatus('')
     setModeNotice('')
   }
 
@@ -1102,9 +1086,7 @@ export default function App() {
                       checked={issueAttestation}
                       onChange={(event) => {
                         setIssueAttestation(event.target.checked)
-                        setAttestation(null)
-                        setAttestationCopyFeedback(null)
-                        setVerificationResult(null)
+                        invalidateAttestation()
                       }}
                       disabled={workbenchLocked}
                     />
@@ -1120,8 +1102,7 @@ export default function App() {
                             value={attestationBinding[field]}
                             onChange={(event) => {
                               setAttestationBinding((current) => ({ ...current, [field]: event.target.value }))
-                              setAttestation(null)
-                              setAttestationCopyFeedback(null)
+                              invalidateAttestation()
                             }}
                             disabled={workbenchLocked}
                             autoComplete="off"

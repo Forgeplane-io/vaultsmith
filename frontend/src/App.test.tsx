@@ -847,6 +847,114 @@ describe('Vaultsmith operator experience', () => {
     expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/attestations/verify', expect.objectContaining({ method: 'POST' }))
   })
 
+  it.each(['handoff', 'clear', 'issuance toggle', 'binding edit'].flatMap((action) =>
+    ['success', 'failure'].map((outcome) => [action, outcome] as const),
+  ))(
+    'removes the proof after %s and ignores late clipboard %s', async (action, outcome) => {
+      const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;prod\n00112233'
+      const fixtureAttestation = { protected: 'header', payload: 'claims', signature: 'signature' }
+      mockAttestedProfileLoad(sourceAndDestinationProfiles)
+        .mockResolvedValueOnce(jsonResponse({ vaultText: ciphertext, attestation: fixtureAttestation }))
+      let resolveCopy!: () => void
+      let rejectCopy!: (cause: Error) => void
+      const clipboard = {
+        writeText: vi.fn(() => new Promise<void>((resolve, reject) => {
+          resolveCopy = resolve
+          rejectCopy = reject
+        })),
+      }
+      const user = userEvent.setup()
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard })
+
+      render(<App />)
+      await findReadyValueInput()
+      await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
+      await user.click(screen.getByRole('checkbox', { name: 'Issue attestation' }))
+      fireEvent.change(screen.getByRole('textbox', { name: 'Protected value to re-key' }), { target: { value: pastedVault } })
+      await user.click(screen.getByRole('button', { name: 'Re-key' }))
+      await screen.findByRole('textbox', { name: 'Attestation JSON' })
+
+      await user.click(screen.getByRole('button', { name: 'Copy attestation' }))
+      expect(clipboard.writeText).toHaveBeenCalledOnce()
+      if (action === 'handoff') {
+        await user.click(screen.getByRole('button', { name: 'Decrypt with destination environment' }))
+        expect(screen.getByRole('textbox', { name: 'Protected value to decrypt' })).toHaveValue(ciphertext)
+        expect(screen.getByRole('combobox', { name: 'Environment' })).toHaveValue('prod')
+        expect(screen.getByRole('textbox', { name: 'Decrypted value' })).toHaveValue('')
+      } else if (action === 'clear') {
+        await user.click(screen.getByRole('button', { name: 'Clear values' }))
+        expect(screen.getByRole('textbox', { name: 'Protected value to re-key' })).toHaveValue('')
+        expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue('')
+      } else {
+        if (action === 'issuance toggle') {
+          await user.click(screen.getByRole('checkbox', { name: 'Issue attestation' }))
+        } else {
+          fireEvent.change(screen.getByRole('textbox', { name: 'Repository' }), { target: { value: 'changed-fixture' } })
+        }
+        expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue(ciphertext)
+      }
+
+      await act(async () => {
+        if (outcome === 'success') resolveCopy()
+        else rejectCopy(new Error('synthetic clipboard failure'))
+      })
+      expect(screen.queryByRole('textbox', { name: 'Attestation JSON' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Copy attestation' })).not.toBeInTheDocument()
+      expect(screen.queryByText('Copied attestation')).not.toBeInTheDocument()
+      expect(screen.queryByText('Clipboard access was blocked; copy the attestation manually')).not.toBeInTheDocument()
+    },
+  )
+
+  it.each(['encrypt', 'decrypt'] as const)('ignores hidden oversized rotation binding in %s mode', async (nextMode) => {
+    const fetchMock = mockAttestedProfileLoad()
+      .mockResolvedValueOnce(nextMode === 'encrypt' ? encryptResultResponse(pastedVault) : decryptResultResponse('synthetic-value'))
+    const user = userEvent.setup()
+    render(<App />)
+    await findReadyValueInput()
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
+    await user.click(screen.getByRole('checkbox', { name: 'Issue attestation' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Repository' }), { target: { value: 'x'.repeat(1025) } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Protected value to re-key' }), { target: { value: pastedVault } })
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('Attestation binding exceeds')
+
+    await user.click(screen.getByRole('button', { name: `Set ${nextMode} mode` }))
+    const submit = screen.getByRole('button', { name: nextMode === 'encrypt' ? 'Encrypt' : 'Decrypt' })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(submit).toBeEnabled()
+    await user.click(submit)
+    await waitFor(() => expect(operationCalls(fetchMock)).toHaveLength(1))
+    expect(JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))).not.toHaveProperty('attestation')
+
+    await user.click(screen.getByRole('button', { name: 'Set re-key mode' }))
+    expect(screen.getByRole('textbox', { name: 'Repository' })).toHaveValue('x'.repeat(1025))
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
+  })
+
+  it('scopes oversized operation input errors to the operation workbench', async () => {
+    mockAttestedProfileLoad()
+    const user = userEvent.setup()
+    render(<App />)
+    const input = await findReadyValueInput()
+    fireEvent.change(input, { target: { value: 'x'.repeat(MAX_PLAINTEXT_BYTES + 1) } })
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('alert')).toHaveTextContent('Value exceeds the 1 MiB limit')
+
+    await user.click(screen.getByRole('button', { name: 'Set verify mode' }))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    for (const name of ['Attestation', 'Original Vault', 'Rotated Vault']) {
+      fireEvent.change(screen.getByRole('textbox', { name }), { target: { value: 'synthetic' } })
+    }
+    expect(screen.getByRole('button', { name: 'Verify' })).toBeEnabled()
+    fireEvent.change(screen.getByRole('textbox', { name: 'Attestation' }), { target: { value: 'x'.repeat(192 * 1024 + 1) } })
+    expect(screen.getByRole('alert')).toHaveTextContent('Verification input or expected binding is too large.')
+    expect(screen.getByRole('button', { name: 'Verify' })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Set encrypt mode' }))
+    expect(screen.getByRole('textbox', { name: 'Value to encrypt' })).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('alert')).toHaveTextContent('Value exceeds the 1 MiB limit')
+  })
+
   it('blocks bindings that exceed the canonical 4 KiB limit even when fields fit', async () => {
     mockAttestedProfileLoad(sourceAndDestinationProfiles)
     const user = userEvent.setup()
