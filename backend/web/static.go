@@ -26,6 +26,8 @@ func New(staticFiles fs.FS, api http.Handler) http.Handler {
 	mux.Handle("/api/", api)
 	mux.Handle("/auth/", api)
 	mux.Handle("/.well-known/oauth-protected-resource", api)
+	mux.Handle("/.well-known/vaultsmith-attestation", api)
+	mux.Handle("/.well-known/vaultsmith-attestation/jwks.json", api)
 	mux.Handle("/metrics", api)
 	mux.Handle("/mcp", api)
 	mux.Handle("/healthz", api)
