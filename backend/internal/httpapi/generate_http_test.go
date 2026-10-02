@@ -3,7 +3,11 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"crypto/x509"
+	"encoding/asn1"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -126,6 +130,78 @@ func generateTestHandler(t *testing.T, generator *recordingMaterialGenerator, ex
 		executor,
 		Dependencies{AuthConfig: config.AuthConfig{Mode: config.AuthModeOff}, Service: service},
 	)
+}
+
+func TestGenerateURISpellingsThroughRESTAndMCP(t *testing.T) {
+	for _, transport := range []string{"REST", "MCP"} {
+		for _, uri := range []string{"HTTPS://example.test/path", "https://example.test/path#", "https://example.test/path"} {
+			t.Run(transport+"/"+uri, func(t *testing.T) {
+				executor := &generateTestExecutor{}
+				parameters := `{"algorithm":"ed25519","sans":{"uris":["` + uri + `"]}}`
+				handler := generateTestHandler(t, nil, executor, nil)
+				request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(`{"kind":"x509_csr","profileId":"dev","parameters":`+parameters+`}`))
+				request.Header.Set("Content-Type", "application/json")
+				if transport == "MCP" {
+					handler = mcpGenerateOffHandler(t, nil, executor, nil)
+					request = newMCPGenerateRequest("generate_x509_csr", `{"profileId":"dev","algorithm":"ed25519","sans":{"uris":["`+uri+`"]}}`)
+				}
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+				if response.Code != http.StatusOK {
+					t.Fatalf("status = %d", response.Code)
+				}
+				var payload map[string]any
+				if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+					t.Fatal(err)
+				}
+				if transport == "MCP" {
+					result, ok := payload["result"].(map[string]any)
+					if !ok || result["isError"] != false {
+						t.Fatal("MCP Generate failed")
+					}
+					payload, ok = result["structuredContent"].(map[string]any)
+					if !ok {
+						t.Fatal("missing structured result")
+					}
+				}
+				secret := payload["secret"].(map[string]any)
+				privatePEM, err := ansiblevault.Decrypt(secret["vaultText"].(string), []byte("synthetic-generate-test-password"))
+				if err != nil {
+					t.Fatal("Vault decryption failed")
+				}
+				defer clear(privatePEM)
+				privateBlock, _ := pem.Decode(privatePEM)
+				if privateBlock == nil {
+					t.Fatal("invalid private PEM")
+				}
+				private, err := x509.ParsePKCS8PrivateKey(privateBlock.Bytes)
+				if err != nil {
+					t.Fatal("invalid PKCS#8")
+				}
+				public := payload["public"].(map[string]any)
+				csrBlock, _ := pem.Decode([]byte(public["csrPem"].(string)))
+				if csrBlock == nil {
+					t.Fatal("invalid CSR PEM")
+				}
+				csr, err := x509.ParseCertificateRequest(csrBlock.Bytes)
+				if err != nil || csr.CheckSignature() != nil {
+					t.Fatal("invalid CSR signature")
+				}
+				spki, err := x509.MarshalPKIXPublicKey(private.(crypto.Signer).Public())
+				if err != nil || !bytes.Equal(spki, csr.RawSubjectPublicKeyInfo) {
+					t.Fatal("CSR/private key mismatch")
+				}
+				if len(csr.Extensions) != 1 {
+					t.Fatal("expected SAN extension")
+				}
+				var names []asn1.RawValue
+				if rest, err := asn1.Unmarshal(csr.Extensions[0].Value, &names); err != nil || len(rest) != 0 || len(names) != 1 || names[0].Class != 2 || names[0].Tag != 6 || names[0].IsCompound || string(names[0].Bytes) != uri {
+					t.Fatal("URI SAN bytes changed")
+				}
+				t.Log("Generate -> Vault decryption -> exact SAN DER, signature and SPKI verified")
+			})
+		}
+	}
 }
 
 func TestGenerateEndpointSealsEveryMaterialKind(t *testing.T) {

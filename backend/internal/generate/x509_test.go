@@ -9,6 +9,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
@@ -142,6 +143,39 @@ func TestGenerateX509CSRPreservesTypedIdentities(t *testing.T) {
 				t.Fatalf("CheckSignature() error = %v", err)
 			}
 			assertX509Identities(t, csr, test.subject, test.sans)
+		})
+	}
+}
+
+func TestGenerateX509CSRPreservesURISpellings(t *testing.T) {
+	want := []string{"HTTPS://example.test/path", "https://example.test/path#", "https://example.test/path", "HTTPS://example.test/path?#", "urn:example:opaque#"}
+	for _, algorithm := range []X509Algorithm{X509AlgorithmEd25519, X509AlgorithmECDSAP256, X509AlgorithmECDSAP384, X509AlgorithmRSA3072, X509AlgorithmRSA4096} {
+		t.Run(string(algorithm), func(t *testing.T) {
+			result, err := New().GenerateX509CSR(X509CSRParameters{Algorithm: algorithm, SANs: &X509SANs{URIs: want}})
+			if err != nil {
+				t.Fatalf("GenerateX509CSR: %v", err)
+			}
+			csr, _ := parseX509CSRResult(t, result.CSRPEM())
+			if err := csr.CheckSignature(); err != nil {
+				t.Fatal(err)
+			}
+			if len(csr.Extensions) != 1 {
+				t.Fatal("expected one SAN extension")
+			}
+			var names []asn1.RawValue
+			if rest, err := asn1.Unmarshal(csr.Extensions[0].Value, &names); err != nil || len(rest) != 0 || len(names) != len(want) {
+				t.Fatal("invalid SAN DER")
+			}
+			for i, name := range names {
+				if name.Class != 2 || name.Tag != 6 || name.IsCompound || string(name.Bytes) != want[i] {
+					t.Fatalf("URI SAN %d changed spelling", i)
+				}
+			}
+			private, _ := parseX509PrivateResult(t, result.PrivateBytes())
+			spki, err := x509.MarshalPKIXPublicKey(private.(crypto.Signer).Public())
+			if err != nil || !bytes.Equal(spki, csr.RawSubjectPublicKeyInfo) {
+				t.Fatal("CSR/private key mismatch")
+			}
 		})
 	}
 }

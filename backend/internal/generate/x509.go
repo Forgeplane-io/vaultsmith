@@ -605,9 +605,11 @@ func parseAbsoluteURI(value string) (*url.URL, bool) {
 	if err == nil && parsed.IsAbs() && parsed.String() == value {
 		return parsed, true
 	}
-	if !hasIPvFutureAuthority(value) {
+	if err != nil && !hasIPvFutureAuthority(value) {
 		return nil, false
 	}
+	// Go normalizes some valid spellings (scheme case, empty fragments).
+	// Opaque retains the already validated original bytes for SAN encoding.
 	colon := strings.IndexByte(value, ':')
 	parsed = &url.URL{Scheme: value[:colon], Opaque: value[colon+1:]}
 	if !parsed.IsAbs() || parsed.String() != value {
@@ -835,6 +837,12 @@ func x509CSRMatches(csr *x509.CertificateRequest, expected validatedX509CSR) boo
 	if csr == nil || csr.Subject.CommonName != expected.subject.CommonName || csr.Subject.SerialNumber != expected.subject.SerialNumber {
 		return false
 	}
+	// Parsed URL strings can lose identity bytes. Inspect the encoded SANs
+	// through the same bounded raw-SAN path used for IPvFuture URIs.
+	_, _, _, rawURIs, err := parseCSRSubjectAltNames(csr.Extensions)
+	if err != nil {
+		return false
+	}
 	if !sameStringSet(csr.Subject.Country, expected.subject.Country) ||
 		!sameStringSet(csr.Subject.Organization, expected.subject.Organization) ||
 		!sameStringSet(csr.Subject.OrganizationalUnit, expected.subject.OrganizationalUnit) ||
@@ -845,7 +853,7 @@ func x509CSRMatches(csr *x509.CertificateRequest, expected validatedX509CSR) boo
 		!equalStrings(csr.DNSNames, expected.dnsNames) ||
 		!equalStrings(csr.EmailAddresses, expected.emailAddresses) ||
 		len(csr.IPAddresses) != len(expected.ipAddresses) ||
-		len(csr.URIs) != len(expected.uris) {
+		len(csr.URIs) != len(expected.uris) || len(rawURIs) != len(expected.uris) {
 		return false
 	}
 	for index := range csr.IPAddresses {
@@ -853,8 +861,8 @@ func x509CSRMatches(csr *x509.CertificateRequest, expected validatedX509CSR) boo
 			return false
 		}
 	}
-	for index := range csr.URIs {
-		if csr.URIs[index] == nil || expected.uris[index] == nil || csr.URIs[index].String() != expected.uris[index].String() {
+	for index := range rawURIs {
+		if rawURIs[index] == nil || expected.uris[index] == nil || rawURIs[index].String() != expected.uris[index].String() {
 			return false
 		}
 	}
