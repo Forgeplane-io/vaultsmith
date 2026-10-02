@@ -635,7 +635,7 @@ export interface components {
         };
         AttestationError: {
             /** @enum {string} */
-            code: "feature_unavailable" | "attestation_unavailable" | "attestation_busy";
+            code: "not_ready" | "temporarily_unavailable" | "csrf_unavailable" | "feature_unavailable" | "attestation_unavailable" | "attestation_busy";
             message: string;
         };
         AttestationErrorResponse: {
@@ -976,7 +976,12 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /** @description The rotation-attestation subsystem is disabled, unavailable, or saturated. */
+        /**
+         * @description Startup state, an authentication dependency, operation admission, or the
+         *     application request deadline prevented completion, or the rotation-attestation
+         *     subsystem is disabled, unavailable, or saturated. Retry-After is present
+         *     only for immediate admission saturation.
+         */
         AttestationServiceUnavailable: {
             headers: {
                 "Cache-Control": components["headers"]["NoStore"];

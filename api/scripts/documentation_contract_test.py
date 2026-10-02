@@ -64,6 +64,19 @@ class DocumentationContractTest(unittest.TestCase):
                 with self.subTest(path=path.relative_to(ROOT)):
                     self.assertNotIn("/api/v1/operations", block)
 
+    def test_attestation_verification_declares_session_csrf_and_separate_bearer(self) -> None:
+        contract = (ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8")
+        match = re.search(r"(?ms)^  /api/v1/attestations/verify:\n.*?(?=^  /|^components:)", contract)
+        if match is None:
+            self.fail("OpenAPI contract is missing attestation verification")
+        self.assertIn(
+            "      security:\n"
+            "        - SessionCookie: []\n"
+            "          CsrfHeader: []\n"
+            "        - BearerAuth: []\n",
+            match.group(0),
+        )
+
     def test_generated_reference_separates_compatibility_operations(self) -> None:
         reference = (ROOT / "docs" / "api-reference.md").read_text(encoding="utf-8")
         self.assertIn("# Operations", reference)
