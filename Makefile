@@ -9,7 +9,7 @@ lint:
 	npm run lint --prefix frontend
 
 compatibility:
-	go test -tags=ansible_cli ./backend/internal/ansiblevault -run 'TestCLI' -v
+	go test -tags=ansible_cli ./backend/internal/ansiblevault ./backend/internal/vaultservice -run 'TestCLI' -v
 
 typecheck:
 	npm run typecheck --prefix frontend

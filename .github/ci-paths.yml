@@ -27,6 +27,9 @@ compatibility:
   - 'go.mod'
   - 'go.sum'
   - 'backend/internal/ansiblevault/**'
+  - 'backend/internal/config/**'
+  - 'backend/internal/generate/**'
+  - 'backend/internal/vaultservice/**'
 
 helm:
   - 'deploy/helm/**'
