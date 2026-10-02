@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, type GenerateRequest, type GenerateResponse, type Profile } from './api'
 import GenerateWorkbench, { normalizePublicDownload } from './GenerateWorkbench'
+import { formatAnsibleVaultSnippet } from './ansibleSnippet'
+import { normalizeVaultPaste } from './pasteHandling'
 
 const profiles: Profile[] = [
   { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
@@ -101,6 +103,103 @@ describe('Generate workbench', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+  })
+
+  it.each(['password', 'token', 'ssh_keypair', 'age_identity', 'x509_csr'] as const)('copies only the sealed %s value as an Ansible snippet', async (kind) => {
+    const generate = renderWorkbench()
+    const user = userEvent.setup()
+    const clipboard = { writeText: vi.fn<(value: string) => Promise<void>>().mockResolvedValue(undefined) }
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard })
+    expect(screen.queryByRole('textbox', { name: 'Ansible variable name' })).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Material' }), kind)
+    if (kind === 'x509_csr') await user.type(screen.getByRole('textbox', { name: 'Common name' }), 'service.example')
+    await user.click(screen.getByRole('button', { name: 'Generate sealed material' }))
+    const name = await screen.findByRole('textbox', { name: 'Ansible variable name' })
+    const copy = screen.getByRole('button', { name: 'Copy Ansible snippet' })
+    expect(copy).toBeDisabled()
+    await user.type(name, 'yes')
+    name.focus()
+    await user.keyboard('{Enter}')
+    expect(generate).toHaveBeenCalledOnce()
+    await user.click(copy)
+    expect(clipboard.writeText).toHaveBeenCalledOnce()
+    const [snippet] = clipboard.writeText.mock.calls[0]
+    expect(snippet).toBe(formatAnsibleVaultSnippet('yes', vaultText))
+    expect(normalizeVaultPaste(snippet)).toBe(vaultText.trim())
+    expect(screen.getByText('Copied Ansible snippet')).toBeVisible()
+    expect(generate).toHaveBeenCalledOnce()
+  })
+
+  it('uses accessible identifier validation without changing the generated result', async () => {
+    renderWorkbench()
+    const user = userEvent.setup()
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) }
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard })
+    await user.click(screen.getByRole('button', { name: 'Generate sealed material' }))
+    const name = await screen.findByRole('textbox', { name: 'Ansible variable name' })
+    expect(name).toHaveAttribute('autocapitalize', 'off')
+    expect(name).toHaveAttribute('autocorrect', 'off')
+    for (const [value, message] of [
+      ['1secret', 'Start with a letter or underscore.'],
+      ['bad-key', 'Variable names cannot contain hyphens.'],
+      ['class', 'This name is reserved by Ansible.'],
+      ['secret\nother: value', 'Use only letters, numbers, and underscores.'],
+    ]) {
+      fireEvent.change(name, { target: { value } })
+      expect(name).toHaveAttribute('aria-invalid', 'true')
+      expect(name).toHaveAccessibleDescription(message)
+      expect(screen.getByRole('button', { name: 'Copy Ansible snippet' })).toBeDisabled()
+    }
+    expect(clipboard.writeText).not.toHaveBeenCalled()
+    fireEvent.change(name, { target: { value: 'app_secret' } })
+    expect(name).toHaveAttribute('aria-invalid', 'false')
+    expect(screen.getByRole('button', { name: 'Copy Ansible snippet' })).toBeEnabled()
+    expect(screen.getByRole('textbox', { name: 'Sealed Vault value' })).toHaveValue(vaultText)
+  })
+
+  it.each(['unavailable', 'blocked'])('provides a manual snippet when clipboard access is %s and clears it on retry', async (failure) => {
+    renderWorkbench()
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: failure === 'unavailable' ? undefined : { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+    })
+    await user.click(screen.getByRole('button', { name: 'Generate sealed material' }))
+    const name = await screen.findByRole('textbox', { name: 'Ansible variable name' })
+    await user.type(name, 'app_secret')
+    await user.click(screen.getByRole('button', { name: 'Copy Ansible snippet' }))
+    const fallback = await screen.findByRole('textbox', { name: 'Ansible snippet to copy manually' })
+    expect(fallback).toHaveAttribute('readonly')
+    expect(fallback).toHaveValue(formatAnsibleVaultSnippet('app_secret', vaultText))
+    expect(screen.getByRole('alert')).toHaveTextContent(`Clipboard access was ${failure}; copy the Ansible snippet manually`)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn().mockResolvedValue(undefined) } })
+    await user.click(screen.getByRole('button', { name: 'Copy Ansible snippet' }))
+    expect(screen.queryByRole('textbox', { name: 'Ansible snippet to copy manually' })).not.toBeInTheDocument()
+    expect(screen.getByText('Copied Ansible snippet')).toBeVisible()
+  })
+
+  it('discards late snippet feedback on rename or a new result and clears snippet state with the form', async () => {
+    renderWorkbench()
+    const user = userEvent.setup()
+    let rejectCopy!: (reason: Error) => void
+    const clipboard = { writeText: vi.fn(() => new Promise<void>((_resolve, reject) => { rejectCopy = reject })) }
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard })
+    await user.click(screen.getByRole('button', { name: 'Generate sealed material' }))
+    const name = await screen.findByRole('textbox', { name: 'Ansible variable name' })
+    await user.type(name, 'old_name')
+    await user.click(screen.getByRole('button', { name: 'Copy Ansible snippet' }))
+    fireEvent.change(name, { target: { value: 'new_name' } })
+    await act(async () => rejectCopy(new Error('denied')))
+    expect(screen.queryByRole('textbox', { name: 'Ansible snippet to copy manually' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Clipboard access/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Copy Ansible snippet' }))
+    const rejectOldResult = rejectCopy
+    await user.click(screen.getByRole('button', { name: 'Generate sealed material' }))
+    expect(await screen.findByRole('textbox', { name: 'Ansible variable name' })).toHaveValue('')
+    await act(async () => rejectOldResult(new Error('denied')))
+    expect(screen.queryByRole('textbox', { name: 'Ansible snippet to copy manually' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Clear Generate form' }))
+    expect(screen.queryByRole('textbox', { name: 'Ansible variable name' })).not.toBeInTheDocument()
   })
 
   it('sends explicit visible defaults for every material kind', async () => {

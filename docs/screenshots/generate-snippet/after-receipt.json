@@ -1,0 +1,32 @@
+{
+  "phase": "after",
+  "source": "51affceebadf4b33844ed4268beb1c038357b244",
+  "browser": "Chrome/154.0.8037.98",
+  "route": "/",
+  "role": "Loopback-only auth-off synthetic development",
+  "viewports": {
+    "desktop": [
+      1440,
+      1000
+    ],
+    "narrow": [
+      390,
+      844
+    ]
+  },
+  "fixture": "Fresh page load per viewport, dev profile, default generated ASCII password (32 characters), no stored browser session; private plaintext never pictured.",
+  "relevantChanges": "Generate snippet UI and tests; production embedded assets rebuilt.",
+  "checks": [
+    "real server Generate/decrypt outcome for all five material kinds",
+    "disabled empty/invalid-name copy",
+    "valid clipboard YAML preserves exact sealed value",
+    "unavailable clipboard manual fallback",
+    "no horizontal page overflow"
+  ],
+  "gaps": [
+    "Headless keyboard/mouse browser, not physical touch or screen-reader announcements",
+    "Native OIDC role not visually checked",
+    "Password is pictured as representative; other material kinds are live-checked without screenshots",
+    "Clipboard success uses a platform test double; OS clipboard integration not exercised"
+  ]
+}
