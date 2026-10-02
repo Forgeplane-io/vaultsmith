@@ -1,0 +1,130 @@
+{
+  "phase": "after",
+  "source": "db017e8133183c2aaa48c8f110c98e1d4174612f+App.tsx+App.test.tsx",
+  "browser": "Chrome/154.0.8037.98",
+  "route": "/",
+  "role": "loopback-only auth-off synthetic operator",
+  "viewports": [
+    "1440x1000",
+    "390x844"
+  ],
+  "fixtures": "Native encryption/rotation/Verify; discovery-only proxy injects 403 or 200 empty; Retry forwards native catalog",
+  "checks": [
+    {
+      "name": "desktop: safe discovery error and Retry",
+      "passed": true
+    },
+    {
+      "name": "desktop: sensitive server detail suppressed",
+      "passed": true
+    },
+    {
+      "name": "Standalone Verify enabled",
+      "passed": true
+    },
+    {
+      "name": "desktop: discovery Retry retained after native Verify",
+      "passed": true
+    },
+    {
+      "name": "desktop: user Retry recovers native profiles",
+      "passed": true
+    },
+    {
+      "name": "Standalone Verify enabled",
+      "passed": true
+    },
+    {
+      "name": "desktop: 200 empty catalog has no discovery error",
+      "passed": true
+    },
+    {
+      "name": "narrow: safe discovery error and Retry",
+      "passed": true
+    },
+    {
+      "name": "narrow: sensitive server detail suppressed",
+      "passed": true
+    },
+    {
+      "name": "Standalone Verify enabled",
+      "passed": true
+    },
+    {
+      "name": "narrow: discovery Retry retained after native Verify",
+      "passed": true
+    },
+    {
+      "name": "narrow: user Retry recovers native profiles",
+      "passed": true
+    },
+    {
+      "name": "Standalone Verify enabled",
+      "passed": true
+    },
+    {
+      "name": "narrow: 200 empty catalog has no discovery error",
+      "passed": true
+    }
+  ],
+  "outcomes": [
+    {
+      "viewport": "desktop",
+      "fixture": "403",
+      "verificationOutcome": {
+        "status": 200,
+        "valid": true
+      }
+    },
+    {
+      "viewport": "desktop",
+      "fixture": "retry",
+      "retryAvailable": true,
+      "nativeCatalogRequested": true,
+      "catalogOutcome": {
+        "status": 200,
+        "profileIds": [
+          "dev",
+          "prod"
+        ]
+      }
+    },
+    {
+      "viewport": "desktop",
+      "fixture": "200 empty",
+      "verificationOutcome": {
+        "status": 200,
+        "valid": true
+      }
+    },
+    {
+      "viewport": "narrow",
+      "fixture": "403",
+      "verificationOutcome": {
+        "status": 200,
+        "valid": true
+      }
+    },
+    {
+      "viewport": "narrow",
+      "fixture": "retry",
+      "retryAvailable": true,
+      "nativeCatalogRequested": true,
+      "catalogOutcome": {
+        "status": 200,
+        "profileIds": [
+          "dev",
+          "prod"
+        ]
+      }
+    },
+    {
+      "viewport": "narrow",
+      "fixture": "200 empty",
+      "verificationOutcome": {
+        "status": 200,
+        "valid": true
+      }
+    }
+  ]
+}
