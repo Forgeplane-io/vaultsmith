@@ -1,0 +1,150 @@
+{
+  "phase": "before",
+  "sourceCommit": "cdbce8ed7517af5c8d79ed49b74d3fdd571165fa",
+  "changedFiles": [
+    "frontend/src/App.test.tsx",
+    "frontend/src/GenerateWorkbench.test.tsx",
+    "frontend/src/ansibleSnippet.test.ts"
+  ],
+  "formatterSha256": "d8e3350741d0e069dcb9e4ce9034f3bd794ba98b6ccd7538388c4cc383533c81",
+  "bundleFile": "assets/index-CzeBTBb-.js",
+  "bundleSha256": "eebbf931d4258b3d042555ea3af2d8c2be675e0c964535b38c16e8011d17bad4",
+  "browser": "Chrome/154.0.8037.98",
+  "route": "/",
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "width": 390,
+      "height": 844
+    }
+  ],
+  "deviceScaleFactor": 1,
+  "role": "loopback-only authentication-off synthetic operator; no authenticated-edge claim",
+  "fixture": "Fresh page per case. Real Go encrypt/generate/decrypt; response proxy injects terminal high or paired suffix only. Browser clipboard stub records in memory and resolves/rejects; OS clipboard not used.",
+  "checks": [
+    "desktop/blocked: reproduced unsafe clipboard attempt",
+    "desktop/blocked: reproduced old feedback",
+    "desktop/blocked: raw response retained",
+    "desktop/blocked: no horizontal page overflow",
+    "desktop/success: reproduced unsafe clipboard attempt",
+    "desktop/success: reproduced old feedback",
+    "desktop/success: raw response retained",
+    "desktop/success: no horizontal page overflow",
+    "desktop/normal: manual fallback retained",
+    "desktop/paired: manual fallback retained",
+    "desktop: valid terminal pair preserved",
+    "desktop: Generate HTTP boundary rejects malformed result before rendering",
+    "narrow/blocked: reproduced unsafe clipboard attempt",
+    "narrow/blocked: reproduced old feedback",
+    "narrow/blocked: raw response retained",
+    "narrow/blocked: no horizontal page overflow",
+    "narrow/success: reproduced unsafe clipboard attempt",
+    "narrow/success: reproduced old feedback",
+    "narrow/success: raw response retained",
+    "narrow/success: no horizontal page overflow",
+    "narrow/normal: manual fallback retained",
+    "narrow/paired: manual fallback retained",
+    "narrow: valid terminal pair preserved",
+    "narrow: Generate HTTP boundary rejects malformed result before rendering"
+  ],
+  "nativeOutcomes": [
+    {
+      "operation": "encrypt",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "normal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "paired",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "generate",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "normal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "paired",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "generate",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    }
+  ],
+  "screenshots": [
+    {
+      "file": "before-terminal-blocked-desktop.png",
+      "sha256": "afc2e8f6983702cd2a423880b0de44ff965285b96e73be4b450458d353ce1c2d"
+    },
+    {
+      "file": "before-terminal-success-desktop.png",
+      "sha256": "87e802ff77fa33f7e5d3dd86be64094025a7115c5768be664a79b1bbfd58df6b"
+    },
+    {
+      "file": "before-terminal-blocked-narrow.png",
+      "sha256": "3d2208edde73b8f3a419a0103673b6a9aadcd9840fcc27fdc9dcfa31646744e3"
+    },
+    {
+      "file": "before-terminal-success-narrow.png",
+      "sha256": "f1aad16baa15b8389a233ba445f82cbeb0892ce2621f94a0f7c5d9e95f8fa79e"
+    }
+  ],
+  "elapsedMs": 2004,
+  "gaps": [
+    "Rotate shares the App copy handler but is not browser-pictured",
+    "Generate malformed component input is tested separately; full HTTP boundary already rejects it",
+    "Valid manual-copy controls checked but not pictured",
+    "No native OIDC, screen-reader, touch, or OS clipboard verification"
+  ]
+}

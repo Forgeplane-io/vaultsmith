@@ -554,6 +554,27 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('textbox', { name: 'Ansible snippet to copy manually' })).toHaveValue(snippet)
   })
 
+  it('rejects an encrypted result ending in an unpaired high surrogate before snippet copy', async () => {
+    const ciphertext = `$ANSIBLE_VAULT;1.2;AES256;dev\n00112233${String.fromCharCode(0xD800)}`
+    mockProfileLoad().mockResolvedValueOnce(encryptResultResponse(ciphertext))
+    const user = userEvent.setup()
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) }
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard })
+
+    render(<App />)
+    await user.type(await findReadyValueInput(), 'fixture-value')
+    await user.click(screen.getByRole('button', { name: 'Encrypt' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext))
+    await user.type(screen.getByRole('textbox', { name: 'Ansible variable name' }), 'app_secret')
+    await user.click(screen.getByRole('button', { name: 'Copy Ansible snippet' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not prepare the Ansible snippet; copy the result manually')
+    expect(screen.getByRole('alert')).not.toHaveTextContent(ciphertext)
+    expect(clipboard.writeText).not.toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Ansible snippet to copy manually' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext)
+  })
+
   it('ignores late snippet clipboard failures after the result is cleared', async () => {
     const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
     let rejectCopy: ((cause?: unknown) => void) | undefined

@@ -178,6 +178,27 @@ describe('Generate workbench', () => {
     expect(screen.getByText('Copied Ansible snippet')).toBeVisible()
   })
 
+  it('rejects a sealed result ending in an unpaired high surrogate before snippet copy', async () => {
+    const malformedText = `${vaultText.trimEnd()}${String.fromCharCode(0xD800)}`
+    renderWorkbench(vi.fn(async (request: GenerateRequest) => {
+      const response = responseFor(request)
+      response.secret.vaultText = malformedText
+      return response
+    }))
+    const user = userEvent.setup()
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) }
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard })
+    await user.click(screen.getByRole('button', { name: 'Generate sealed material' }))
+    await user.type(await screen.findByRole('textbox', { name: 'Ansible variable name' }), 'app_secret')
+    await user.click(screen.getByRole('button', { name: 'Copy Ansible snippet' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not prepare the Ansible snippet; copy the result manually')
+    expect(screen.getByRole('alert')).not.toHaveTextContent(malformedText)
+    expect(clipboard.writeText).not.toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Ansible snippet to copy manually' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Sealed Vault value' })).toHaveValue(malformedText)
+  })
+
   it('discards late snippet feedback on rename or a new result and clears snippet state with the form', async () => {
     renderWorkbench()
     const user = userEvent.setup()
