@@ -433,7 +433,8 @@ func TestDisabledAttestationRequestStopsBeforeExecutor(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/rotations", strings.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
-	attestationHTTPHandler(t, service).ServeHTTP(response, request)
+	handler := attestationHTTPHandler(t, service)
+	handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503: %s", response.Code, response.Body.String())
@@ -443,6 +444,17 @@ func TestDisabledAttestationRequestStopsBeforeExecutor(t *testing.T) {
 	}
 	if len(executor.calls) != 0 {
 		t.Fatalf("executor calls = %d, want 0", len(executor.calls))
+	}
+	assertOperationScrape(t, handler, "rotate", "unavailable")
+	metrics := httptest.NewRecorder()
+	handler.ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	for _, line := range []string{
+		"vaultsmith_attestation_issued_total{outcome=\"feature_unavailable\"} 1\n",
+		"vaultsmith_attestation_issued_total{outcome=\"unavailable\"} 0\n",
+	} {
+		if !strings.Contains(metrics.Body.String(), line) {
+			t.Errorf("missing scrape line %s", strings.TrimSpace(line))
+		}
 	}
 }
 

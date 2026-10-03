@@ -12,7 +12,8 @@ import (
 
 type statusRecordingResponseWriter struct {
 	http.ResponseWriter
-	status int
+	status  int
+	outcome string
 }
 
 func (w *statusRecordingResponseWriter) WriteHeader(status int) {
@@ -34,6 +35,34 @@ func (w *statusRecordingResponseWriter) statusCode() int {
 		return http.StatusOK
 	}
 	return w.status
+}
+
+func (w *statusRecordingResponseWriter) operationOutcome() string {
+	if w.outcome != "" {
+		return w.outcome
+	}
+	return outcomeForStatus(w.statusCode())
+}
+
+// MCP tool errors can use HTTP 200, so their logical outcome overrides status.
+func recordMCPToolOutcome(w http.ResponseWriter, outcome string) {
+	if recorder, ok := w.(*statusRecordingResponseWriter); ok {
+		recorder.outcome = outcome
+	}
+}
+
+func metricOperationForMCPTool(name string) string {
+	if isMCPGenerateTool(name) {
+		return "generate"
+	}
+	switch name {
+	case "encrypt", "decrypt", "rotate":
+		return name
+	case "verify_rotation_attestation":
+		return "verify"
+	default:
+		return ""
+	}
 }
 
 func metricOperationForRequest(r *http.Request) string {
@@ -102,12 +131,11 @@ func newMetricsRegistry() *metricsRegistry {
 	return registry
 }
 
-func (m *metricsRegistry) observeOperation(operation string, status int, duration time.Duration) {
+func (m *metricsRegistry) observeOperation(operation, outcome string, duration time.Duration) {
 	if m == nil {
 		return
 	}
 	operation = boundedOperation(operation)
-	outcome := outcomeForStatus(status)
 	m.mu.Lock()
 	m.operationRequests[operation][outcome]++
 	metric := m.operationDurations[operation]
@@ -237,21 +265,6 @@ func (m *metricsRegistry) write(w http.ResponseWriter, service *vaultservice.Ser
 	fmt.Fprintf(w, "vaultsmith_attestation_keyring_reload_total{outcome=\"failed\"} %d\n", reloadFailures)
 	fmt.Fprintln(w, "# TYPE vaultsmith_attestation_keyring_loaded gauge")
 	fmt.Fprintf(w, "vaultsmith_attestation_keyring_loaded %d\n", loaded)
-}
-
-func attestationOutcomeFromResponse(w http.ResponseWriter) string {
-	status := http.StatusInternalServerError
-	if recorder, ok := w.(*statusRecordingResponseWriter); ok {
-		status = recorder.statusCode()
-	}
-	switch status {
-	case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnsupportedMediaType:
-		return "invalid"
-	case http.StatusServiceUnavailable:
-		return "unavailable"
-	default:
-		return "failed"
-	}
 }
 
 func attestationOutcomeFromError(err error) string {

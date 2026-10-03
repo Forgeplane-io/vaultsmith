@@ -5,6 +5,9 @@ ROOT_DIR="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vaultsmith-attestation-smoke.XXXXXX")"
 PORT="${SMOKE_ATTESTATION_PORT:-8081}"
 SERVER_PID=""
+METRICS_DIR="$ROOT_DIR/.tmp/smoke-attestation"
+metrics_failed=false
+mkdir -p "$METRICS_DIR"
 
 cleanup() {
   set +e
@@ -184,6 +187,20 @@ assert_json() {
   jq -e "$expression" "$file" >/dev/null || fail "$description"
 }
 
+scrape_metrics() {
+  curl -fsS "http://127.0.0.1:${PORT}/metrics" >"$METRICS_DIR/$1.txt"
+  if grep -Eq 'profileId|synthetic|repository|revision|selector|caller|password|ciphertext|generate_token' "$METRICS_DIR/$1.txt"; then
+    fail 'metrics exposed sensitive or caller-controlled labels'
+  fi
+}
+
+check_metric() {
+  if ! grep -Fxq "$2" "$METRICS_DIR/$1.txt"; then
+    printf 'missing metric in %s: %s\n' "$1" "$2" >&2
+    metrics_failed=true
+  fi
+}
+
 check_discovery() {
   local proofs_enabled="$1"
   local expected_status=503
@@ -307,6 +324,36 @@ verify_expected "$TMP_DIR/proof-a.json" "$input_file" "$changed_output_file" "$b
 jq -n '{repository:"synthetic/project", revision:"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", path:"synthetic/path", selector:"synthetic"}' >"$TMP_DIR/wrong-binding.json"
 verify_expected "$TMP_DIR/proof-a.json" "$input_file" "$output_a_file" "$TMP_DIR/wrong-binding.json" '.valid == false and .reason == "binding_mismatch"' 'binding mismatch was not classified'
 
+scrape_metrics rest
+check_metric rest 'vaultsmith_operation_requests_total{operation="encrypt",outcome="success"} 3'
+check_metric rest 'vaultsmith_operation_duration_seconds_count{operation="encrypt"} 3'
+check_metric rest 'vaultsmith_operation_requests_total{operation="rotate",outcome="success"} 1'
+check_metric rest 'vaultsmith_attestation_issued_total{outcome="success"} 1'
+
+for outcome in success invalid_request; do
+  arguments='{"profileId":"dev"}'
+  if [[ "$outcome" == "invalid_request" ]]; then
+    arguments='{"profileId":"dev","bytes":"invalid"}'
+  fi
+  jq -n --argjson arguments "$arguments" \
+    '{jsonrpc:"2.0",id:1,method:"tools/call",params:{name:"generate_token",arguments:$arguments,_meta:{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}' >"$TMP_DIR/generate-request.json"
+  curl -fsS -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+    -H 'MCP-Protocol-Version: 2026-07-28' -H 'Mcp-Method: tools/call' -H 'Mcp-Name: generate_token' \
+    --data-binary "@$TMP_DIR/generate-request.json" "http://127.0.0.1:${PORT}/mcp" >"$TMP_DIR/generate-response.json"
+  if [[ "$outcome" == "success" ]]; then
+    assert_json "$TMP_DIR/generate-response.json" '.result.isError == false and (.result.structuredContent.secret.vaultText | length) > 0' 'MCP Generate failed'
+  else
+    assert_json "$TMP_DIR/generate-response.json" '.result.isError == true' 'MCP Generate did not return a tool error'
+  fi
+done
+encrypt_profile dev synthetic-rest-control "$TMP_DIR/control.vault"
+scrape_metrics mcp
+check_metric mcp 'vaultsmith_operation_requests_total{operation="generate",outcome="success"} 1'
+check_metric mcp 'vaultsmith_operation_requests_total{operation="generate",outcome="invalid_request"} 1'
+check_metric mcp 'vaultsmith_operation_duration_seconds_count{operation="generate"} 2'
+check_metric mcp 'vaultsmith_operation_requests_total{operation="encrypt",outcome="success"} 4'
+check_metric mcp 'vaultsmith_operation_duration_seconds_count{operation="encrypt"} 4'
+
 stop_server
 start_server "$profiles" true
 verify_expected "$TMP_DIR/proof-a.json" "$input_file" "$output_a_file" "$binding_file" '.valid == true' 'proof did not survive restart'
@@ -346,6 +393,11 @@ curl -fsS \
   --data-binary "@${mcp_request}" \
   "http://127.0.0.1:${PORT}/mcp" >"$TMP_DIR/mcp-response.json"
 assert_json "$TMP_DIR/mcp-response.json" '.result.isError == false and .result.structuredContent.valid == true' 'MCP verification failed'
+scrape_metrics verify
+check_metric verify 'vaultsmith_operation_requests_total{operation="verify",outcome="success"} 6'
+check_metric verify 'vaultsmith_operation_duration_seconds_count{operation="verify"} 6'
+check_metric verify 'vaultsmith_attestation_verify_total{outcome="success"} 5'
+check_metric verify 'vaultsmith_attestation_verify_total{outcome="invalid"} 1'
 
 stop_server
 start_server "$prod_only_profiles" true
@@ -358,7 +410,17 @@ jq -n '{attestation:{}, inputVaultText:"", outputVaultText:""}' >"$TMP_DIR/off-r
 status="$(request_status "$TMP_DIR/off-request.json" "/api/v1/attestations/verify" "$TMP_DIR/off-response.json")"
 [[ "$status" == "503" ]] || fail "disabled verification returned HTTP $status"
 assert_json "$TMP_DIR/off-response.json" '.error.code == "feature_unavailable"' 'disabled verification did not return feature_unavailable'
+write_rotation_request "$input_file"
+status="$(request_status "$TMP_DIR/rotate-request.json" "/api/v1/rotations" "$TMP_DIR/off-rotation-response.json")"
+[[ "$status" == "503" ]] || fail "disabled issuance returned HTTP $status"
+assert_json "$TMP_DIR/off-rotation-response.json" '.error.code == "feature_unavailable"' 'disabled issuance did not return feature_unavailable'
+scrape_metrics disabled
+check_metric disabled 'vaultsmith_attestation_issued_total{outcome="feature_unavailable"} 1'
+check_metric disabled 'vaultsmith_attestation_issued_total{outcome="unavailable"} 0'
+check_metric disabled 'vaultsmith_operation_requests_total{operation="rotate",outcome="unavailable"} 1'
+check_metric disabled 'vaultsmith_operation_duration_seconds_count{operation="rotate"} 1'
 curl -fsS "http://127.0.0.1:${PORT}/api/v1/session" >"$TMP_DIR/off-session.json"
 assert_json "$TMP_DIR/off-session.json" '.attestationEnabled == false' 'off mode advertised attestation capability'
 
-printf 'attestation smoke: ok (discovery enabled/disabled, rotation, semantic failures, restart, reload, revocation, REST, MCP, off-mode)\n'
+[[ "$metrics_failed" == "false" ]] || fail 'metrics checks failed; sanitized scrapes are in .tmp/smoke-attestation/'
+printf 'attestation smoke: ok (discovery enabled/disabled, rotation, semantic failures, restart, reload, revocation, REST, MCP, off-mode, metrics); scrapes: .tmp/smoke-attestation/\n'

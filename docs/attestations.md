@@ -301,6 +301,17 @@ key ID, issuer, subject, caller, repository, revision, path, selector, or
 ciphertext size is a metric label. Keep `/metrics` private and do not expose
 response bodies through the edge.
 
+Recognized MCP tool calls that reach the handler with valid transport headers
+record one operation request and duration sample, including rejected arguments,
+service-level denials, saturation, and cancellation. Generate tools share the
+`generate` operation; attestation verification uses `verify`. Discovery, listing,
+unknown tools, and security-middleware rejections are not operation samples.
+HTTP-200 tool errors are failures, not successes. A completed verification with
+`valid:false` is an operation success and an invalid attestation outcome, as in
+REST. Disabled REST issuance records the `feature_unavailable` attestation
+outcome. `make smoke-attestation` retains sanitized metric scrapes under
+`.tmp/smoke-attestation/`.
+
 Structured lifecycle logs may report only a generic operation class and outcome,
 including a generic keyring reload success or failure. They must not contain
 plaintext, ciphertext, attestation payloads, binding values, key material,
