@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/forgeplane-io/vaultsmith/backend/internal/apimodels"
@@ -107,6 +108,14 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 	headerVersion := headers.protocolVersion
 	headerMethod := headers.method
 	headerToolName := headers.toolName
+	if operation := metricOperationForMCPTool(headerToolName); h.metrics != nil && headerMethod == "tools/call" && operation != "" {
+		started := time.Now()
+		recorder := &statusRecordingResponseWriter{ResponseWriter: w}
+		w = recorder
+		defer func() {
+			h.metrics.observeOperation(operation, recorder.operationOutcome(), time.Since(started))
+		}()
+	}
 
 	actor, ok, status, code := h.requestCaller(r)
 	if !ok {
@@ -173,6 +182,7 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 			lease, err = h.service.VerifierAdmission().TryAcquire(r.Context())
 			if err != nil {
 				if errors.Is(err, vaultservice.ErrVerifierAdmissionSaturated) || errors.Is(err, vaultservice.ErrAdmissionSaturated) {
+					recordMCPToolOutcome(w, "busy")
 					w.Header().Set("Retry-After", "1")
 					writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeAttestationBusy), "rotation attestation verification is busy")
 				} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -191,6 +201,7 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 		lease, err = h.service.Admission().TryAcquire(r.Context())
 		if err != nil {
 			if errors.Is(err, vaultservice.ErrAdmissionSaturated) {
+				recordMCPToolOutcome(w, "busy")
 				if generateCall {
 					writeGenerateAdmissionSaturated(w, h.service.Admission())
 				} else {
@@ -320,7 +331,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 			verifyOutcome = "invalid"
 		}
 		if errors.Is(err, errMCPToolArguments) {
-			mcpWriteToolError(w, id, mcpTextInvalidToolArguments)
+			mcpWriteToolError(w, id, mcpTextInvalidToolArguments, "invalid_request")
 			return
 		}
 		mcpWriteHTTPError(w, http.StatusBadRequest, &id, mcpErrorInvalidParams, "invalid params", nil)
@@ -345,7 +356,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 	switch call.Name {
 	case "list_profiles":
 		if len(arguments) != 0 {
-			mcpWriteToolError(w, id, mcpTextInvalidToolArguments)
+			mcpWriteToolError(w, id, mcpTextInvalidToolArguments, "invalid_request")
 			return
 		}
 		profiles, err := h.service.ListProfiles(r.Context(), actor)
@@ -358,7 +369,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 				mcpWriteResult(w, id, mcpCallResult(profilesResponse{Profiles: []apimodels.Profile{}}, false))
 				return
 			}
-			mcpWriteToolError(w, id, mcpTextToolFailure)
+			mcpWriteToolError(w, id, mcpTextToolFailure, "failed")
 			return
 		}
 		public := make([]apimodels.Profile, 0, len(profiles))
@@ -397,13 +408,13 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 		verifyRequestBytes, marshalErr := json.Marshal(verifyRaw)
 		if marshalErr != nil {
 			verifyOutcome = "invalid"
-			mcpWriteToolError(w, id, mcpTextInvalidToolArguments)
+			mcpWriteToolError(w, id, mcpTextInvalidToolArguments, "invalid_request")
 			return
 		}
 		request, parseErr := parseVerifyAttestationRequest(verifyRequestBytes)
 		if parseErr != nil {
 			verifyOutcome = "invalid"
-			mcpWriteToolError(w, id, mcpTextInvalidToolArguments)
+			mcpWriteToolError(w, id, mcpTextInvalidToolArguments, "invalid_request")
 			return
 		}
 		claims, verifyErr := h.service.VerifyAttestation(leaseContext, request.Attestation, request.InputVaultText, request.OutputVaultText, request.ExpectedBinding)
@@ -419,7 +430,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 		if verifyErr != nil {
 			if vaultservice.HasCode(verifyErr, vaultservice.CodeInvalidRequest) || errors.Is(verifyErr, attestation.ErrMalformed) {
 				verifyOutcome = "invalid"
-				mcpWriteToolError(w, id, mcpTextInvalidToolArguments)
+				mcpWriteToolError(w, id, mcpTextInvalidToolArguments, "invalid_request")
 			} else if code, ok := mcpAttestationErrorCode(verifyErr); ok {
 				verifyOutcome = attestationOutcomeFromError(verifyErr)
 				mcpWriteStructuredToolError(w, id, code, "")
@@ -439,7 +450,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 			if attestationRequested {
 				attestationOutcome = "invalid"
 			}
-			mcpWriteToolError(w, id, mcpTextInvalidToolArguments)
+			mcpWriteToolError(w, id, mcpTextInvalidToolArguments, "invalid_request")
 			return
 		}
 		prepared, err := h.service.Prepare(leaseContext, actor, command, lease)
@@ -459,7 +470,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 				writeError(w, http.StatusForbidden, "forbidden", "operation is not permitted")
 				return
 			}
-			mcpWriteToolError(w, id, mcpTextToolFailure)
+			mcpWriteToolError(w, id, mcpTextToolFailure, "failed")
 			return
 		}
 		if call.Name == "rotate" {
@@ -476,7 +487,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 					mcpWriteServiceUnavailable(w, runErr)
 					return
 				}
-				mcpWriteToolError(w, id, mcpTextToolFailure)
+				mcpWriteToolError(w, id, mcpTextToolFailure, "failed")
 				return
 			}
 			if attestationRequested {
@@ -495,7 +506,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 				mcpWriteServiceUnavailable(w, runErr)
 				return
 			}
-			mcpWriteToolError(w, id, mcpTextToolFailure)
+			mcpWriteToolError(w, id, mcpTextToolFailure, "failed")
 			return
 		}
 		mcpWriteResult(w, id, mcpCallResult(response(output), false))
@@ -1015,7 +1026,8 @@ func mcpCallResult(structured any, isError bool) mcpCallToolResult {
 	return result
 }
 
-func mcpWriteToolError(w http.ResponseWriter, id json.RawMessage, message string) {
+func mcpWriteToolError(w http.ResponseWriter, id json.RawMessage, message, outcome string) {
+	recordMCPToolOutcome(w, outcome)
 	mcpWriteResult(w, id, mcpCallToolResult{
 		Meta:       mcpResultMeta(),
 		ResultType: "complete",
@@ -1040,6 +1052,11 @@ func mcpAttestationErrorCode(err error) (vaultservice.Code, bool) {
 }
 
 func mcpWriteStructuredToolError(w http.ResponseWriter, id json.RawMessage, code vaultservice.Code, message string) {
+	outcome := "unavailable"
+	if code == vaultservice.CodeAttestationBusy {
+		outcome = "busy"
+	}
+	recordMCPToolOutcome(w, outcome)
 	if message == "" {
 		switch code {
 		case vaultservice.CodeFeatureUnavailable:

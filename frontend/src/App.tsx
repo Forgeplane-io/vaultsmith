@@ -134,7 +134,6 @@ export default function App() {
     if (signingOutRef.current) return
     let active = true
     let loadStage: 'session' | 'profiles' = 'session'
-    let loadedSession: Session | null = null
     const recoveringStaleSnapshot = recoveringStaleCapabilities
     setProfileSnapshotValid(false)
     setLoadingProfiles(true)
@@ -152,7 +151,6 @@ export default function App() {
     fetchSession(controller.signal)
       .then((session) => {
         if (!hasAuthority()) return undefined
-        loadedSession = session
         setSession(session)
         if (session.authRequired && !session.authenticated) {
           redirectToLogin()
@@ -180,16 +178,6 @@ export default function App() {
         if (cause instanceof ApiError && cause.code === 'unauthorized') {
           redirectToLogin()
           setStatus('Sign-in required…')
-          return
-        }
-        if (loadStage === 'profiles' && loadedSession?.attestationEnabled === true && cause instanceof ApiError && cause.status === 403) {
-          applyLoadedProfiles([], false)
-          setProfileSnapshotValid(true)
-          setProfileLoadFailed(false)
-          setProfileLoadError('')
-          setLoadFailureStage(null)
-          setRecoveringStaleCapabilities(false)
-          setStatus('')
           return
         }
         setProfileLoadFailed(true)
