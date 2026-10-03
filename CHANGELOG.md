@@ -10,6 +10,33 @@ All notable changes to Vaultsmith are documented here. Release Please maintains 
 - Proofs use `PUBLIC_BASE_URL` as the issuer and reload a valid changed keyring without restart. A malformed replacement keeps the previous valid keyring active.
 - When proofs are disabled, normal encrypt, decrypt, and rotate behavior remains available and no signing Secret is required.
 
+## [0.9.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.8.1...v0.9.0) (2026-10-03)
+
+
+### Features
+
+* **frontend:** copy generated Ansible snippets ([d442a21](https://github.com/Forgeplane-io/vaultsmith/commit/d442a211b700a0977d96bd53e4c0d1d1c23b4517))
+
+
+### Bug Fixes
+
+* **api:** align attestation contract with runtime ([2576d9a](https://github.com/Forgeplane-io/vaultsmith/commit/2576d9a0530c54a6458b573ddac4417ad154161b)), closes [#108](https://github.com/Forgeplane-io/vaultsmith/issues/108)
+* **attestation:** honor lease-origin cancellation ([9a62062](https://github.com/Forgeplane-io/vaultsmith/commit/9a62062393dd18b2358a8caa9cce2f5aeeda8730)), closes [#104](https://github.com/Forgeplane-io/vaultsmith/issues/104)
+* **build:** honor container target platforms ([51affce](https://github.com/Forgeplane-io/vaultsmith/commit/51affceebadf4b33844ed4268beb1c038357b244)), closes [#101](https://github.com/Forgeplane-io/vaultsmith/issues/101)
+* **ci:** include IdP Caddyfile in native integration ([cdbce8e](https://github.com/Forgeplane-io/vaultsmith/commit/cdbce8ed7517af5c8d79ed49b74d3fdd571165fa)), closes [#111](https://github.com/Forgeplane-io/vaultsmith/issues/111)
+* **deps:** ignore invalid redisstore updates ([a33eff4](https://github.com/Forgeplane-io/vaultsmith/commit/a33eff48c8c0e85d599e5687bf801d013caf399d))
+* **deps:** patch API generator brace-expansion ([385196d](https://github.com/Forgeplane-io/vaultsmith/commit/385196dd445e55afc903ff044652edf946d7b91f))
+* **frontend:** allow cancelling generated material ([2720771](https://github.com/Forgeplane-io/vaultsmith/commit/272077165b1ee4c628c64ac1f9901c47dc5951f9))
+* **frontend:** make size-limit errors accessible ([3dae9a9](https://github.com/Forgeplane-io/vaultsmith/commit/3dae9a9296925f087c918d92a871ba42e537cb20))
+* **frontend:** reject terminal unpaired high surrogates ([8dd9d80](https://github.com/Forgeplane-io/vaultsmith/commit/8dd9d80bbeb035f6f049ec70db9d9f05baded615)), closes [#112](https://github.com/Forgeplane-io/vaultsmith/issues/112)
+* **frontend:** scope proof state to active workbench ([0d8b5b7](https://github.com/Forgeplane-io/vaultsmith/commit/0d8b5b7134d78126b7caef99bc7f88adc4e2a805)), closes [#106](https://github.com/Forgeplane-io/vaultsmith/issues/106)
+* **frontend:** surface profile discovery failures ([2453384](https://github.com/Forgeplane-io/vaultsmith/commit/2453384d32a20c584c732e092e11323a35a40994)), closes [#107](https://github.com/Forgeplane-io/vaultsmith/issues/107)
+* **generate:** preserve URI SAN spellings ([83c038b](https://github.com/Forgeplane-io/vaultsmith/commit/83c038bb6f890e1f6cf2e036c1ed55ab5ba371db))
+* **mcp:** reject nested metadata duplicates ([db017e8](https://github.com/Forgeplane-io/vaultsmith/commit/db017e8133183c2aaa48c8f110c98e1d4174612f)), closes [#109](https://github.com/Forgeplane-io/vaultsmith/issues/109)
+* **metrics:** record MCP operation outcomes ([349c753](https://github.com/Forgeplane-io/vaultsmith/commit/349c7532adf0a3b7f50f4b8e4d565175f422f91c)), closes [#110](https://github.com/Forgeplane-io/vaultsmith/issues/110)
+* **server:** wait for HTTP shutdown draining ([d1015b8](https://github.com/Forgeplane-io/vaultsmith/commit/d1015b846d841b48d9ca3173cd21263453f58381)), closes [#103](https://github.com/Forgeplane-io/vaultsmith/issues/103)
+* **web:** forward attestation discovery ([626d9c9](https://github.com/Forgeplane-io/vaultsmith/commit/626d9c9aae3cc9a83183245126821073937f4e94)), closes [#102](https://github.com/Forgeplane-io/vaultsmith/issues/102)
+
 ## [0.8.1](https://github.com/Forgeplane-io/vaultsmith/compare/v0.8.0...v0.8.1) (2026-09-22)
 
 
