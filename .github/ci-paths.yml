@@ -66,7 +66,7 @@ native_integration:
   - 'go.mod'
   - 'go.sum'
   - 'backend/**'
-  - 'integration/Caddyfile'
+  - 'integration/Caddyfile*'
   - 'integration/docker-compose.yml'
   - 'scripts/integration-native.sh'
 
