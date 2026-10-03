@@ -64,16 +64,12 @@ type verifiedAttestationClaims struct {
 
 func (h *Handler) serveCanonicalRotateWithAttestation(w http.ResponseWriter, r *http.Request) {
 	attestationRequested := false
-	attestationIssued := false
+	attestationOutcome := "failed"
 	defer func() {
 		if !attestationRequested || h.metrics == nil {
 			return
 		}
-		if attestationIssued {
-			h.metrics.observeAttestationIssued("success")
-			return
-		}
-		h.metrics.observeAttestationIssued(attestationOutcomeFromResponse(w))
+		h.metrics.observeAttestationIssued(attestationOutcome)
 	}()
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w, http.MethodPost)
@@ -150,15 +146,19 @@ func (h *Handler) serveCanonicalRotateWithAttestation(w http.ResponseWriter, r *
 	}
 	prepared, err := h.service.Prepare(leaseContext, actor, command, lease)
 	if err != nil {
+		attestationOutcome = attestationOutcomeFromError(err)
 		writeServiceError(w, err)
 		return
 	}
 	result, err := prepared.RunResult(leaseContext)
 	if err != nil {
+		attestationOutcome = attestationOutcomeFromError(err)
 		writeServiceError(w, err)
 		return
 	}
-	attestationIssued = result.Attestation != nil
+	if result.Attestation != nil {
+		attestationOutcome = "success"
+	}
 	writeJSON(w, http.StatusOK, rotationResponseWithAttestation{VaultText: result.VaultText, Attestation: result.Attestation})
 }
 

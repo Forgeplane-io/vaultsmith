@@ -152,7 +152,7 @@ func mcpGenerateArgumentShape(name string) (map[string]struct{}, vaultservice.Ge
 func (h *Handler) serveMCPGenerateTool(w http.ResponseWriter, id json.RawMessage, actor caller.Caller, leaseContext context.Context, name string, rawArguments json.RawMessage) {
 	command, err := decodeMCPGenerateCommand(name, rawArguments)
 	if err != nil {
-		mcpWriteToolError(w, id, mcpTextInvalidToolArguments)
+		mcpWriteToolError(w, id, mcpTextInvalidToolArguments, "invalid_request")
 		return
 	}
 	result, err := h.service.Generate(leaseContext, actor, command)
@@ -165,17 +165,17 @@ func (h *Handler) serveMCPGenerateTool(w http.ResponseWriter, id json.RawMessage
 			writeError(w, http.StatusForbidden, "forbidden", "operation is not permitted")
 			return
 		}
-		mcpWriteToolError(w, id, mcpTextToolFailure)
+		mcpWriteToolError(w, id, mcpTextToolFailure, "failed")
 		return
 	}
 	response, err := mapGenerateResponse(result)
 	if err != nil {
-		mcpWriteToolError(w, id, mcpTextToolFailure)
+		mcpWriteToolError(w, id, mcpTextToolFailure, "failed")
 		return
 	}
 	encoded, err := json.Marshal(response)
 	if err != nil || !json.Valid(encoded) {
-		mcpWriteToolError(w, id, mcpTextToolFailure)
+		mcpWriteToolError(w, id, mcpTextToolFailure, "failed")
 		return
 	}
 	mcpWriteResult(w, id, mcpGenerateCallResult(response))
