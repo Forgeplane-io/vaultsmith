@@ -125,10 +125,12 @@ export VAULT_PROFILES_JSON='[{"id":"dev","label":"Development","passwordEnv":"VA
 export VAULT_PASSWORD_DEV='replace-with-a-local-password'
 export AUTH_MODE=off
 export COOKIE_SECURE=false  # local HTTP only
-export HTTP_ADDR=127.0.0.1:8080
+export HTTP_ADDR=127.0.0.1:8080  # optional: the off-mode default
 
 go run ./backend/cmd/server
 ```
+
+With `AUTH_MODE=off`, an unset or empty `HTTP_ADDR` defaults to IPv4 loopback (`127.0.0.1:8080`). Native mode retains its `:8080` default. A nonempty `HTTP_ADDR` is used unchanged, including explicit wildcard addresses; it does not add authentication or make an off-mode deployment safe.
 
 Open <http://localhost:8080>. Check the process with:
 
