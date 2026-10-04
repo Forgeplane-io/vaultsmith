@@ -66,6 +66,13 @@ is carried in the protected header and is resolved against the local keyring.
 The public JWKS and metadata endpoints expose only public key material and
 lifecycle metadata. They never expose private key material.
 
+Attestation JSON permits only the root object and its immediate `input`,
+`output`, and optional `binding` objects. The flattened JWS and protected header
+have only string members. Arrays and deeper objects are unsupported; the parser
+bounds nesting to two container levels, counting the root as one, and rejects
+deeper objects or arrays before key lookup. Malformed proofs retain the existing
+safe REST and MCP errors without returning claims.
+
 ## Canonicalization and digest semantics
 
 Vaultsmith canonicalizes the complete Ansible Vault envelope before hashing.

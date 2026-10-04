@@ -101,6 +101,19 @@ All request paths reject duplicate JSON keys, trailing JSON values, and malforme
 | JSON request body | 8 MiB |
 | HTTP headers | 16 KiB |
 
+Rotation-attestation JSON parsing permits at most two active containers: the
+root object and the immediate `input`, `output`, or `binding` objects. The
+flattened JWS and protected header contain only string members; no supported
+attestation schema permits arrays. The shared attestation parser counts both
+objects and arrays and rejects before entering a third container, before key
+resolution. This schema-derived bound is not configurable; a supported schema
+that adds nesting must revise it and its boundary tests together.
+
+Unsupported nested values were already malformed, so valid proofs, encoded-byte
+limits, strict duplicate/Unicode checks and verification precedence are unchanged.
+REST retains HTTP 400/`invalid_request`; MCP retains HTTP 200 with a text-only
+tool error and no claims. Neither response exposes the nesting budget or input.
+
 Canonical REST, the legacy operation endpoint, and enabled MCP use a 30-second operation deadline that starts after credential authentication. The server read and write limits are 40 and 45 seconds. The edge timeout must be at least 50 seconds.
 
 API errors keep the existing shape:
