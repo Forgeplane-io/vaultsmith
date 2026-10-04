@@ -521,13 +521,25 @@ def attested_rotation(token):
         {"Content-Type": "application/json"},
     ))
 
-def verify_attestation(token, rotation):
-    body = json.dumps({
+def verify_attestation(token, rotation, mcp=False):
+    arguments = {
         "attestation": rotation["attestation"],
         "inputVaultText": operation["value"],
         "outputVaultText": rotation["vaultText"],
         "expectedBinding": binding,
-    }).encode("utf-8")
+    }
+    if mcp:
+        body = json.dumps({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
+            "name": "verify_rotation_attestation", "arguments": arguments,
+            "_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {}},
+        }}).encode("utf-8")
+        result = json_response(bearer_request("/mcp", token, body, {
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "verify_rotation_attestation",
+        }))
+        assert result["result"]["isError"] is False, "native MCP verification returned a tool error"
+        return result["result"]["structuredContent"]
+    body = json.dumps(arguments).encode("utf-8")
     return json_response(bearer_request(
         "/api/v1/attestations/verify",
         token,
@@ -540,12 +552,16 @@ delegated_rotation = attested_rotation(delegated_rotate)
 assert delegated_rotation.get("attestation") and delegated_rotation.get("vaultText"), delegated_rotation
 delegated_verify = delegated_access_token("integration-user", user_password, "vaultsmith.attestation.verify")
 assert verify_attestation(delegated_verify, delegated_rotation)["valid"] is True
+assert verify_attestation(delegated_verify, delegated_rotation, mcp=True)["valid"] is True
+print("native integration: delegated-user MCP verification: ok")
 
 machine_rotate = client_credentials_access_token("vaultsmith.rotate")
 machine_rotation = attested_rotation(machine_rotate)
 assert machine_rotation.get("attestation") and machine_rotation.get("vaultText"), machine_rotation
 machine_verify = client_credentials_access_token("vaultsmith.attestation.verify")
 assert verify_attestation(machine_verify, machine_rotation)["valid"] is True
+assert verify_attestation(machine_verify, machine_rotation, mcp=True)["valid"] is True
+print("native integration: client-credentials MCP verification: ok")
 
 try:
     verify_attestation(machine, delegated_rotation)
@@ -553,6 +569,14 @@ except urllib.error.HTTPError as error:
     assert error.code == 403 and "insufficient_scope" in error.headers.get("WWW-Authenticate", ""), error.headers
 else:
     raise AssertionError("attestation verification without its scope unexpectedly succeeded")
+
+try:
+    verify_attestation(machine, delegated_rotation, mcp=True)
+except urllib.error.HTTPError as error:
+    assert error.code == 403 and "insufficient_scope" in error.headers.get("WWW-Authenticate", ""), "native MCP verification omitted its scope challenge"
+else:
+    raise AssertionError("native MCP verification without its scope unexpectedly succeeded")
+print("native integration: MCP verification scope rejection: ok")
 
 denied_scope = client_credentials_access_token("vaultsmith.profile.read")
 try:
