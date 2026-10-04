@@ -85,48 +85,16 @@ func decodeMCPGenerateCommand(name string, raw json.RawMessage) (vaultservice.Ge
 	if !ok {
 		return vaultservice.GenerateCommand{}, errors.New("profileId is required")
 	}
-	profileID, err := decodeGenerateString(rawProfileID)
-	if err != nil {
-		return vaultservice.GenerateCommand{}, err
-	}
 	delete(fields, "profileId")
-	parameters, err := json.Marshal(fields)
+	request, err := json.Marshal(map[string]any{
+		"kind":       kind,
+		"profileId":  rawProfileID,
+		"parameters": fields,
+	})
 	if err != nil {
 		return vaultservice.GenerateCommand{}, errors.New("tool arguments are invalid")
 	}
-
-	command := vaultservice.GenerateCommand{ProfileID: profileID, Kind: kind}
-	switch kind {
-	case vaultservice.GenerateKindPassword:
-		decoded, err := parsePasswordParameters(parameters)
-		if err != nil {
-			return vaultservice.GenerateCommand{}, err
-		}
-		command.Password = &decoded
-	case vaultservice.GenerateKindToken:
-		decoded, err := parseTokenParameters(parameters)
-		if err != nil {
-			return vaultservice.GenerateCommand{}, err
-		}
-		command.Token = &decoded
-	case vaultservice.GenerateKindSSHKeyPair:
-		decoded, err := parseSSHKeyPairParameters(parameters)
-		if err != nil {
-			return vaultservice.GenerateCommand{}, err
-		}
-		command.SSHKeyPair = &decoded
-	case vaultservice.GenerateKindAgeIdentity:
-		command.AgeIdentity = &vaultservice.AgeIdentityParameters{}
-	case vaultservice.GenerateKindX509CSR:
-		decoded, err := parseX509CSRParameters(parameters)
-		if err != nil {
-			return vaultservice.GenerateCommand{}, err
-		}
-		command.X509CSR = &decoded
-	default:
-		return vaultservice.GenerateCommand{}, errors.New("generation tool is invalid")
-	}
-	return command, nil
+	return parseGenerateCommand(request)
 }
 
 func mcpGenerateArgumentShape(name string) (map[string]struct{}, vaultservice.GenerateKind) {

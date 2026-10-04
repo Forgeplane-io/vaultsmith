@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -42,8 +43,10 @@ func TestMCPGenerateToolsSealEveryKindWithoutTextLeak(t *testing.T) {
 		kind         string
 		secretFormat string
 		hasPublic    bool
+		effective    string
 	}{
 		{name: "password", tool: "generate_password", arguments: `{"profileId":"dev"}`, kind: "password", secretFormat: "password_ascii"},
+		{name: "password explicit parameters", tool: "generate_password", arguments: `{"profileId":"dev","length":40,"lowercase":false,"uppercase":true,"digits":true,"symbols":true,"minLowercase":0,"minUppercase":2,"minDigits":3,"minSymbols":4,"excludeAmbiguous":true}`, kind: "password", secretFormat: "password_ascii", effective: `{"length":40,"lowercase":false,"uppercase":true,"digits":true,"symbols":true,"minLowercase":0,"minUppercase":2,"minDigits":3,"minSymbols":4,"excludeAmbiguous":true}`},
 		{name: "token", tool: "generate_token", arguments: `{"profileId":"dev","encoding":"hex","bytes":16}`, kind: "token", secretFormat: "token_hex"},
 		{name: "SSH", tool: "generate_ssh_keypair", arguments: `{"profileId":"dev","algorithm":"ed25519"}`, kind: "ssh_keypair", secretFormat: "openssh_private_key", hasPublic: true},
 		{name: "age", tool: "generate_age_identity", arguments: `{"profileId":"dev"}`, kind: "age_identity", secretFormat: "age_x25519_identity", hasPublic: true},
@@ -80,6 +83,15 @@ func TestMCPGenerateToolsSealEveryKindWithoutTextLeak(t *testing.T) {
 			if structured["kind"] != test.kind || structured["profileId"] != "dev" {
 				t.Fatalf("structured identity = %#v", structured)
 			}
+			if test.effective != "" {
+				var expected map[string]any
+				if err := json.Unmarshal([]byte(test.effective), &expected); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(structured["effectiveParameters"], expected) {
+					t.Fatalf("effective parameters = %#v, want %#v", structured["effectiveParameters"], expected)
+				}
+			}
 			secret := structured["secret"].(map[string]any)
 			if secret["format"] != test.secretFormat || secret["vaultText"] == "" {
 				t.Fatalf("structured secret = %#v", secret)
@@ -106,6 +118,9 @@ func TestMCPGenerateTypedArgumentsRejectAmbiguousInputBeforeGeneration(t *testin
 	}{
 		{name: "password unknown field", tool: "generate_password", arguments: `{"profileId":"dev","alphabet":"custom"}`},
 		{name: "password null", tool: "generate_password", arguments: `{"profileId":"dev","symbols":null}`},
+		{name: "null profile", tool: "generate_token", arguments: `{"profileId":null}`},
+		{name: "REST wrapper", tool: "generate_token", arguments: `{"profileId":"dev","parameters":{"bytes":32}}`},
+		{name: "REST discriminator", tool: "generate_token", arguments: `{"profileId":"dev","kind":"token"}`},
 		{name: "token wrong integer type", tool: "generate_token", arguments: `{"profileId":"dev","bytes":"32"}`},
 		{name: "SSH missing algorithm", tool: "generate_ssh_keypair", arguments: `{"profileId":"dev"}`},
 		{name: "age extra field", tool: "generate_age_identity", arguments: `{"profileId":"dev","algorithm":"x25519"}`},
@@ -196,10 +211,19 @@ func TestMCPGenerateFailuresAreGenericAndDoNotExposePrivateMaterial(t *testing.T
 
 func TestMCPGenerateBearerScopePreflightRejectsEveryToolBeforeBodyRead(t *testing.T) {
 	handler, issuer, _ := bearerHTTPFixtureWithMCP(t, true)
+	warm := httptest.NewRequest(http.MethodGet, "https://vaultsmith.example.test/api/v1/profiles", nil)
+	warm.Header.Set("Authorization", "Bearer "+issuer.token(t, "https://vaultsmith.example.test", vaultservice.ScopeProfileRead))
+	warmResponse := httptest.NewRecorder()
+	handler.ServeHTTP(warmResponse, warm)
+	if warmResponse.Code != http.StatusOK {
+		t.Fatalf("JWKS warm-up status = %d, want 200", warmResponse.Code)
+	}
 	for _, name := range mcpGenerateToolOrder {
 		t.Run(name, func(t *testing.T) {
 			body := &trackingReader{}
 			request := httptest.NewRequest(http.MethodPost, "https://vaultsmith.example.test/mcp", body)
+			ctx := &deadlineTrackingContext{Context: request.Context()}
+			request = request.WithContext(ctx)
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Accept", "application/json, text/event-stream")
 			request.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
@@ -215,6 +239,9 @@ func TestMCPGenerateBearerScopePreflightRejectsEveryToolBeforeBodyRead(t *testin
 			}
 			if !strings.Contains(response.Header().Get("WWW-Authenticate"), `scope="vaultsmith.encrypt"`) {
 				t.Fatalf("WWW-Authenticate = %q", response.Header().Get("WWW-Authenticate"))
+			}
+			if ctx.queried {
+				t.Fatal("application deadline was installed before the Generate scope challenge")
 			}
 		})
 	}

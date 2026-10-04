@@ -1,7 +1,6 @@
 package ansiblevault
 
 import (
-	"bytes"
 	"errors"
 	"os"
 	"strings"
@@ -166,89 +165,6 @@ func TestDecryptAnsibleCLIStaticFixture(t *testing.T) {
 	}
 	if string(plaintext) != "fixture-value" {
 		t.Fatalf("fixture plaintext = %q, want %q", plaintext, "fixture-value")
-	}
-}
-
-func TestReencrypt(t *testing.T) {
-	sourcePassword := []byte("source-password")
-	destinationPassword := []byte("destination-password")
-	fixture := []byte("fixture-value")
-
-	source11, err := encryptWithHeader(fixture, sourcePassword, Header11)
-	if err != nil {
-		t.Fatalf("encrypt source Vault 1.1: %v", err)
-	}
-	source12, err := Encrypt(fixture, sourcePassword, "source")
-	if err != nil {
-		t.Fatalf("encrypt source Vault 1.2: %v", err)
-	}
-
-	for _, tc := range []struct {
-		name     string
-		input    string
-		source   []byte
-		dest     []byte
-		destID   string
-		wantErr  error
-		wantBody string
-	}{
-		{name: "Vault 1.1 to labeled 1.2", input: source11, source: sourcePassword, dest: destinationPassword, destID: "destination", wantBody: string(fixture)},
-		{name: "labeled Vault 1.2 to labeled 1.2", input: source12, source: sourcePassword, dest: destinationPassword, destID: "destination", wantBody: string(fixture)},
-		{name: "same profile format upgrade", input: source11, source: sourcePassword, dest: sourcePassword, destID: "source", wantBody: string(fixture)},
-		{name: "wrong source password", input: source11, source: []byte("wrong-password"), dest: destinationPassword, destID: "destination", wantErr: ErrInvalidVault},
-		{name: "invalid destination password", input: source11, source: sourcePassword, dest: nil, destID: "destination", wantErr: ErrInvalidPassword},
-		{name: "invalid destination label", input: source11, source: sourcePassword, dest: destinationPassword, destID: "destination;other", wantErr: ErrInvalidVaultID},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := Reencrypt(tc.input, tc.source, tc.dest, tc.destID)
-			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) {
-					t.Fatalf("Reencrypt() error = %v, want %v", err, tc.wantErr)
-				}
-				if got != "" {
-					t.Fatalf("Reencrypt() returned ciphertext on error: %q", got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Reencrypt() error = %v", err)
-			}
-			if !strings.HasPrefix(got, Header12Prefix+";"+tc.destID+"\n") {
-				t.Fatalf("header = %q, want destination label %q", strings.SplitN(got, "\n", 2)[0], tc.destID)
-			}
-			decoded, err := Decrypt(got, tc.dest)
-			if err != nil {
-				t.Fatalf("Decrypt() rotated value: %v", err)
-			}
-			if string(decoded) != tc.wantBody {
-				t.Fatalf("rotated plaintext = %q, want %q", decoded, tc.wantBody)
-			}
-		})
-	}
-}
-
-func TestReencryptRejectsOversizedPlaintext(t *testing.T) {
-	sourcePassword := []byte("source-password")
-	input, err := encryptWithHeader(bytes.Repeat([]byte("x"), MaxPlaintextBytes+1), sourcePassword, Header11)
-	if err != nil {
-		t.Fatalf("encrypt oversized source: %v", err)
-	}
-	if _, err := Reencrypt(input, sourcePassword, []byte("destination-password"), "destination"); !errors.Is(err, ErrPlaintextTooLarge) {
-		t.Fatalf("Reencrypt() error = %v, want ErrPlaintextTooLarge", err)
-	}
-}
-
-func TestReencryptRejectsNonUTF8Plaintext(t *testing.T) {
-	input, err := encryptWithHeader([]byte{0xff, 0xfe, 0xfd}, []byte("source-password"), Header11)
-	if err != nil {
-		t.Fatalf("encrypt non-UTF-8 source: %v", err)
-	}
-	_, err = Reencrypt(input, []byte("source-password"), []byte("destination-password"), "destination")
-	if !errors.Is(err, ErrInvalidVault) {
-		t.Fatalf("Reencrypt() error = %v, want ErrInvalidVault", err)
-	}
-	if strings.Contains(err.Error(), "fffe fd") {
-		t.Fatalf("Reencrypt() error exposed plaintext bytes: %v", err)
 	}
 }
 

@@ -352,11 +352,6 @@ func (s *Service) RotateResult(ctx context.Context, actor caller.Caller, sourceP
 	return prepared.RunResult(ctx)
 }
 
-// RotateWithAttestation is a descriptive alias for RotateResult.
-func (s *Service) RotateWithAttestation(ctx context.Context, actor caller.Caller, sourceProfileID, destinationProfileID, vaultText string, request *AttestationRequest) (RotationResult, error) {
-	return s.RotateResult(ctx, actor, sourceProfileID, destinationProfileID, vaultText, request)
-}
-
 func (s *Service) prepareAndRun(ctx context.Context, actor caller.Caller, command Command) (string, error) {
 	lease := leaseFromContext(ctx)
 	prepared, err := s.Prepare(ctx, actor, command, lease)
@@ -546,12 +541,6 @@ func (p *PreparedOperation) Run(ctx context.Context) (string, error) {
 // attestation alongside the Vault output.
 func (p *PreparedOperation) RunResult(ctx context.Context) (RotationResult, error) {
 	return p.runResult(ctx)
-}
-
-// RunWithResult is an explicit alias for callers that prefer a verb-oriented
-// name while migrating from the legacy string-only Run method.
-func (p *PreparedOperation) RunWithResult(ctx context.Context) (RotationResult, error) {
-	return p.RunResult(ctx)
 }
 
 func (p *PreparedOperation) runResult(ctx context.Context) (RotationResult, error) {

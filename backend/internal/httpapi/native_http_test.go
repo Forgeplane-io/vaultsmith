@@ -22,6 +22,7 @@ import (
 
 type recordingExecutor struct {
 	called bool
+	ctx    context.Context
 }
 
 type recordingProfileExecutor struct {
@@ -32,8 +33,9 @@ func (e *recordingExecutor) ForProfile(string) (vaultservice.ProfileExecutor, er
 	return &recordingProfileExecutor{owner: e}, nil
 }
 
-func (e *recordingProfileExecutor) Encrypt(context.Context, string) (string, error) {
+func (e *recordingProfileExecutor) Encrypt(ctx context.Context, _ string) (string, error) {
 	e.owner.called = true
+	e.owner.ctx = ctx
 	return "ok", nil
 }
 

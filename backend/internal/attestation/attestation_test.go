@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/forgeplane-io/vaultsmith/backend/internal/ansiblevault"
 )
 
 const (
@@ -306,24 +308,35 @@ func TestHeaderAndEncodingRejections(t *testing.T) {
 
 func TestDigestDomainSeparation(t *testing.T) {
 	input := testEnvelope("input")
-	output := testEnvelope("output")
 	in, err := InputDigest(input)
 	if err != nil {
 		t.Fatalf("InputDigest() error = %v", err)
 	}
-	out, err := OutputDigest(output)
+	out, err := OutputDigest(input)
 	if err != nil {
 		t.Fatalf("OutputDigest() error = %v", err)
 	}
 	if in == out {
 		t.Fatal("input and output digest roles unexpectedly match")
 	}
-	canonical, err := canonicalEnvelopeArgument(input)
-	if err != nil {
-		t.Fatalf("canonicalEnvelopeArgument() error = %v", err)
-	}
-	if in != InputDigestBytes(canonical) || out != OutputDigestBytes(mustCanonical(t, output)) {
+	canonical := mustCanonical(t, input)
+	if in != InputDigestBytes(canonical) || out != OutputDigestBytes(canonical) {
 		t.Fatal("digest helpers did not hash canonical bytes directly")
+	}
+	canonicalIn, inputErr := InputDigest(string(canonical))
+	canonicalOut, outputErr := OutputDigest(string(canonical))
+	if inputErr != nil || outputErr != nil || canonicalIn != in || canonicalOut != out {
+		t.Fatal("digest roles changed with envelope formatting")
+	}
+}
+
+func TestDigestsRejectMalformedEnvelopes(t *testing.T) {
+	_, inputErr := InputDigest("synthetic-malformed-envelope")
+	_, outputErr := OutputDigest("synthetic-malformed-envelope")
+	for _, err := range []error{inputErr, outputErr} {
+		if !errors.Is(err, ErrMalformed) || err.Error() != "malformed rotation attestation" {
+			t.Fatalf("digest error = %v, want safe ErrMalformed", err)
+		}
 	}
 }
 
@@ -489,7 +502,7 @@ func testEnvelope(seed string) string {
 
 func mustCanonical(t *testing.T, value string) []byte {
 	t.Helper()
-	canonical, err := canonicalEnvelopeArgument(value)
+	canonical, err := ansiblevault.CanonicalEnvelope(value)
 	if err != nil {
 		t.Fatalf("canonical envelope: %v", err)
 	}
