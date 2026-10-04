@@ -133,6 +133,10 @@ Providers differ in how they express `resource`, audience mappers, service-accou
 
 Off mode removes authentication, sessions, CSRF, token validation, and Casbin policy checks. Every caller that can reach Vaultsmith can list profiles, encrypt, decrypt, rotate, Generate every supported material kind, and use enabled MCP tools. Proofs are controlled separately by `proofs.enabled`: when disabled, no keyring Secret is required and attestation issuance and verification return stable feature-unavailable responses. Normal encrypt, decrypt, rotate, and Generate behavior remains available.
 
+When `AUTH_MODE=off` is explicitly selected, an unset or empty `HTTP_ADDR` defaults to `127.0.0.1:8080` (IPv4 loopback). Native mode's implicit default remains `:8080`. Nonempty explicit addresses are used unchanged, including wildcard and IPv6 addresses. An explicit bind is an operator choice, not an authentication boundary; the off-mode warnings still apply. Helm supplies an explicit pod listener address, so its binding is unchanged.
+
+Off-mode configurations that relied on the implicit wildcard listener must now set their intended `HTTP_ADDR` explicitly. Do not use this override to expose an unauthenticated service or as a fallback for native authentication failures.
+
 Consequences:
 
 - CORS restricts browsers only. It does not protect against non-browser clients.

@@ -112,6 +112,9 @@ func run() error {
 	address := os.Getenv("HTTP_ADDR")
 	if address == "" {
 		address = defaultAddress
+		if authConfig.Mode == config.AuthModeOff {
+			address = "127.0.0.1" + defaultAddress
+		}
 	}
 	admission := vaultservice.NewRuntimeAdmission()
 	verifierAdmission := vaultservice.NewRuntimeVerifierAdmission()
