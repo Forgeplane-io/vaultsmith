@@ -130,6 +130,8 @@ func legacySessionOnlyAPIMethod(r *http.Request) bool {
 	}
 }
 
+type bodyReadControllerKey struct{}
+
 func applicationDeadlineMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !applicationDeadlineApplies(r) {
@@ -138,6 +140,24 @@ func applicationDeadlineMiddleware(next http.Handler) http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
+		// Capture capability before opaque wrappers without replacing an earlier
+		// socket deadline. The joined body cancellation watcher interrupts reads
+		// only when the context is canceled. Direct invocations have no transport.
+		if r.Context().Value(http.ServerContextKey) != nil {
+			writer := w
+			for {
+				if _, ok := writer.(interface{ SetReadDeadline(time.Time) error }); ok {
+					break
+				}
+				unwrapper, ok := writer.(interface{ Unwrap() http.ResponseWriter })
+				if !ok {
+					writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
+					return
+				}
+				writer = unwrapper.Unwrap()
+			}
+			ctx = context.WithValue(ctx, bodyReadControllerKey{}, http.NewResponseController(w))
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
