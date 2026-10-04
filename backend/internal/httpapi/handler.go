@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -523,12 +525,20 @@ func decodeOperation(w http.ResponseWriter, r *http.Request) (operationRequest, 
 }
 
 func readRequestBody(ctx context.Context, body io.ReadCloser) ([]byte, error) {
+	controller, _ := ctx.Value(bodyReadControllerKey{}).(*http.ResponseController)
 	stop := make(chan struct{})
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
 		select {
 		case <-ctx.Done():
+			// Body.Close can wait behind HTTP/1 body.Read's mutex. Expiring the
+			// transport first unblocks that read without extending its socket bound.
+			if controller != nil {
+				if err := controller.SetReadDeadline(time.Now()); err != nil && !errors.Is(err, net.ErrClosed) {
+					log.Printf("request body read deadline interruption failed (%T)", err)
+				}
+			}
 			_ = body.Close()
 		case <-stop:
 		}
