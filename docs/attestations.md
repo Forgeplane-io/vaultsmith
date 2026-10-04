@@ -262,7 +262,11 @@ its request mechanism; do not put real Vault material, proofs, or bearer tokens
 in client debug logs. A verify-only Bearer client needs the exact
 `vaultsmith.attestation.verify` scope. Profile operation scopes are not required
 for standalone verification, and verification uses a separate bounded
-admission pool.
+admission pool. After authentication and scope checks, MCP reserves verifier
+capacity before reading the body, even when proofs are disabled or unavailable.
+If the pool is full, it returns HTTP `503` with `attestation_busy` and
+`Retry-After: 1` without reading the body. With capacity available, valid calls
+retain the structured feature-unavailable or attestation-unavailable tool result.
 
 MCP discovery and tool-list responses advertise the verification tool only when
 the configured capability and authentication scope permit it. When proofs are

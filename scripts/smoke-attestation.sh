@@ -28,7 +28,7 @@ fail() {
   exit 1
 }
 
-for command in curl jq go; do
+for command in curl jq go python3; do
   command -v "$command" >/dev/null 2>&1 || fail "missing dependency: $command"
 done
 if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t >/dev/null 2>&1; then
@@ -127,7 +127,10 @@ start_server() {
   local configured_profiles="$1"
   local proofs_enabled="$2"
   stop_server
+  # One schedulable CPU gives both pools one slot for the admission smoke;
+  # this is a test fixture, not a change to the compiled production ceilings.
   if [[ "$proofs_enabled" == "true" ]]; then
+    GOMAXPROCS=1 \
     AUTH_MODE=off \
     COOKIE_SECURE=false \
     HTTP_ADDR="127.0.0.1:${PORT}" \
@@ -140,6 +143,7 @@ start_server() {
     VAULT_PASSWORD_PROD=synthetic-destination-password \
       "$TMP_DIR/vaultsmith" >"$TMP_DIR/server.log" 2>&1 &
   else
+    GOMAXPROCS=1 \
     AUTH_MODE=off \
     COOKIE_SECURE=false \
     HTTP_ADDR="127.0.0.1:${PORT}" \
@@ -199,6 +203,81 @@ check_metric() {
     printf 'missing metric in %s: %s\n' "$1" "$2" >&2
     metrics_failed=true
   fi
+}
+
+check_mcp_admission() {
+  local expected="$1"
+  python3 - "$PORT" "$mcp_request" "$expected" <<'PY' | tee "$METRICS_DIR/admission-$expected.txt"
+import contextlib
+import http.client
+import json
+import socket
+import sys
+
+port, request_file, expected = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+with open(request_file, "rb") as fixture:
+    body = fixture.read()
+# Reuse the smoke's ten-second startup budget for socket progress. A timeout
+# means the expected protocol header never arrived; it must fail, not truncate.
+timeout = 10
+mcp_headers = {
+    "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+    "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "verify_rotation_attestation",
+}
+headers = (
+    "POST /mcp HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n"
+    + "".join(f"{name}: {value}\r\n" for name, value in mcp_headers.items())
+    + f"Expect: 100-continue\r\nContent-Length: {len(body)}\r\n\r\n"
+).encode("ascii")
+
+def read_headers(stream):
+    status = int(stream.readline().split()[1])
+    return status, http.client.parse_headers(stream)
+
+def assert_result(status, result):
+    assert status == 200, f"available verification HTTP {status}, wanted 200"
+    if expected == "ready":
+        assert result["result"]["isError"] is False and result["result"]["structuredContent"]["valid"] is True, "ready verification failed"
+    else:
+        assert result["result"]["isError"] is True and result["result"]["structuredContent"]["error"]["code"] == expected, "unavailable verification classification changed"
+
+try:
+    with contextlib.ExitStack() as cleanup:
+        # The 100 response proves the handler reached its first body read;
+        # with the single fixture slot, this deterministically saturates it.
+        held = cleanup.enter_context(socket.create_connection(("127.0.0.1", port), timeout))
+        held_stream = cleanup.enter_context(held.makefile("rb"))
+        held.sendall(headers)
+        status, _ = read_headers(held_stream)
+        assert status == 100, f"available verification HTTP {status}, wanted 100 before body"
+
+        probe = cleanup.enter_context(socket.create_connection(("127.0.0.1", port), timeout))
+        probe_stream = cleanup.enter_context(probe.makefile("rb"))
+        probe.sendall(headers)
+        status, response_headers = read_headers(probe_stream)
+        print(json.dumps({"case": expected + " saturated", "status": status, "submitted_body_bytes": 0}), flush=True)
+        assert status == 503, f"saturated verification HTTP {status}, wanted 503 without 100/body read"
+        result = json.loads(probe_stream.read(int(response_headers["Content-Length"])))
+        assert result["error"]["code"] == "attestation_busy" and response_headers["Retry-After"] == "1", "busy response contract changed"
+
+        with contextlib.closing(http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)) as connection:
+            connection.request("POST", "/api/v1/profiles/prod/encrypt", b'{"plaintext":"synthetic-admission-input"}', {"Content-Type": "application/json"})
+            response = connection.getresponse()
+            response.read()
+            assert response.status == 200, f"verification consumed operation capacity (HTTP {response.status})"
+
+        held.sendall(body)
+        status, response_headers = read_headers(held_stream)
+        assert_result(status, json.loads(held_stream.read(int(response_headers["Content-Length"]))))
+
+        with contextlib.closing(http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)) as connection:
+            connection.request("POST", "/mcp", body, mcp_headers)
+            response = connection.getresponse()
+            assert_result(response.status, json.loads(response.read()))
+        print(json.dumps({"case": expected + " restored", "status": 200, "result_class": expected, "verifier_capacity": 1, "operation_capacity": 1}), flush=True)
+except TimeoutError:
+    raise SystemExit(f"MCP admission smoke exceeded socket progress budget={timeout}s; inspect the local fixture server and rerun make smoke-attestation") from None
+PY
 }
 
 check_discovery() {
@@ -398,6 +477,7 @@ check_metric verify 'vaultsmith_operation_requests_total{operation="verify",outc
 check_metric verify 'vaultsmith_operation_duration_seconds_count{operation="verify"} 6'
 check_metric verify 'vaultsmith_attestation_verify_total{outcome="success"} 5'
 check_metric verify 'vaultsmith_attestation_verify_total{outcome="invalid"} 1'
+check_mcp_admission ready
 
 stop_server
 start_server "$prod_only_profiles" true
@@ -421,6 +501,7 @@ check_metric disabled 'vaultsmith_operation_requests_total{operation="rotate",ou
 check_metric disabled 'vaultsmith_operation_duration_seconds_count{operation="rotate"} 1'
 curl -fsS "http://127.0.0.1:${PORT}/api/v1/session" >"$TMP_DIR/off-session.json"
 assert_json "$TMP_DIR/off-session.json" '.attestationEnabled == false' 'off mode advertised attestation capability'
+check_mcp_admission feature_unavailable
 
 [[ "$metrics_failed" == "false" ]] || fail 'metrics checks failed; sanitized scrapes are in .tmp/smoke-attestation/'
-printf 'attestation smoke: ok (discovery enabled/disabled, rotation, semantic failures, restart, reload, revocation, REST, MCP, off-mode, metrics); scrapes: .tmp/smoke-attestation/\n'
+printf 'attestation smoke: ok (discovery enabled/disabled, rotation, semantic failures, restart, reload, revocation, REST, MCP admission, off-mode, metrics); evidence: .tmp/smoke-attestation/\n'

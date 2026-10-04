@@ -178,25 +178,21 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		if verifyPreflightErr == nil {
-			lease, err = h.service.VerifierAdmission().TryAcquire(r.Context())
-			if err != nil {
-				if errors.Is(err, vaultservice.ErrVerifierAdmissionSaturated) || errors.Is(err, vaultservice.ErrAdmissionSaturated) {
-					recordMCPToolOutcome(w, "busy")
-					w.Header().Set("Retry-After", "1")
-					writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeAttestationBusy), "rotation attestation verification is busy")
-				} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
-				} else {
-					writeServiceError(w, err)
-				}
-				return
+		lease, err = h.service.VerifierAdmission().TryAcquire(r.Context())
+		if err != nil {
+			if errors.Is(err, vaultservice.ErrVerifierAdmissionSaturated) || errors.Is(err, vaultservice.ErrAdmissionSaturated) {
+				recordMCPToolOutcome(w, "busy")
+				w.Header().Set("Retry-After", "1")
+				writeError(w, http.StatusServiceUnavailable, string(vaultservice.CodeAttestationBusy), "rotation attestation verification is busy")
+			} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service is temporarily unavailable")
+			} else {
+				writeServiceError(w, err)
 			}
-			defer lease.Release()
-			leaseContext = lease.Context(r.Context())
-		} else {
-			leaseContext = r.Context()
+			return
 		}
+		defer lease.Release()
+		leaseContext = lease.Context(r.Context())
 	} else {
 		lease, err = h.service.Admission().TryAcquire(r.Context())
 		if err != nil {
@@ -387,7 +383,7 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 		}
 		mcpWriteResult(w, id, mcpCallResult(profilesResponse{Profiles: public}, false))
 	case "verify_rotation_attestation":
-		if lease == nil {
+		if verifyPreflightErr != nil {
 			code := vaultservice.CodeAttestationUnavailable
 			verifyOutcome = "unavailable"
 			if vaultservice.HasCode(verifyPreflightErr, vaultservice.CodeFeatureUnavailable) {
