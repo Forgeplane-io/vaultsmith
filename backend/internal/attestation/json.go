@@ -36,6 +36,11 @@ type jsonMember struct {
 
 var errStrictJSON = errors.New("invalid JSON")
 
+// Attestation schemas need only the root object and immediate input/output/
+// binding objects. Count the root as one container and reject before entering
+// a third object or array. Revisit only if a supported schema adds nesting.
+const maxAttestationJSONContainerDepth = 2
+
 // parseStrictJSON parses the JSON grammar without the duplicate-member and
 // Unicode-scalar ambiguity of encoding/json. Callers still validate the
 // resulting value against their protocol schema.
@@ -57,8 +62,9 @@ func parseStrictJSON(data []byte) (jsonValue, error) {
 }
 
 type strictJSONParser struct {
-	data []byte
-	pos  int
+	data  []byte
+	pos   int
+	depth int
 }
 
 func (p *strictJSONParser) parseValue() (jsonValue, error) {
@@ -66,9 +72,15 @@ func (p *strictJSONParser) parseValue() (jsonValue, error) {
 		return jsonValue{}, errStrictJSON
 	}
 	switch p.data[p.pos] {
-	case '{':
-		return p.parseObject()
-	case '[':
+	case '{', '[':
+		if p.depth >= maxAttestationJSONContainerDepth {
+			return jsonValue{}, errStrictJSON
+		}
+		p.depth++
+		defer func() { p.depth-- }()
+		if p.data[p.pos] == '{' {
+			return p.parseObject()
+		}
 		return p.parseArray()
 	case '"':
 		value, err := p.parseString()

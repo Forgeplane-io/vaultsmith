@@ -338,6 +338,74 @@ write_rotation_request() {
     >"$TMP_DIR/rotate-request.json"
 }
 
+check_nested_json() {
+  python3 - "$PORT" "$mcp_request" <<'PY' | tee "$METRICS_DIR/nested-json.jsonl"
+import base64
+import contextlib
+import copy
+import http.client
+import json
+import sys
+
+port = int(sys.argv[1])
+with open(sys.argv[2], "rb") as fixture:
+    valid = json.load(fixture)
+# Match maxAttestationJWSComponentBytes; construction stays inside its encoded
+# bound so the transport cannot mask parser rejection. Reuse the smoke's
+# ten-second socket-progress budget, not a performance acceptance threshold.
+encoded_limit, timeout = 64 << 10, 10
+mcp_headers = {
+    "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+    "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call", "Mcp-Name": "verify_rotation_attestation",
+}
+
+def request(transport, value):
+    path = "/mcp" if transport == "mcp" else "/api/v1/attestations/verify"
+    body = value if transport == "mcp" else value["params"]["arguments"]
+    headers = mcp_headers if transport == "mcp" else {"Content-Type": "application/json"}
+    with contextlib.closing(http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)) as connection:
+        connection.request("POST", path, json.dumps(body), headers)
+        response = connection.getresponse()
+        result = json.loads(response.read())
+        assert response.getheader("Cache-Control") == "no-store", "verification cache policy changed"
+        assert response.getheader("X-Request-ID"), "verification request ID missing"
+        return response.status, result
+
+try:
+    for component in ("protected", "payload"):
+        for shape, opening, closing in (("object", '{"x":', '}'), ("array", '[', ']')):
+            levels = (encoded_limit * 3 // 4 - len('{"x":0}')) // (len(opening) + len(closing))
+            raw = '{"x":' + opening * levels + '0' + closing * levels + '}'
+            encoded = base64.urlsafe_b64encode(raw.encode("ascii")).decode("ascii").rstrip("=")
+            assert len(encoded) <= encoded_limit, f"encoded-component budget={encoded_limit} observed={len(encoded)}; resize fixture"
+            malformed = copy.deepcopy(valid)
+            malformed["params"]["arguments"]["attestation"][component] = encoded
+            for transport in ("rest", "mcp"):
+                status, result = request(transport, malformed)
+                if transport == "rest":
+                    assert status == 400 and set(result) == {"error"}, "REST malformed envelope changed"
+                    assert result["error"]["code"] == "invalid_request", "REST malformed classification changed"
+                    assert result["error"]["message"] == "invalid attestation verification request", "REST error disclosed parser detail"
+                else:
+                    assert status == 200 and result["result"]["isError"] is True, "MCP malformed envelope changed"
+                    assert "structuredContent" not in result["result"], "MCP malformed request exposed claims"
+                    assert result["result"]["content"] == [{"type": "text", "text": "tool arguments are invalid"}], "MCP error disclosed parser detail"
+                print(json.dumps({"transport": transport, "component": component, "shape": shape,
+                                  "container_depth": levels + 1, "decoded_bytes": len(raw), "encoded_bytes": len(encoded),
+                                  "status": status, "result_class": "malformed_request"}), flush=True)
+                # A completed valid check also proves verifier capacity was
+                # released, rather than merely displaying a success message.
+                status, result = request(transport, valid)
+                content = result["result"]["structuredContent"] if transport == "mcp" else result
+                assert status == 200 and content["valid"] is True, "valid control failed after malformed request"
+                if transport == "mcp":
+                    assert result["result"]["isError"] is False, "MCP valid control returned tool error"
+    print(json.dumps({"case": "post-malformed valid controls", "completed": 8}), flush=True)
+except TimeoutError:
+    raise SystemExit(f"nested JSON smoke exceeded socket progress budget={timeout}s; inspect the local fixture server and rerun make smoke-attestation") from None
+PY
+}
+
 write_verify_request() {
   local proof_file="$1"
   local input_file="$2"
@@ -478,6 +546,10 @@ check_metric verify 'vaultsmith_operation_duration_seconds_count{operation="veri
 check_metric verify 'vaultsmith_attestation_verify_total{outcome="success"} 5'
 check_metric verify 'vaultsmith_attestation_verify_total{outcome="invalid"} 1'
 check_mcp_admission ready
+check_nested_json
+scrape_metrics nested-json
+check_metric nested-json 'vaultsmith_operation_requests_total{operation="verify",outcome="invalid_request"} 8'
+check_metric nested-json 'vaultsmith_attestation_verify_total{outcome="invalid"} 9'
 
 stop_server
 start_server "$prod_only_profiles" true
@@ -504,4 +576,4 @@ assert_json "$TMP_DIR/off-session.json" '.attestationEnabled == false' 'off mode
 check_mcp_admission feature_unavailable
 
 [[ "$metrics_failed" == "false" ]] || fail 'metrics checks failed; sanitized scrapes are in .tmp/smoke-attestation/'
-printf 'attestation smoke: ok (discovery enabled/disabled, rotation, semantic failures, restart, reload, revocation, REST, MCP admission, off-mode, metrics); evidence: .tmp/smoke-attestation/\n'
+printf 'attestation smoke: ok (discovery enabled/disabled, rotation, semantic failures, restart, reload, revocation, REST/MCP nested JSON, MCP admission, off-mode, metrics); evidence: .tmp/smoke-attestation/\n'
