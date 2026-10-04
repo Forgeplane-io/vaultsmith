@@ -670,27 +670,40 @@ func TestRunRejectsUnsafeDecryptResultsAndGenericExecutorFailures(t *testing.T) 
 }
 
 func TestRotateRejectsUnsafeDecryptedOutputBeforeEncrypt(t *testing.T) {
-	executor := &fakeExecutor{decrypt: func(context.Context, string, string) (string, error) {
-		return strings.Repeat("x", MaxPlaintextBytes+1), nil
-	}}
-	admission := testAdmission(t)
-	service := New(testProfiles(), executor, nil, admission)
-	lease := acquireLease(t, admission)
-	leaseContext := lease.Context(context.Background())
-	prepared, err := service.Prepare(leaseContext, caller.Anonymous(), Command{
-		Operation:            OperationRotate,
-		SourceProfileID:      "dev",
-		DestinationProfileID: "prod",
-		Value:                "vault",
-	}, lease)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := prepared.Run(leaseContext); !HasCode(err, CodeOperationFailed) {
-		t.Fatalf("Run() error = %v, want operation_failed", err)
-	}
-	if len(executor.calls) != 1 || executor.calls[0].operation != "decrypt" {
-		t.Fatalf("executor calls = %#v, want decrypt only", executor.calls)
+	for _, test := range []struct {
+		name      string
+		plaintext string
+		err       error
+	}{
+		{name: "oversized", plaintext: strings.Repeat("x", MaxPlaintextBytes+1)},
+		{name: "invalid UTF-8", plaintext: string([]byte{0xff, 0xfe, 0xfd})},
+		{name: "executor failure", err: errors.New("synthetic-sensitive-executor-detail")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &fakeExecutor{decrypt: func(context.Context, string, string) (string, error) {
+				return test.plaintext, test.err
+			}}
+			admission := testAdmission(t)
+			service := New(testProfiles(), executor, nil, admission)
+			lease := acquireLease(t, admission)
+			leaseContext := lease.Context(context.Background())
+			prepared, err := service.Prepare(leaseContext, caller.Anonymous(), Command{
+				Operation:            OperationRotate,
+				SourceProfileID:      "dev",
+				DestinationProfileID: "prod",
+				Value:                "vault",
+			}, lease)
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := prepared.Run(leaseContext)
+			if output != "" || !HasCode(err, CodeOperationFailed) || err.Error() != "vault operation failed" {
+				t.Fatalf("Run() returned output or an unsafe error: %v", err)
+			}
+			if len(executor.calls) != 1 || executor.calls[0].operation != "decrypt" {
+				t.Fatalf("executor calls = %#v, want decrypt only", executor.calls)
+			}
+		})
 	}
 }
 

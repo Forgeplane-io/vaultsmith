@@ -82,6 +82,7 @@ describe('Ansible Vault snippet helpers', () => {
       '\uFFFE',
       '\uFFFF',
       String.fromCharCode(0xD800),
+      String.fromCharCode(0xDC00),
     ]) {
       const ciphertext = `$ANSIBLE_VAULT;1.2;AES256;prod\npayload-one${character}payload-two`
 
@@ -91,12 +92,20 @@ describe('Ansible Vault snippet helpers', () => {
     }
   })
 
-  it('preserves valid paired astral characters in ciphertext', () => {
+  it.each([0xD800, 0xDBFF])('rejects a terminal unpaired high surrogate %i in ciphertext', (codeUnit) => {
+    const ciphertext = `${VAULT_1_2_CIPHERTEXT}${String.fromCharCode(codeUnit)}`
+
+    expect(() => formatAnsibleVaultSnippet('secret_key', ciphertext)).toThrow(
+      'Ciphertext contains YAML-unsafe characters',
+    )
+  })
+
+  it.each(['payload-two', ''])('preserves valid paired astral characters before %j in ciphertext', (suffix) => {
     const character = String.fromCodePoint(0x1F600)
-    const ciphertext = `$ANSIBLE_VAULT;1.2;AES256;prod\npayload-one${character}payload-two`
+    const ciphertext = `$ANSIBLE_VAULT;1.2;AES256;prod\npayload-one${character}${suffix}`
 
     expect(formatAnsibleVaultSnippet('secret_key', ciphertext)).toContain(
-      `${INDENT}payload-one${character}payload-two`,
+      `${INDENT}payload-one${character}${suffix}`,
     )
   })
 })

@@ -1,0 +1,155 @@
+{
+  "phase": "after",
+  "sourceCommit": "cdbce8ed7517af5c8d79ed49b74d3fdd571165fa",
+  "changedFiles": [
+    "frontend/src/App.test.tsx",
+    "frontend/src/GenerateWorkbench.test.tsx",
+    "frontend/src/ansibleSnippet.test.ts",
+    "frontend/src/ansibleSnippet.ts"
+  ],
+  "formatterSha256": "5cd6c19ba056430ab7f42d0f04df32fc7ab54438c3cb3056d9aa465799e789a7",
+  "bundleFile": "assets/index-b2w0rIpS.js",
+  "bundleSha256": "8cd3dade76852dfbd631c3c23619f665c7ed9eb9d1cf2f18b9fdff0713a012f8",
+  "browser": "Chrome/154.0.8037.98",
+  "route": "/",
+  "viewports": [
+    {
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "width": 390,
+      "height": 844
+    }
+  ],
+  "deviceScaleFactor": 1,
+  "role": "loopback-only authentication-off synthetic operator; no authenticated-edge claim",
+  "fixture": "Fresh page per case. Real Go encrypt/generate/decrypt; response proxy injects terminal high or paired suffix only. Browser clipboard stub records in memory and resolves/rejects; OS clipboard not used.",
+  "checks": [
+    "desktop/blocked: unsafe snippet never reaches clipboard",
+    "desktop/blocked: generic preparation error",
+    "desktop/blocked: no formatted fallback",
+    "desktop/blocked: raw response retained",
+    "desktop/blocked: no horizontal page overflow",
+    "desktop/success: unsafe snippet never reaches clipboard",
+    "desktop/success: generic preparation error",
+    "desktop/success: no formatted fallback",
+    "desktop/success: raw response retained",
+    "desktop/success: no horizontal page overflow",
+    "desktop/normal: manual fallback retained",
+    "desktop/paired: manual fallback retained",
+    "desktop: valid terminal pair preserved",
+    "desktop: Generate HTTP boundary rejects malformed result before rendering",
+    "narrow/blocked: unsafe snippet never reaches clipboard",
+    "narrow/blocked: generic preparation error",
+    "narrow/blocked: no formatted fallback",
+    "narrow/blocked: raw response retained",
+    "narrow/blocked: no horizontal page overflow",
+    "narrow/success: unsafe snippet never reaches clipboard",
+    "narrow/success: generic preparation error",
+    "narrow/success: no formatted fallback",
+    "narrow/success: raw response retained",
+    "narrow/success: no horizontal page overflow",
+    "narrow/normal: manual fallback retained",
+    "narrow/paired: manual fallback retained",
+    "narrow: valid terminal pair preserved",
+    "narrow: Generate HTTP boundary rejects malformed result before rendering"
+  ],
+  "nativeOutcomes": [
+    {
+      "operation": "encrypt",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "normal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "paired",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "generate",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "normal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "encrypt",
+      "fixture": "paired",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    },
+    {
+      "operation": "generate",
+      "fixture": "terminal",
+      "operationStatus": 200,
+      "decryptStatus": 200,
+      "expectedPlaintext": true
+    }
+  ],
+  "screenshots": [
+    {
+      "file": "after-terminal-blocked-desktop.png",
+      "sha256": "e5cba630fde3d8d484674be0d2db69f77c683994534803fee9f20576f5ddf386"
+    },
+    {
+      "file": "after-terminal-success-desktop.png",
+      "sha256": "0ca293358f3075bfd9ecaf9aad3e30ef88de826ca4b6f6d18ceab804740cf581"
+    },
+    {
+      "file": "after-terminal-blocked-narrow.png",
+      "sha256": "a143551c22b9b01e8fc70cbad8df52491f1360172b37fc18e1abc3f5edacd38b"
+    },
+    {
+      "file": "after-terminal-success-narrow.png",
+      "sha256": "c3f4993ed58ee9bb99cb8640ec43bdcbe47d69ccde4c160cd4af6c966f742827"
+    }
+  ],
+  "elapsedMs": 3256,
+  "gaps": [
+    "Rotate shares the App copy handler but is not browser-pictured",
+    "Generate malformed component input is tested separately; full HTTP boundary already rejects it",
+    "Valid manual-copy controls checked but not pictured",
+    "No native OIDC, screen-reader, touch, or OS clipboard verification"
+  ]
+}

@@ -20,7 +20,7 @@ function hasYamlUnsafeCiphertext(ciphertext: string): boolean {
     const codePoint = ciphertext.charCodeAt(index)
     if (codePoint >= 0xD800 && codePoint <= 0xDBFF) {
       const nextCodePoint = ciphertext.charCodeAt(index + 1)
-      if (nextCodePoint < 0xDC00 || nextCodePoint > 0xDFFF) return true
+      if (!(nextCodePoint >= 0xDC00 && nextCodePoint <= 0xDFFF)) return true
       index += 1
     } else if (codePoint >= 0xDC00 && codePoint <= 0xDFFF) {
       return true

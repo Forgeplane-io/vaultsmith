@@ -88,7 +88,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		recorder = &statusRecordingResponseWriter{ResponseWriter: w}
 		w = recorder
 		defer func() {
-			h.metrics.observeOperation(operation, recorder.statusCode(), time.Since(started))
+			h.metrics.observeOperation(operation, recorder.operationOutcome(), time.Since(started))
 		}()
 	}
 	switch r.URL.Path {

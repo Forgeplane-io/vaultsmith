@@ -30,10 +30,9 @@ const (
 )
 
 var (
-	ErrInvalidPassword   = errors.New("invalid vault password")
-	ErrInvalidVault      = errors.New("invalid vault text")
-	ErrInvalidVaultID    = errors.New("invalid vault ID")
-	ErrPlaintextTooLarge = errors.New("plaintext is too large")
+	ErrInvalidPassword = errors.New("invalid vault password")
+	ErrInvalidVault    = errors.New("invalid vault text")
+	ErrInvalidVaultID  = errors.New("invalid vault ID")
 )
 
 // Encrypt encodes plaintext using the Ansible Vault 1.2/AES256 format with a
@@ -224,22 +223,6 @@ func parseEnvelope(vaultText string) (parsedEnvelope, error) {
 		expectedMAC: expectedMAC,
 		ciphertext:  ciphertext,
 	}, nil
-}
-
-// Reencrypt decrypts a Vault value with the source password and encrypts it
-// with the destination password and label without returning the plaintext.
-func Reencrypt(vaultText string, sourcePassword, destinationPassword []byte, destinationVaultID string) (string, error) {
-	plaintext, err := Decrypt(vaultText, sourcePassword)
-	if err != nil {
-		return "", err
-	}
-	if !utf8.Valid(plaintext) {
-		return "", ErrInvalidVault
-	}
-	if len(plaintext) > MaxPlaintextBytes {
-		return "", ErrPlaintextTooLarge
-	}
-	return Encrypt(plaintext, destinationPassword, destinationVaultID)
 }
 
 func isSupportedHeader(header string) bool {

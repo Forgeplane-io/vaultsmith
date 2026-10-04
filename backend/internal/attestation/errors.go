@@ -31,17 +31,6 @@ const (
 	InputDigestMismatch  VerificationReason = "input_digest_mismatch"
 	OutputDigestMismatch VerificationReason = "output_digest_mismatch"
 	BindingMismatch      VerificationReason = "binding_mismatch"
-
-	// Reason-prefixed aliases make the semantic vocabulary discoverable without
-	// requiring callers to rely on the short constant names.
-	ReasonSignatureInvalid     = SignatureInvalid
-	ReasonUnknownKey           = UnknownKey
-	ReasonKeyRevoked           = KeyRevoked
-	ReasonIssuerMismatch       = IssuerMismatch
-	ReasonUnsupportedVersion   = UnsupportedVersion
-	ReasonInputDigestMismatch  = InputDigestMismatch
-	ReasonOutputDigestMismatch = OutputDigestMismatch
-	ReasonBindingMismatch      = BindingMismatch
 )
 
 // VerificationError is a safe semantic verification failure. It contains only

@@ -45,7 +45,7 @@ func FuzzCanonicalEnvelope(f *testing.F) {
 		if len(value) > (5<<20)+256 {
 			t.Skip()
 		}
-		_, _ = canonicalEnvelopeArgument(value)
+		_, _ = InputDigest(value)
 	})
 }
 

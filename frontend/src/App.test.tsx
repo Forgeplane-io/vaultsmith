@@ -554,6 +554,27 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('textbox', { name: 'Ansible snippet to copy manually' })).toHaveValue(snippet)
   })
 
+  it('rejects an encrypted result ending in an unpaired high surrogate before snippet copy', async () => {
+    const ciphertext = `$ANSIBLE_VAULT;1.2;AES256;dev\n00112233${String.fromCharCode(0xD800)}`
+    mockProfileLoad().mockResolvedValueOnce(encryptResultResponse(ciphertext))
+    const user = userEvent.setup()
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) }
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: clipboard })
+
+    render(<App />)
+    await user.type(await findReadyValueInput(), 'fixture-value')
+    await user.click(screen.getByRole('button', { name: 'Encrypt' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext))
+    await user.type(screen.getByRole('textbox', { name: 'Ansible variable name' }), 'app_secret')
+    await user.click(screen.getByRole('button', { name: 'Copy Ansible snippet' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not prepare the Ansible snippet; copy the result manually')
+    expect(screen.getByRole('alert')).not.toHaveTextContent(ciphertext)
+    expect(clipboard.writeText).not.toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Ansible snippet to copy manually' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Encrypted value' })).toHaveValue(ciphertext)
+  })
+
   it('ignores late snippet clipboard failures after the result is cleared', async () => {
     const ciphertext = '$ANSIBLE_VAULT;1.2;AES256;dev\n00112233'
     let rejectCopy: ((cause?: unknown) => void) | undefined
@@ -1021,11 +1042,14 @@ describe('Vaultsmith operator experience', () => {
   it('offers verify without profiles and shows only a stable semantic failure', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(attestedSessionResponse())
-      .mockResolvedValueOnce(jsonResponse({ error: { code: 'forbidden', message: 'private profile detail' } }, { status: 403 }))
+      .mockResolvedValueOnce(profilesResponse([]))
       .mockResolvedValueOnce(jsonResponse({ valid: false, reason: 'binding_mismatch' }))
     const user = userEvent.setup()
 
     render(<App />)
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry loading environments' })).not.toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: 'Set verify mode' }))
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Set verify mode' })).toHaveAttribute('aria-pressed', 'true')
@@ -1040,7 +1064,6 @@ describe('Vaultsmith operator experience', () => {
     expect(await screen.findByRole('heading', { name: 'Not verified' })).toBeInTheDocument()
     const verificationResult = screen.getByRole('region', { name: 'Verification result' })
     expect(verificationResult).toHaveTextContent('The attestation binding does not match the expected context.')
-    expect(verificationResult).not.toHaveTextContent('private profile detail')
     expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/attestations/verify', expect.objectContaining({ method: 'POST' }))
 
     await user.click(screen.getByRole('button', { name: 'Set encrypt mode' }))
@@ -1049,6 +1072,46 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('textbox', { name: 'Original Vault' })).toHaveValue('')
     expect(screen.getByRole('textbox', { name: 'Rotated Vault' })).toHaveValue('')
     expect(screen.queryByRole('region', { name: 'Verification result' })).not.toBeInTheDocument()
+  })
+
+  it('surfaces unexpected profile 403 with retry while standalone Verify remains usable', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(attestedSessionResponse())
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'forbidden', message: 'private profile detail' } }, { status: 403 }))
+      .mockResolvedValueOnce(jsonResponse({ valid: true }))
+      .mockResolvedValueOnce(attestedSessionResponse())
+      .mockResolvedValueOnce(profilesResponse())
+    const user = userEvent.setup()
+
+    render(<App />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Profiles could not be loaded.')
+    expect(document.body).not.toHaveTextContent('private profile detail')
+    expect(screen.getByRole('button', { name: 'Retry loading environments' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Set re-key mode' })).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Set verify mode' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Attestation' }), { target: { value: '{"protected":"header","payload":"claims","signature":"signature"}' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Original Vault' }), { target: { value: 'input-vault' } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rotated Vault' }), { target: { value: 'output-vault' } })
+    expect(screen.getByRole('button', { name: 'Verify' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Verify' }))
+    expect(await screen.findByRole('heading', { name: 'Verified' })).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/v1/attestations/verify', expect.objectContaining({ method: 'POST' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Profiles could not be loaded.')
+    expect(document.body).not.toHaveTextContent('private profile detail')
+
+    await user.click(screen.getByRole('button', { name: 'Retry loading environments' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Retry loading environments' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Set encrypt mode' }))
+    expect(await screen.findByRole('option', { name: 'Development' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Environment' })).toHaveValue('dev')
+    expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Set re-key mode' })).toBeEnabled()
+    expect(fetchMock).toHaveBeenCalledTimes(5)
   })
 
   it('filters selectors by action and clears ineligible selections across modes', async () => {

@@ -19,7 +19,7 @@ const ScopeAttestationVerify = "vaultsmith.attestation.verify"
 
 // RotationResult is the result-aware form of a rotation. Legacy callers can
 // continue using PreparedOperation.Run, while proof-aware callers use
-// RunResult or RunWithResult.
+// RunResult.
 type RotationResult struct {
 	VaultText   string              `json:"vaultText"`
 	Attestation *attestation.Signed `json:"attestation,omitempty"`
@@ -29,10 +29,6 @@ type RotationResult struct {
 type AttestationRequest struct {
 	Binding *attestation.Binding `json:"binding,omitempty"`
 }
-
-// RotationAttestationRequest is a descriptive alias for callers that want to
-// name the request by operation rather than transport feature.
-type RotationAttestationRequest = AttestationRequest
 
 // AttestationManager is the service-layer seam for the local keyring manager.
 // It intentionally contains only signing and issuer-bound resolution; the
@@ -57,16 +53,9 @@ type AttestationDiscovery interface {
 type ServiceOptions struct {
 	Generator          MaterialGenerator
 	AttestationManager AttestationManager
-	// Attestation is a compatibility spelling for AttestationManager.
-	Attestation        AttestationManager
 	AttestationEnabled bool
-	// ProofsEnabled is a compatibility spelling for AttestationEnabled.
-	ProofsEnabled     bool
-	VerifierAdmission *VerifierAdmission
+	VerifierAdmission  *VerifierAdmission
 }
-
-// Options is a short alias for ServiceOptions.
-type Options = ServiceOptions
 
 // NewWithOptions constructs the service with optional proof dependencies.
 // Proofs remain disabled unless explicitly enabled, preserving New behavior.
@@ -77,10 +66,6 @@ func NewWithOptions(profiles []Profile, executor Executor, authorizer Authorizer
 	verifierAdmission := options.VerifierAdmission
 	if verifierAdmission == nil {
 		verifierAdmission = NewRuntimeVerifierAdmission()
-	}
-	manager := options.AttestationManager
-	if manager == nil {
-		manager = options.Attestation
 	}
 	generator := options.Generator
 	if generator == nil {
@@ -118,8 +103,8 @@ func NewWithOptions(profiles []Profile, executor Executor, authorizer Authorizer
 		admission:          admission,
 		generator:          generator,
 		ready:              ready,
-		attestation:        manager,
-		attestationEnabled: options.AttestationEnabled || options.ProofsEnabled,
+		attestation:        options.AttestationManager,
+		attestationEnabled: options.AttestationEnabled,
 		verifierAdmission:  verifierAdmission,
 	}
 }
