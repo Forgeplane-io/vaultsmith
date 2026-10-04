@@ -16,6 +16,7 @@ import (
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authn"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/authz"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 )
@@ -119,6 +120,17 @@ func bearerHTTPFixture(t *testing.T) (http.Handler, *bearerIssuerFixture, *recor
 	return bearerHTTPFixtureWithMCP(t, false)
 }
 
+// A denied preflight must finish without installing the application deadline.
+type deadlineTrackingContext struct {
+	context.Context
+	queried bool
+}
+
+func (c *deadlineTrackingContext) Deadline() (time.Time, bool) {
+	c.queried = true
+	return c.Context.Deadline()
+}
+
 func TestNativeBearerCanonicalOperationSkipsCSRFAndSessionCookies(t *testing.T) {
 	handler, issuer, executor := bearerHTTPFixture(t)
 	request := httptest.NewRequest(http.MethodPost, "https://vaultsmith.example.test/api/v1/profiles/dev/encrypt", strings.NewReader(`{"plaintext":"synthetic"}`))
@@ -126,6 +138,7 @@ func TestNativeBearerCanonicalOperationSkipsCSRFAndSessionCookies(t *testing.T) 
 	request.Header.Set("Authorization", "Bearer "+issuer.token(t, "https://vaultsmith.example.test", "vaultsmith.encrypt"))
 	response := httptest.NewRecorder()
 
+	started := time.Now()
 	handler.ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
@@ -134,6 +147,10 @@ func TestNativeBearerCanonicalOperationSkipsCSRFAndSessionCookies(t *testing.T) 
 	if !executor.called {
 		t.Fatal("executor was not called")
 	}
+	deadline, ok := executor.ctx.Deadline()
+	if !ok || deadline.Before(started.Add(30*time.Second)) || deadline.After(time.Now().Add(30*time.Second)) {
+		t.Fatal("authorized execution did not receive the 30-second application deadline")
+	}
 	if cookies := response.Result().Cookies(); len(cookies) != 0 {
 		t.Fatalf("bearer response issued cookies: %#v", cookies)
 	}
@@ -141,6 +158,14 @@ func TestNativeBearerCanonicalOperationSkipsCSRFAndSessionCookies(t *testing.T) 
 
 func TestNativeBearerMissingAndInsufficientScopeChallengeBeforeBodyRead(t *testing.T) {
 	handler, issuer, _ := bearerHTTPFixture(t)
+	// Populate JWKS before observing only the application's deadline setup.
+	warm := httptest.NewRequest(http.MethodGet, "https://vaultsmith.example.test/api/v1/profiles", nil)
+	warm.Header.Set("Authorization", "Bearer "+issuer.token(t, "https://vaultsmith.example.test", vaultservice.ScopeProfileRead))
+	warmResponse := httptest.NewRecorder()
+	handler.ServeHTTP(warmResponse, warm)
+	if warmResponse.Code != http.StatusOK {
+		t.Fatalf("JWKS warm-up status = %d, want 200", warmResponse.Code)
+	}
 	for _, test := range []struct {
 		name          string
 		authorization string
@@ -153,6 +178,8 @@ func TestNativeBearerMissingAndInsufficientScopeChallengeBeforeBodyRead(t *testi
 		t.Run(test.name, func(t *testing.T) {
 			body := &trackingReader{}
 			request := httptest.NewRequest(http.MethodPost, "https://vaultsmith.example.test/api/v1/profiles/dev/encrypt", body)
+			ctx := &deadlineTrackingContext{Context: request.Context()}
+			request = request.WithContext(ctx)
 			request.Header.Set("Content-Type", "application/json")
 			if test.authorization != "" {
 				request.Header.Set("Authorization", test.authorization)
@@ -172,6 +199,52 @@ func TestNativeBearerMissingAndInsufficientScopeChallengeBeforeBodyRead(t *testi
 			}
 			if body.read {
 				t.Fatal("body was read before bearer challenge")
+			}
+			if ctx.queried {
+				t.Fatal("application deadline was installed before the bearer challenge")
+			}
+		})
+	}
+}
+
+func TestNativeBearerGenerateReadinessPrecedesDeadline(t *testing.T) {
+	issuer := newBearerIssuerFixture(t)
+	cfg := config.AuthConfig{
+		Mode: config.AuthModeNative,
+		OIDC: config.OIDCConfig{IssuerURL: issuer.server.URL, PublicBaseURL: "https://vaultsmith.example.test", GroupsClaim: "groups"},
+	}
+	verifier, err := authn.NewAccessTokenVerifier(context.Background(), cfg.OIDC.IssuerURL, cfg.OIDC.PublicBaseURL, cfg.OIDC.GroupsClaim, issuer.server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := issuer.token(t, cfg.OIDC.PublicBaseURL, vaultservice.ScopeEncrypt)
+	if _, err := verifier.Verify(context.Background(), token); err != nil {
+		t.Fatal(err)
+	}
+	authenticator := &authn.Authenticator{Config: cfg, Access: verifier}
+	api := NewWithDependencies([]Profile{{ID: "dev", Label: "Development"}}, nil, Dependencies{Auth: authenticator, AuthConfig: cfg})
+	handler := WrapSecurityWithOptions(api, cfg, SecurityOptions{Auth: authenticator, MCPEnabled: true})
+	for _, path := range []string{"/api/v1/generate", "/mcp"} {
+		t.Run(path, func(t *testing.T) {
+			body := &trackingReader{}
+			request := httptest.NewRequest(http.MethodPost, cfg.OIDC.PublicBaseURL+path, body)
+			ctx := &deadlineTrackingContext{Context: request.Context()}
+			request = request.WithContext(ctx)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer "+token)
+			if path == "/mcp" {
+				request.Header.Set("Accept", "application/json, text/event-stream")
+				request.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
+				request.Header.Set("Mcp-Method", "tools/call")
+				request.Header.Set("Mcp-Name", "generate_token")
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"code":"not_ready"`) {
+				t.Fatalf("readiness response = %d, want 503 not_ready", response.Code)
+			}
+			if body.read || ctx.queried || response.Header().Get("WWW-Authenticate") != "" {
+				t.Fatal("readiness denial read the body, installed a deadline, or issued a scope challenge")
 			}
 		})
 	}

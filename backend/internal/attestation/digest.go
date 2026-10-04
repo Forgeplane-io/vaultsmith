@@ -13,10 +13,9 @@ var (
 )
 
 // InputDigest canonicalizes a Vault envelope and returns its lowercase
-// domain-separated SHA-256 digest. A string is the normal input; []byte is
-// accepted for callers that already hold the envelope bytes.
-func InputDigest(value any) (string, error) {
-	canonical, err := canonicalEnvelopeArgument(value)
+// domain-separated SHA-256 digest.
+func InputDigest(value string) (string, error) {
+	canonical, err := ansiblevault.CanonicalEnvelope(value)
 	if err != nil {
 		return "", errMalformed
 	}
@@ -26,8 +25,8 @@ func InputDigest(value any) (string, error) {
 // OutputDigest canonicalizes a Vault envelope and returns its lowercase
 // domain-separated SHA-256 digest. It uses a distinct role prefix from
 // InputDigest, so swapping the two claims cannot verify.
-func OutputDigest(value any) (string, error) {
-	canonical, err := canonicalEnvelopeArgument(value)
+func OutputDigest(value string) (string, error) {
+	canonical, err := ansiblevault.CanonicalEnvelope(value)
 	if err != nil {
 		return "", errMalformed
 	}
@@ -44,17 +43,6 @@ func InputDigestBytes(canonical []byte) string {
 // role domain.
 func OutputDigestBytes(canonical []byte) string {
 	return digestCanonical(outputDigestDomain, canonical)
-}
-
-func canonicalEnvelopeArgument(value any) ([]byte, error) {
-	switch typed := value.(type) {
-	case string:
-		return ansiblevault.CanonicalEnvelope(typed)
-	case []byte:
-		return ansiblevault.CanonicalEnvelope(string(typed))
-	default:
-		return nil, errMalformed
-	}
 }
 
 func digestCanonical(domain, canonical []byte) string {

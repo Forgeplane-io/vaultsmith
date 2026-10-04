@@ -69,8 +69,10 @@ func WrapSecurityWithOptions(next http.Handler, cfg config.AuthConfig, options S
 			next.ServeHTTP(w, r)
 		})
 	}
+	// Keep the service-owned Bearer preflight ahead of the deadline wrapper.
+	handler, _ := next.(*Handler)
 	next = applicationDeadlineMiddleware(next)
-	next = credentialDispatchMiddleware(next, cfg, options)
+	next = credentialDispatchMiddleware(next, handler, cfg, options)
 	next = applicationPreflightMiddleware(next, options.MCPEnabled)
 	next = corsMiddleware(next, cfg, options.MCPEnabled)
 	next = mcpMethodMiddleware(next, options.MCPEnabled)
@@ -226,7 +228,7 @@ func preflightApplicationRequest(w http.ResponseWriter, r *http.Request, mcpEnab
 	return r, true
 }
 
-func credentialDispatchMiddleware(next http.Handler, cfg config.AuthConfig, options SecurityOptions) http.Handler {
+func credentialDispatchMiddleware(next http.Handler, handler *Handler, cfg config.AuthConfig, options SecurityOptions) http.Handler {
 	sessionHandler := next
 	csrfSessionHandler := next
 	if cfg.Mode == config.AuthModeNative && options.Auth != nil {
@@ -272,7 +274,7 @@ func credentialDispatchMiddleware(next http.Handler, cfg config.AuthConfig, opti
 				if !ok {
 					return
 				}
-				if !preflightBearerRoute(w, r, next, actor, cfg) {
+				if !preflightBearerRoute(w, r, handler, actor, cfg) {
 					return
 				}
 				next.ServeHTTP(w, r.WithContext(contextWithCaller(r.Context(), actor)))
@@ -305,7 +307,7 @@ func credentialDispatchMiddleware(next http.Handler, cfg config.AuthConfig, opti
 			if !ok {
 				return
 			}
-			if !preflightMCPBearerRoute(w, r, next, actor, cfg) {
+			if !preflightMCPBearerRoute(w, r, handler, actor, cfg) {
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(contextWithCaller(r.Context(), actor)))
@@ -334,11 +336,8 @@ func bearerRouteRequiredScope(r *http.Request) string {
 	}
 }
 
-func preflightBearerRoute(w http.ResponseWriter, r *http.Request, next http.Handler, actor caller.Caller, cfg config.AuthConfig) bool {
-	handler, ok := next.(*Handler)
-	if !ok {
-		// A non-Vaultsmith handler is used only by middleware unit tests. Production
-		// always passes *Handler and therefore always uses the service-owned rule.
+func preflightBearerRoute(w http.ResponseWriter, r *http.Request, handler *Handler, actor caller.Caller, cfg config.AuthConfig) bool {
+	if handler == nil {
 		return true
 	}
 	var scope string
@@ -383,9 +382,8 @@ func preflightBearerRoute(w http.ResponseWriter, r *http.Request, next http.Hand
 	return false
 }
 
-func preflightMCPBearerRoute(w http.ResponseWriter, r *http.Request, next http.Handler, actor caller.Caller, cfg config.AuthConfig) bool {
-	handler, ok := next.(*Handler)
-	if !ok {
+func preflightMCPBearerRoute(w http.ResponseWriter, r *http.Request, handler *Handler, actor caller.Caller, cfg config.AuthConfig) bool {
+	if handler == nil {
 		return true
 	}
 	headers, ok := mcpHeadersFromRequest(r)

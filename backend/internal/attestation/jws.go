@@ -40,12 +40,6 @@ func Marshal(s Signed) ([]byte, error) {
 	return s.MarshalJSON()
 }
 
-// Encode is an explicit alias for Marshal for callers that prefer protocol
-// terminology.
-func Encode(s Signed) ([]byte, error) {
-	return Marshal(s)
-}
-
 // Parse parses a flattened JWS JSON object with strict duplicate-key and
 // UTF-8 handling. Protected-header and payload JCS checks occur in Verify.
 func Parse(data []byte) (Signed, error) {
@@ -70,11 +64,6 @@ func Parse(data []byte) (Signed, error) {
 		return Signed{}, ErrMalformed
 	}
 	return result, nil
-}
-
-// Decode is an explicit alias for Parse.
-func Decode(data []byte) (Signed, error) {
-	return Parse(data)
 }
 
 func decodeEncodedComponents(s Signed) (protected, payload, signature []byte, err error) {

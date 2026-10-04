@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 
 	"github.com/gowebpki/jcs"
 )
@@ -20,17 +19,6 @@ type KeyResolution struct {
 // implementation must not resolve by kid alone.
 type KeyResolver interface {
 	Resolve(issuer, kid string) (KeyResolution, error)
-}
-
-// KeyResolverFunc adapts a function to KeyResolver.
-type KeyResolverFunc func(issuer, kid string) (KeyResolution, error)
-
-// Resolve implements KeyResolver.
-func (f KeyResolverFunc) Resolve(issuer, kid string) (KeyResolution, error) {
-	if f == nil {
-		return KeyResolution{}, errors.New("key not found")
-	}
-	return f(issuer, kid)
 }
 
 // VerifyOptions contains the required issuer and issuer-bound resolver. The
@@ -99,15 +87,6 @@ func Sign(claims RotationClaims, kid string, privateKey ed25519.PrivateKey) (Sig
 		Payload:   payload,
 		Signature: encodeBase64URL(signature),
 	}, nil
-}
-
-// SignAndMarshal signs claims and returns deterministic flattened JWS JSON.
-func SignAndMarshal(claims RotationClaims, kid string, privateKey ed25519.PrivateKey) ([]byte, error) {
-	signed, err := Sign(claims, kid, privateKey)
-	if err != nil {
-		return nil, err
-	}
-	return Marshal(signed)
 }
 
 // Verify checks a flattened JWS using the fixed protocol precedence. It
@@ -200,16 +179,6 @@ func VerifyAgainstEnvelopes(signed Signed, input, output string, expectedBinding
 	options.OutputVaultText = output
 	options.ExpectedBinding = expectedBinding
 	return Verify(signed, options)
-}
-
-// SigningInput returns the RFC 7515 signing input after checking that all three
-// encoded JWS components are canonical and length-valid.
-func SigningInput(signed Signed) ([]byte, error) {
-	_, _, signature, err := decodeEncodedComponents(signed)
-	if err != nil || len(signature) != ed25519.SignatureSize {
-		return nil, ErrMalformed
-	}
-	return []byte(signed.Protected + "." + signed.Payload), nil
 }
 
 func validateVerifyOptions(options VerifyOptions) error {
