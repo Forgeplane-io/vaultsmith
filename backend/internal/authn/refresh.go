@@ -18,7 +18,7 @@ func (a *Authenticator) AuthenticatedPrincipal(ctx context.Context) (Principal, 
 	if a.Config.Mode == config.AuthModeOff {
 		return Principal{}, false, ErrAuthenticationDisabled
 	}
-	principal, found, err := PrincipalFromSession(ctx, a.Sessions)
+	principal, found, err := a.principalFromBoundSession(ctx)
 	if err != nil {
 		if destroyErr := a.destroySession(ctx); destroyErr != nil {
 			return Principal{}, false, destroyErr
@@ -65,9 +65,12 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 	if err != nil {
 		return Principal{}, false, ErrTemporaryUnavailable
 	}
-	freshPrincipal, freshFound, err := PrincipalFromSession(freshCtx, a.Sessions)
+	freshPrincipal, freshFound, err := a.principalFromBoundSession(freshCtx)
 	if err != nil {
-		return Principal{}, false, ErrTemporaryUnavailable
+		if destroyErr := a.destroySession(ctx); destroyErr != nil {
+			return Principal{}, false, destroyErr
+		}
+		return Principal{}, false, ErrNotAuthenticated
 	}
 	if !freshFound {
 		return Principal{}, false, ErrNotAuthenticated
@@ -138,7 +141,7 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 }
 
 func (a *Authenticator) syncSession(ctx context.Context, principal Principal, refreshToken string, markRefresh bool) error {
-	StorePrincipal(ctx, a.Sessions, principal, refreshToken)
+	StorePrincipal(ctx, a.Sessions, principal, refreshToken, a.Config.OIDC)
 	if markRefresh {
 		a.Sessions.Put(ctx, sessionRefreshCheckedKey, time.Now())
 	}

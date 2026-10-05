@@ -81,7 +81,7 @@ func nativeHTTPFixture(t *testing.T) (http.Handler, *authn.Authenticator, config
 	t.Cleanup(func() { _ = runtime.Close() })
 	cfg := config.AuthConfig{
 		Mode:    config.AuthModeNative,
-		OIDC:    config.OIDCConfig{PublicBaseURL: "https://example.test", GroupsClaim: "groups"},
+		OIDC:    config.OIDCConfig{IssuerURL: "https://issuer", ClientID: "browser-client", PublicBaseURL: "https://example.test", GroupsClaim: "groups"},
 		Session: config.SessionConfig{CookieName: "__Host-vaultsmith_session", AbsoluteLifetime: time.Hour, IdleLifetime: time.Minute, Secure: true, SameSite: http.SameSiteLaxMode},
 		CSRF:    config.CSRFConfig{Secret: "01234567890123456789012345678901"},
 		Redis:   redisConfig,
@@ -111,7 +111,7 @@ func seedNativeSession(t *testing.T, authenticator *authn.Authenticator, request
 	if err != nil {
 		t.Fatal(err)
 	}
-	authn.StorePrincipal(ctx, authenticator.Sessions, authn.Principal{Issuer: "https://issuer", Subject: "subject", Groups: groups, Email: "user@example.test", ExpiresAt: time.Now().Add(time.Hour)}, "")
+	authn.StorePrincipal(ctx, authenticator.Sessions, authn.Principal{Issuer: "https://issuer", Subject: "subject", Groups: groups, Email: "user@example.test", ExpiresAt: time.Now().Add(time.Hour)}, "", authenticator.Config.OIDC)
 	token, _, err := authenticator.Sessions.Commit(ctx)
 	if err != nil {
 		t.Fatal(err)

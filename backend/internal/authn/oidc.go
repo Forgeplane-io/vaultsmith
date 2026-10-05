@@ -253,7 +253,7 @@ func (a *Authenticator) CompleteLogin(ctx context.Context, state, code string) (
 			return "", ErrTemporaryUnavailable
 		}
 	}
-	StorePrincipal(ctx, a.Sessions, principal, token.RefreshToken)
+	StorePrincipal(ctx, a.Sessions, principal, token.RefreshToken, a.Config.OIDC)
 	a.Sessions.Remove(ctx, pendingStateKey)
 	if token.RefreshToken == "" {
 		a.Sessions.SetDeadline(ctx, refreshedSessionExpiry(a.Sessions.Deadline(ctx), principal.ExpiresAt))
