@@ -183,13 +183,13 @@ func parseEnvelope(vaultText string) (parsedEnvelope, error) {
 		return parsedEnvelope{}, ErrInvalidVault
 	}
 	vaultText = strings.TrimSuffix(vaultText, "\n")
-	lines := strings.Split(vaultText, "\n")
-	if len(lines) < 2 || !isSupportedHeader(lines[0]) {
+	header, bodyText, found := strings.Cut(vaultText, "\n")
+	if !found || !isSupportedHeader(header) {
 		return parsedEnvelope{}, ErrInvalidVault
 	}
 
 	var body strings.Builder
-	for _, line := range lines[1:] {
+	for line := range strings.SplitSeq(bodyText, "\n") {
 		if len(line) == 0 || len(line) > lineWidth || !isHex(line) {
 			return parsedEnvelope{}, ErrInvalidVault
 		}
@@ -199,25 +199,26 @@ func parseEnvelope(vaultText string) (parsedEnvelope, error) {
 	if err != nil {
 		return parsedEnvelope{}, ErrInvalidVault
 	}
-	fields := strings.Split(string(payload), "\n")
-	if len(fields) != 3 || fields[0] == "" || fields[1] == "" || fields[2] == "" {
+	saltHex, rest, firstSeparator := strings.Cut(string(payload), "\n")
+	macHex, ciphertextHex, secondSeparator := strings.Cut(rest, "\n")
+	if !firstSeparator || !secondSeparator || saltHex == "" || macHex == "" || ciphertextHex == "" || strings.ContainsRune(ciphertextHex, '\n') {
 		return parsedEnvelope{}, ErrInvalidVault
 	}
 
-	salt, err := hex.DecodeString(fields[0])
+	salt, err := hex.DecodeString(saltHex)
 	if err != nil || len(salt) != saltSize {
 		return parsedEnvelope{}, ErrInvalidVault
 	}
-	expectedMAC, err := hex.DecodeString(fields[1])
+	expectedMAC, err := hex.DecodeString(macHex)
 	if err != nil || len(expectedMAC) != macSize {
 		return parsedEnvelope{}, ErrInvalidVault
 	}
-	ciphertext, err := hex.DecodeString(fields[2])
+	ciphertext, err := hex.DecodeString(ciphertextHex)
 	if err != nil || len(ciphertext) == 0 || len(ciphertext)%aes.BlockSize != 0 {
 		return parsedEnvelope{}, ErrInvalidVault
 	}
 	return parsedEnvelope{
-		header:      lines[0],
+		header:      header,
 		body:        body.String(),
 		salt:        salt,
 		expectedMAC: expectedMAC,

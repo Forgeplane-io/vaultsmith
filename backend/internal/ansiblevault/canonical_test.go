@@ -112,7 +112,7 @@ func formatEnvelope(header, body string, width int, newline string, finalLF bool
 	return builder.String()
 }
 
-func boundaryEnvelope(t *testing.T, target int) string {
+func boundaryEnvelope(t testing.TB, target int) string {
 	t.Helper()
 	for labelLength := 1; labelLength <= 128; labelLength++ {
 		header := Header12Prefix + ";" + strings.Repeat("x", labelLength)
