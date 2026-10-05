@@ -37,7 +37,10 @@ func newRefreshService(t *testing.T, exchange func(context.Context, string) (*oa
 		SameSite:         1,
 	}
 	service := &Authenticator{
-		Config:          config.AuthConfig{Mode: config.AuthModeNative, Session: sessionConfig, Redis: redisConfig},
+		Config: config.AuthConfig{
+			Mode: config.AuthModeNative, Session: sessionConfig, Redis: redisConfig,
+			OIDC: config.OIDCConfig{IssuerURL: "https://issuer.example", ClientID: "browser-client", PublicBaseURL: "https://vault.example"},
+		},
 		Redis:           runtime,
 		Sessions:        NewSessionManager(runtime.SessionStore(), sessionConfig),
 		refreshExchange: exchange,
@@ -49,7 +52,7 @@ func newRefreshService(t *testing.T, exchange func(context.Context, string) (*oa
 		Groups:    []string{"vault-readers"},
 		ExpiresAt: time.Now().Add(5 * time.Second),
 	}
-	StorePrincipal(ctx, service.Sessions, principal, "old-refresh")
+	StorePrincipal(ctx, service.Sessions, principal, "old-refresh", service.Config.OIDC)
 	token, _, err := service.Sessions.Commit(ctx)
 	if err != nil {
 		t.Fatalf("Sessions.Commit() error = %v", err)
@@ -214,7 +217,7 @@ func TestAuthenticatedPrincipalRejectsExpiredPrincipalWithoutRefreshToken(t *tes
 		Issuer:    "https://issuer.example",
 		Subject:   "user-123",
 		ExpiresAt: time.Now().Add(-time.Minute),
-	}, "")
+	}, "", service.Config.OIDC)
 	if _, _, err := service.Sessions.Commit(ctx); err != nil {
 		t.Fatalf("Sessions.Commit() error = %v", err)
 	}

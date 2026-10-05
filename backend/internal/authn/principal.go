@@ -3,8 +3,10 @@ package authn
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/gob"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -32,6 +34,7 @@ const (
 	sessionRefreshTokenKey   = "auth.refresh_token"
 	sessionRefreshCheckedKey = "auth.refresh_checked_at"
 	sessionFenceKey          = "auth.session_fence"
+	sessionBindingKey        = "auth.binding"
 	pendingStateKey          = "auth.pending_state"
 )
 
@@ -91,7 +94,10 @@ func ensureSessionRequestID(w http.ResponseWriter) {
 	w.Header().Set("X-Request-ID", hex.EncodeToString(value[:]))
 }
 
-func StorePrincipal(ctx context.Context, manager *scs.SessionManager, principal Principal, refreshToken string) {
+// StorePrincipal establishes a session from a verified login or a refresh whose
+// existing binding has already been validated. It must not adopt legacy data.
+func StorePrincipal(ctx context.Context, manager *scs.SessionManager, principal Principal, refreshToken string, oidc config.OIDCConfig) {
+	manager.Put(ctx, sessionBindingKey, sessionBinding(oidc))
 	manager.Put(ctx, sessionIssuerKey, principal.Issuer)
 	manager.Put(ctx, sessionSubjectKey, principal.Subject)
 	manager.Put(ctx, sessionEmailKey, principal.Email)
@@ -104,6 +110,25 @@ func StorePrincipal(ctx context.Context, manager *scs.SessionManager, principal 
 	} else {
 		manager.Put(ctx, sessionRefreshTokenKey, refreshToken)
 	}
+}
+
+func sessionBinding(oidc config.OIDCConfig) string {
+	// Configuration is already validated and the resource origin canonicalized.
+	// A string array always marshals; JSON keeps component boundaries unambiguous.
+	encoded, _ := json.Marshal([3]string{oidc.IssuerURL, oidc.ClientID, oidc.PublicBaseURL})
+	return fmt.Sprintf("v1:%x", sha256.Sum256(encoded))
+}
+
+func (a *Authenticator) principalFromBoundSession(ctx context.Context) (Principal, bool, error) {
+	principal, found, err := PrincipalFromSession(ctx, a.Sessions)
+	if err != nil || !found {
+		return principal, found, err
+	}
+	binding, ok := a.Sessions.Get(ctx, sessionBindingKey).(string)
+	if !ok || binding != sessionBinding(a.Config.OIDC) || principal.Issuer != a.Config.OIDC.IssuerURL {
+		return Principal{}, false, ErrNotAuthenticated
+	}
+	return principal, true, nil
 }
 
 func PrincipalFromSession(ctx context.Context, manager *scs.SessionManager) (Principal, bool, error) {

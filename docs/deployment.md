@@ -95,6 +95,13 @@ secret:
 
 Create the referenced application Secret and policy ConfigMap before installing. Each `passwordSecretKey` must exist in `secret.existingSecret`. The bundled Valkey service and password Secret are created by the chart. Set `valkey.enabled: false` and configure `auth.redis.address` and its credentials when using an external Redis-compatible service.
 
+Use a distinct `auth.redis.keyPrefix` (`REDIS_KEY_PREFIX`) for each deployment
+sharing an external Redis database, including separate environments. The chart's
+external-Redis default remains `vaultsmith:`; it is not a unique deployment
+namespace. Release-local bundled Valkey reduces namespace collisions. Namespace
+isolation is defense in depth, not a substitute for the browser-session
+issuer/client/resource binding. Do not share a namespace between relying parties.
+
 ### Proof values and keyring Secret
 
 Proofs remain disabled unless explicitly enabled:
@@ -238,3 +245,20 @@ For a disposable native OIDC, Redis, and TLS environment, run [`scripts/integrat
 ## Upgrade and rollback
 
 Keep the previous image digest and values file available. Upgrade with the same native dependencies and verify readiness and the request matrix after the rollout. Do not roll back an exposed deployment by setting `auth.mode: "off"`; that removes authentication. If sessions must be invalidated, use an approved Redis key-prefix or session-namespace procedure.
+
+Browser sessions from versions without a relying-party binding are invalidated
+on their next authenticated request after upgrade. Missing, malformed,
+unsupported-version, or mismatched bindings require a new verified login;
+Vaultsmith does not migrate stored identities or groups. Changes to
+`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, or the canonical `PUBLIC_BASE_URL` origin
+invalidate sessions in the same way. Redis or invalidation failures fail closed
+with temporary unavailability, not authenticated access.
+
+Plan for users to sign in again. Avoid serving old and new binaries in the same
+session namespace during rollout: old binaries can accept unbound or mismatched
+sessions and can create unbound sessions that new binaries reject. Use a
+coordinated cutover or isolated new session namespace with traffic routed only
+to the upgraded instances. Verify rejection of old sessions and successful
+reauthentication. Rolling back to a binary without binding checks removes this
+protection; namespace invalidation alone does not restore it. Assess that
+security regression before rollback and keep relying parties isolated.

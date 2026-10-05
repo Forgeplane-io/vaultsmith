@@ -18,6 +18,20 @@ Use a session for the bundled browser UI:
 3. `GET /api/v1/session` returns the CSRF token.
 4. Browser mutations send the session cookie and `X-CSRF-Token`.
 
+Authenticated browser sessions carry a versioned binding to the configured
+`OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, and canonical `PUBLIC_BASE_URL` origin.
+Vaultsmith validates that binding before returning an identity or refreshing a
+session, including after reloading it under the refresh lock. A different
+binding, missing or malformed binding, or unsupported binding version causes
+session destruction and requires a new verified OIDC login. Old identities and
+groups are never adopted into the current configuration.
+
+Upgrading from a version without this binding signs out existing browser
+sessions on their next authenticated request. Changing any of the three binding
+components also requires reauthentication. See the [rollout and rollback
+guidance](deployment.md#upgrade-and-rollback). This does not change Bearer token
+authentication or its audience and scope requirements.
+
 Use a Bearer access token for canonical REST and MCP machine clients:
 
 - `GET /api/v1/profiles`

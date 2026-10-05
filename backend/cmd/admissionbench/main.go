@@ -471,7 +471,7 @@ func newBenchmarkHandlers(fixture benchmarkFixture, admission *vaultservice.Admi
 		Subject:   "benchmark-session-user",
 		Groups:    []string{"admins"},
 		ExpiresAt: time.Now().Add(time.Hour),
-	}, "")
+	}, "", cfg.OIDC)
 	sessionToken, _, err := sessions.Commit(sessionContext)
 	if err != nil {
 		return benchmarkHandlers{}, fmt.Errorf("commit benchmark session: %w", err)
