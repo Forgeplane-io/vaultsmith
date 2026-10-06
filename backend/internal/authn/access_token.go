@@ -23,7 +23,6 @@ import (
 const (
 	accessTokenHTTPTimeout = 5 * time.Second
 	jwksDefaultFreshness   = time.Hour
-	jwksMinFreshness       = 5 * time.Minute
 	jwksMaxFreshness       = 6 * time.Hour
 	jwksMaxStaleUse        = time.Hour
 	accessTokenSkew        = time.Minute
@@ -636,18 +635,15 @@ func (c *jwksCache) refresh(ctx context.Context, verifier *AccessTokenVerifier, 
 
 func (c *jwksCache) applyDirectivesLocked(d cacheDirectives, header http.Header, now time.Time) {
 	c.noStore = d.noStore
-	c.noCache = d.noCache || d.freshness <= 0
+	c.noCache = d.noCache
 	c.mustRevalidate = d.mustRevalidate
 	c.proxyRevalidate = d.proxyRevalidate
 	c.sMaxage = d.sMaxage
 	c.expiry = now.Add(d.freshness)
-	if c.noCache || c.noStore || c.mustRevalidate || c.proxyRevalidate || c.sMaxage {
+	if c.noCache || c.noStore || c.mustRevalidate || c.proxyRevalidate || c.sMaxage || d.staleIfError <= 0 {
 		c.staleUntil = time.Time{}
 	} else {
-		grace := jwksMaxStaleUse
-		if d.staleIfError >= 0 && d.staleIfError < grace {
-			grace = d.staleIfError
-		}
+		grace := min(d.staleIfError, jwksMaxStaleUse)
 		c.staleUntil = c.expiry.Add(grace)
 	}
 	c.etag = header.Get("ETag")
@@ -677,7 +673,7 @@ type cacheDirectives struct {
 }
 
 func parseCacheDirectives(header http.Header, now time.Time) cacheDirectives {
-	directives := cacheDirectives{freshness: jwksDefaultFreshness, staleIfError: jwksMaxStaleUse}
+	directives := cacheDirectives{freshness: jwksDefaultFreshness}
 	cacheControl := strings.Join(header.Values("Cache-Control"), ",")
 	values := map[string]string{}
 	for _, part := range strings.Split(cacheControl, ",") {
@@ -688,7 +684,7 @@ func parseCacheDirectives(header http.Header, now time.Time) cacheDirectives {
 		name, value, found := strings.Cut(item, "=")
 		name = asciiLower(strings.TrimSpace(name))
 		if found {
-			value = strings.Trim(strings.TrimSpace(value), `"`)
+			value = strings.TrimSpace(value)
 		}
 		values[name] = value
 	}
@@ -707,32 +703,25 @@ func parseCacheDirectives(header http.Header, now time.Time) cacheDirectives {
 	baseDate := headerTime(header.Get("Date"), now)
 	currentAge := time.Duration(0)
 	if ageHeader := header.Get("Age"); ageHeader != "" {
-		if seconds, err := strconv.ParseInt(strings.TrimSpace(ageHeader), 10, 64); err == nil && seconds > 0 {
-			currentAge += time.Duration(seconds) * time.Second
+		if age, parsed := secondsDuration(ageHeader); parsed {
+			currentAge = age
 		}
 	}
 	if apparent := now.Sub(baseDate); apparent > currentAge {
 		currentAge = apparent
 	}
-	if value, ok := values["s-maxage"]; ok {
-		if lifetime, parsed := secondsDuration(value); parsed {
-			directives.sMaxage = true
-			directives.freshness = lifetime - currentAge
-		}
-	} else if value, ok := values["max-age"]; ok {
-		if lifetime, parsed := secondsDuration(value); parsed {
-			directives.freshness = lifetime - currentAge
-		}
+	if lifetime, parsed := secondsDuration(values["s-maxage"]); parsed {
+		directives.sMaxage = true
+		directives.freshness = lifetime - currentAge
+	} else if lifetime, parsed := secondsDuration(values["max-age"]); parsed {
+		directives.freshness = lifetime - currentAge
 	} else if expires := header.Get("Expires"); expires != "" {
 		if expiresAt, err := http.ParseTime(expires); err == nil {
-			directives.freshness = expiresAt.Sub(baseDate) - currentAge
+			directives.freshness = expiresAt.Sub(baseDate.Add(currentAge))
 		}
 	}
 	if directives.freshness > jwksMaxFreshness {
 		directives.freshness = jwksMaxFreshness
-	}
-	if directives.freshness > 0 && directives.freshness < jwksMinFreshness {
-		directives.freshness = jwksMinFreshness
 	}
 	if value, ok := values["stale-if-error"]; ok {
 		if lifetime, parsed := secondsDuration(value); parsed {
@@ -743,9 +732,23 @@ func parseCacheDirectives(header http.Header, now time.Time) cacheDirectives {
 }
 
 func secondsDuration(raw string) (time.Duration, bool) {
-	seconds, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
-	if err != nil || seconds < 0 {
+	raw = strings.TrimSpace(raw)
+	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
+		raw = raw[1 : len(raw)-1]
+	}
+	for _, digit := range raw {
+		if digit < '0' || digit > '9' {
+			return 0, false
+		}
+	}
+	seconds, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
 		return 0, false
+	}
+	// Saturate representable delta-seconds before multiplying; wrapping could
+	// turn a large Age into fresh trust or shorten an explicit stale policy.
+	if seconds > int64((1<<63-1)/time.Second) {
+		return time.Duration(1<<63 - 1), true
 	}
 	return time.Duration(seconds) * time.Second, true
 }

@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,9 +24,10 @@ import (
 )
 
 type bearerIssuerFixture struct {
-	server *httptest.Server
-	key    *rsa.PrivateKey
-	kid    string
+	server      *httptest.Server
+	key         *rsa.PrivateKey
+	kid         string
+	jwksHandler func(http.ResponseWriter, *http.Request)
 }
 
 func newBearerIssuerFixture(t *testing.T) *bearerIssuerFixture {
@@ -44,7 +47,11 @@ func newBearerIssuerFixture(t *testing.T) *bearerIssuerFixture {
 			"token_endpoint":         fixture.server.URL + "/token",
 		})
 	})
-	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/jwks", func(w http.ResponseWriter, r *http.Request) {
+		if fixture.jwksHandler != nil {
+			fixture.jwksHandler(w, r)
+			return
+		}
 		w.Header().Set("Cache-Control", "public, max-age=300")
 		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{publicKey}})
 	})
@@ -118,6 +125,111 @@ func bearerHTTPFixtureWithMCP(t *testing.T, mcpEnabled bool) (http.Handler, *bea
 
 func bearerHTTPFixture(t *testing.T) (http.Handler, *bearerIssuerFixture, *recordingExecutor) {
 	return bearerHTTPFixtureWithMCP(t, false)
+}
+
+func TestNativeBearerJWKSTrustExpiry(t *testing.T) {
+	for _, transport := range []string{"REST", "MCP"} {
+		for _, policy := range []struct {
+			name, cache, age string
+			outageStatus     int
+		}{
+			{name: "absent stale", cache: "max-age=1", outageStatus: http.StatusServiceUnavailable},
+			{name: "zero stale", cache: "max-age=1, stale-if-error=0", outageStatus: http.StatusServiceUnavailable},
+			{name: "malformed stale", cache: "max-age=1, stale-if-error=invalid", outageStatus: http.StatusServiceUnavailable},
+			{name: "signed stale", cache: "max-age=1, stale-if-error=+60", outageStatus: http.StatusServiceUnavailable},
+			{name: "unbalanced stale", cache: `max-age=1, stale-if-error="60`, outageStatus: http.StatusServiceUnavailable},
+			{name: "explicit stale", cache: "max-age=1, stale-if-error=60", outageStatus: http.StatusOK},
+			{name: "zero freshness explicit stale", cache: "max-age=0, stale-if-error=60", outageStatus: http.StatusOK},
+			{name: "consumed freshness explicit stale", cache: "max-age=1, stale-if-error=60", age: "2", outageStatus: http.StatusOK},
+		} {
+			t.Run(transport+"/"+policy.name, func(t *testing.T) {
+				handler, issuer, _ := bearerHTTPFixtureWithMCP(t, true)
+				var state atomic.Int32
+				var calls atomic.Int32
+				issuer.jwksHandler = func(w http.ResponseWriter, _ *http.Request) {
+					calls.Add(1)
+					if state.Load() == 1 {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					w.Header().Set("Cache-Control", policy.cache)
+					if policy.age != "" {
+						w.Header().Set("Age", policy.age)
+					}
+					keys := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &issuer.key.PublicKey, KeyID: issuer.kid, Algorithm: string(jose.RS256), Use: "sig"}}}
+					if state.Load() == 2 {
+						keys.Keys = []jose.JSONWebKey{}
+					}
+					_ = json.NewEncoder(w).Encode(keys)
+				}
+				server := httptest.NewTLSServer(handler)
+				t.Cleanup(server.Close)
+				token := issuer.token(t, "https://vaultsmith.example.test", vaultservice.ScopeProfileRead+" "+vaultservice.ScopeEncrypt)
+				request := func(wantStatus int) {
+					t.Helper()
+					method, path, body := http.MethodGet, "/api/v1/profiles", ""
+					if transport == "MCP" {
+						method, path = http.MethodPost, "/mcp"
+						body = `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_profiles","arguments":{},` + mcpMeta + `}}`
+					}
+					req, err := http.NewRequestWithContext(t.Context(), method, server.URL+path, strings.NewReader(body))
+					if err != nil {
+						t.Fatal(err)
+					}
+					req.Header.Set("Authorization", "Bearer "+token)
+					if transport == "MCP" {
+						req.Header.Set("Content-Type", "application/json")
+						req.Header.Set("Accept", "application/json, text/event-stream")
+						req.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
+						req.Header.Set("Mcp-Method", "tools/call")
+						req.Header.Set("Mcp-Name", "list_profiles")
+					}
+					response, err := server.Client().Do(req)
+					if err != nil {
+						t.Fatal("native TLS request failed")
+					}
+					defer response.Body.Close()
+					data, err := io.ReadAll(response.Body)
+					if err != nil {
+						t.Fatal("native response read failed")
+					}
+					if response.StatusCode != wantStatus {
+						t.Fatalf("status = %d, want %d", response.StatusCode, wantStatus)
+					}
+					if wantStatus == http.StatusOK && !strings.Contains(string(data), "dev") {
+						t.Fatal("successful server outcome did not list authorized profile")
+					}
+					if wantStatus == http.StatusServiceUnavailable && !strings.Contains(string(data), "temporarily_unavailable") {
+						t.Fatal("outage did not return safe unavailable error")
+					}
+					if wantStatus == http.StatusUnauthorized && !strings.Contains(response.Header.Get("WWW-Authenticate"), `error="invalid_token"`) {
+						t.Fatal("removed key did not receive invalid-token challenge")
+					}
+					if strings.Contains(string(data), token) || len(response.Cookies()) != 0 {
+						t.Fatal("Bearer response leaked credentials or issued cookies")
+					}
+				}
+				request(http.StatusOK)
+				if calls.Load() != 1 {
+					t.Fatal("initial request did not fetch current JWKS")
+				}
+				state.Store(1)
+				// Cross the server's at-most-one-second freshness without a
+				// cache-field assertion or a production clock hook.
+				time.Sleep(time.Second)
+				request(policy.outageStatus)
+				if calls.Load() != 2 {
+					t.Fatal("expired request did not revalidate JWKS")
+				}
+				state.Store(2)
+				request(http.StatusUnauthorized)
+				if calls.Load() != 3 {
+					t.Fatal("removed-key control did not fetch replacement JWKS")
+				}
+				t.Logf("native TLS %s: current-key profile success, outage status=%d, successful key removal=401", transport, policy.outageStatus)
+			})
+		}
+	}
 }
 
 // A denied preflight must finish without installing the application deadline.

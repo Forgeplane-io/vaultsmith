@@ -35,6 +35,17 @@ If the issuer uses a private CA, mount a PEM bundle and set `OIDC_CA_FILE`. Do n
 
 Machine clients use RFC 9068 JWT Bearer access tokens issued by the same configured issuer. The required audience is the `PUBLIC_BASE_URL` HTTPS origin, not the browser client ID. Bearer requests do not load or write Redis sessions, do not receive CSRF cookies, and require exact operation scopes: `vaultsmith.profile.read`, `vaultsmith.encrypt`, `vaultsmith.decrypt`, `vaultsmith.rotate`, and (for standalone verification) `vaultsmith.attestation.verify`.
 
+Review the issuer's JWKS cache headers before rollout. Short freshness is no
+longer extended, and expired Bearer signing-key trust fails closed during an
+issuer outage unless explicit permitted `stale-if-error` provides bounded grace.
+Machine REST and enabled MCP clients can therefore receive `503` earlier than
+with the previous implicit grace. Monitor issuer reachability and plan retries;
+do not switch to authentication-off mode as an outage workaround. During a key
+revocation incident, do not assume removing a key immediately invalidates every
+process's fresh cache. See [Bearer signing-key trust expiry](authentication.md#bearer-signing-key-trust-expiry)
+for freshness, grace, restrictive directives, and successful-removal behavior.
+This process-local cache change needs no persisted-session migration.
+
 ## Helm chart
 
 The chart creates `ClusterIP` Services for Vaultsmith and the bundled official Valkey chart. Valkey is enabled by default, uses a generated password Secret, and does not require a separately provisioned Redis service. The bundled chart requests a 1 GiB PVC by default; set `valkey.dataStorage.className` for a specific storage class or disable it for ephemeral test deployments. The bundled standalone Valkey uses a `Recreate` rollout to avoid concurrent pods sharing a `ReadWriteOnce` claim; the strategy remains fixed for every standalone backing mode. The chart does not create the OIDC, CSRF, or profile-password Secrets. Ingress and NetworkPolicy are disabled by default.
