@@ -80,6 +80,10 @@ container:
   - 'scripts/check-container-architecture.sh'
 
 release_snapshot:
+  - '.github/workflows/release.yml'
+  - 'scripts/verify_release_ci.sh'
+  - 'scripts/release-source-test.cjs'
+  - 'scripts/ci-paths-test.cjs'
   - '.goreleaser.yaml'
   - '.nvmrc'
   - 'go.mod'
