@@ -46,6 +46,36 @@ Bearer requests do not load or update Redis sessions. They do not use CSRF and d
 
 Do not send a session cookie and `Authorization` together. Vaultsmith rejects mixed or duplicate credentials. It never falls back to a session or anonymous access after an invalid Bearer token.
 
+### Bearer signing-key trust expiry
+
+The process-local access-token JWKS cache honors usable issuer freshness
+(`s-maxage`, `max-age`, or `Expires`) after accounting for the response's `Date`
+and `Age`. It does not raise short positive freshness to a minimum. The existing
+local freshness ceiling is six hours. Vaultsmith selects the first usable
+freshness source in that order; malformed higher-priority directives do not hide
+usable lower-priority metadata. Responses without usable freshness metadata
+retain the existing one-hour fallback.
+
+At expiry, Vaultsmith revalidates the key set. A refresh failure returns `503`
+with `temporarily_unavailable` for REST and enabled MCP unless the issuer explicitly
+supplied a valid positive `stale-if-error`. That grace runs from cache expiry and
+is capped at the existing one-hour local ceiling. Absent, zero, negative, or
+malformed `stale-if-error` grants no grace. Delta-seconds must contain decimal
+digits, optionally within balanced quotes; signs or spaces within quotes are
+invalid. Zero or already-consumed freshness still permits explicit grace only
+until issuer-derived expiry plus the bounded grace; it is not a `no-cache`
+directive. `no-store`, `no-cache`,
+`must-revalidate`, `proxy-revalidate`, and usable `s-maxage` prevent stale fallback.
+Conditional `304` revalidation retains stored directives unless replaced by the
+issuer's response headers.
+
+A successful refresh removing a signing key rejects tokens signed by that key,
+even inside previously permitted grace. Removal is not immediate revocation:
+cached trust may last through remaining freshness and any explicit permitted
+outage grace. Short freshness increases issuer requests and makes machine-client
+availability depend more closely on issuer availability. This cache policy does
+not change browser-session or ID-token verification.
+
 ## Resource and audience
 
 `PUBLIC_BASE_URL` is one client-visible HTTPS **origin**, for example:

@@ -634,7 +634,186 @@ func TestJWKSCacheIgnoresAgeCacheControlDirective(t *testing.T) {
 		"Cache-Control": []string{"public, max-age=60, age=59"},
 	}, now)
 
-	if directives.freshness != jwksMinFreshness {
-		t.Fatalf("freshness = %s, want %s for positive freshness below the five-minute floor", directives.freshness, jwksMinFreshness)
+	if directives.freshness != time.Minute {
+		t.Fatalf("freshness = %s, want one minute; age is not a Cache-Control directive", directives.freshness)
+	}
+}
+
+func TestAccessTokenVerifierIssuerTrustExpiry(t *testing.T) {
+	privateKey, publicKey := makeRSAJWK(t, "kid-1")
+	tests := []struct {
+		name, cache, age         string
+		dateAge, lifetime, grace time.Duration
+		expiresLifetime          time.Duration
+	}{
+		{name: "short max-age", cache: "max-age=60", lifetime: time.Minute},
+		{name: "unusable s-maxage falls through", cache: "s-maxage=bad, max-age=60", lifetime: time.Minute},
+		{name: "unusable max-age falls through", cache: "max-age=bad", expiresLifetime: time.Minute, lifetime: time.Minute},
+		{name: "unusable s-maxage uses Expires", cache: "s-maxage=bad", expiresLifetime: time.Minute, lifetime: time.Minute},
+		{name: "Age header", cache: "max-age=60", age: "59", lifetime: time.Second},
+		{name: "Age consumes freshness", cache: "max-age=60", age: "60"},
+		{name: "large Age cannot wrap", cache: "max-age=60", age: "18446744074"},
+		{name: "Date apparent age", cache: "max-age=60", dateAge: 59 * time.Second, lifetime: time.Second},
+		{name: "Expires", expiresLifetime: time.Minute, lifetime: time.Minute},
+		{name: "Expires with Age", expiresLifetime: time.Minute, age: "59", lifetime: time.Second},
+		{name: "past Expires with large Age cannot wrap", expiresLifetime: -time.Minute, age: "18446744074"},
+		{name: "headerless fallback", lifetime: time.Hour},
+		{name: "freshness ceiling", cache: "max-age=86400", lifetime: 6 * time.Hour},
+		{name: "zero stale", cache: "max-age=60, stale-if-error=0", lifetime: time.Minute},
+		{name: "malformed stale", cache: "max-age=60, stale-if-error=invalid", lifetime: time.Minute},
+		{name: "signed stale", cache: "max-age=60, stale-if-error=+30", lifetime: time.Minute},
+		{name: "unclosed stale quote", cache: `max-age=60, stale-if-error="30`, lifetime: time.Minute},
+		{name: "unopened stale quote", cache: `max-age=60, stale-if-error=30"`, lifetime: time.Minute},
+		{name: "repeated stale quotes", cache: `max-age=60, stale-if-error=""30""`, lifetime: time.Minute},
+		{name: "spaces within quoted stale", cache: `max-age=60, stale-if-error=" 30 "`, lifetime: time.Minute},
+		{name: "negative stale", cache: "max-age=60, stale-if-error=-1", lifetime: time.Minute},
+		{name: "oversized malformed stale", cache: "max-age=60, stale-if-error=999999999999999999999", lifetime: time.Minute},
+		{name: "explicit grace", cache: "max-age=60, stale-if-error=30", lifetime: time.Minute, grace: 30 * time.Second},
+		{name: "balanced quoted grace", cache: `max-age="60", stale-if-error="30"`, lifetime: time.Minute, grace: 30 * time.Second},
+		{name: "zero freshness explicit grace", cache: "max-age=0, stale-if-error=30", grace: 30 * time.Second},
+		{name: "Age at expiry explicit grace", cache: "max-age=60, stale-if-error=30", age: "60", grace: 30 * time.Second},
+		{name: "Age beyond expiry explicit grace", cache: "max-age=60, stale-if-error=30", age: "70", lifetime: -10 * time.Second, grace: 30 * time.Second},
+		{name: "grace ceiling", cache: "max-age=60, stale-if-error=86400", lifetime: time.Minute, grace: time.Hour},
+		{name: "large explicit grace cannot wrap", cache: "max-age=60, stale-if-error=18446744074", lifetime: time.Minute, grace: time.Hour},
+		{name: "must-revalidate", cache: "max-age=60, stale-if-error=30, must-revalidate", lifetime: time.Minute},
+		{name: "proxy-revalidate", cache: "max-age=60, stale-if-error=30, proxy-revalidate", lifetime: time.Minute},
+		{name: "s-maxage", cache: "s-maxage=60, max-age=300, stale-if-error=30", lifetime: time.Minute},
+		{name: "no-cache", cache: "max-age=60, stale-if-error=30, no-cache"},
+		{name: "zero freshness no-cache", cache: "max-age=0, stale-if-error=30, no-cache"},
+		{name: "no-store", cache: "max-age=60, stale-if-error=30, no-store"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			base := time.Now().UTC().Truncate(time.Second)
+			var clock atomic.Int64
+			clock.Store(base.UnixNano())
+			now := func() time.Time { return time.Unix(0, clock.Load()) }
+			// 0: current key, 1: outage, 2: key removed.
+			var state atomic.Int32
+			issuer := newAccessTokenIssuer(t, publicKey, test.cache)
+			issuer.jwksHandler = func(w http.ResponseWriter, _ *http.Request, issuer *accessTokenIssuer) {
+				if state.Load() == 1 {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				date := now().Add(-test.dateAge)
+				w.Header().Set("Date", date.UTC().Format(http.TimeFormat))
+				w.Header().Set("Cache-Control", test.cache)
+				if test.age != "" {
+					w.Header().Set("Age", test.age)
+				}
+				if test.expiresLifetime != 0 {
+					w.Header().Set("Expires", date.Add(test.expiresLifetime).UTC().Format(http.TimeFormat))
+				}
+				keys := issuer.keys
+				if state.Load() == 2 {
+					keys = jose.JSONWebKeySet{Keys: []jose.JSONWebKey{}}
+				}
+				_ = json.NewEncoder(w).Encode(keys)
+			}
+			verifier, err := NewAccessTokenVerifier(t.Context(), issuer.server.URL, issuer.server.URL, "groups", issuer.server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			verifier.now = now
+			token := signedAccessToken(t, privateKey, "kid-1", "at+jwt", issuer.server.URL, issuer.server.URL, map[string]any{"exp": base.Add(24 * time.Hour).Unix()})
+			if _, err := verifier.Verify(t.Context(), token); err != nil {
+				t.Fatalf("initial current key: %v", err)
+			}
+			state.Store(1)
+			if test.lifetime > 0 {
+				clock.Store(base.Add(test.lifetime - time.Nanosecond).UnixNano())
+				if _, err := verifier.Verify(t.Context(), token); err != nil {
+					t.Fatalf("before issuer expiry: %v", err)
+				}
+				if got := issuer.jwksCalls.Load(); got != 1 {
+					t.Fatalf("fresh key fetched %d times, want 1", got)
+				}
+			}
+			clock.Store(base.Add(max(test.lifetime, 0)).UnixNano())
+			_, err = verifier.Verify(t.Context(), token)
+			if test.grace > 0 {
+				if err != nil {
+					t.Fatalf("explicit issuer grace: %v", err)
+				}
+				clock.Store(base.Add(test.lifetime + test.grace).UnixNano())
+				_, err = verifier.Verify(t.Context(), token)
+			}
+			if !errors.Is(err, ErrAccessTokenKeyUnavailable) {
+				t.Fatalf("expired trust during outage: got %v, want key unavailable", err)
+			}
+			state.Store(0)
+			// A no-store cache has no known kid; allow the existing one-minute
+			// unknown-kid outage throttle to elapse before the recovery control.
+			clock.Store(now().Add(time.Minute).UnixNano())
+			if _, err := verifier.Verify(t.Context(), token); err != nil {
+				t.Fatalf("recovered current key: %v", err)
+			}
+			state.Store(2)
+			clock.Store(now().Add(test.lifetime).UnixNano())
+			if _, err := verifier.Verify(t.Context(), token); !errors.Is(err, ErrInvalidAccessToken) {
+				t.Fatalf("successfully removed key: got %v, want invalid token", err)
+			}
+			t.Logf("freshness=%s grace=%s: current-key success, expired-outage rejection, recovery success, removed-key rejection", test.lifetime, test.grace)
+		})
+	}
+}
+
+func TestAccessTokenVerifierRevalidatedTrustExpiry(t *testing.T) {
+	for _, cache := range []string{"max-age=60", "max-age=60, stale-if-error=30"} {
+		t.Run(cache, func(t *testing.T) {
+			privateKey, publicKey := makeRSAJWK(t, "kid-1")
+			issuer := newAccessTokenIssuer(t, publicKey, cache)
+			var state atomic.Int32
+			var clock atomic.Int64
+			clock.Store(time.Now().UTC().Truncate(time.Second).UnixNano())
+			now := func() time.Time { return time.Unix(0, clock.Load()) }
+			issuer.jwksHandler = func(w http.ResponseWriter, r *http.Request, issuer *accessTokenIssuer) {
+				w.Header().Set("Date", now().UTC().Format(http.TimeFormat))
+				switch state.Load() {
+				case 0:
+					w.Header().Set("Cache-Control", cache)
+					w.Header().Set("ETag", `"v1"`)
+					_ = json.NewEncoder(w).Encode(issuer.keys)
+				case 1, 2:
+					if r.Header.Get("If-None-Match") != `"v1"` {
+						t.Error("304 request missing validator")
+					}
+					if state.Load() == 2 {
+						w.Header().Set("Cache-Control", "max-age=60")
+					}
+					w.WriteHeader(http.StatusNotModified)
+				default:
+					w.WriteHeader(http.StatusServiceUnavailable)
+				}
+			}
+			verifier, err := NewAccessTokenVerifier(t.Context(), issuer.server.URL, issuer.server.URL, "groups", issuer.server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			verifier.now = now
+			token := signedAccessToken(t, privateKey, "kid-1", "at+jwt", issuer.server.URL, issuer.server.URL, nil)
+			if _, err := verifier.Verify(t.Context(), token); err != nil {
+				t.Fatal(err)
+			}
+			for _, step := range []int32{1, 2} {
+				clock.Store(now().Add(time.Minute).UnixNano())
+				state.Store(step)
+				if _, err := verifier.Verify(t.Context(), token); err != nil {
+					t.Fatalf("304 revalidation: %v", err)
+				}
+				state.Store(3)
+				clock.Store(now().Add(time.Minute).UnixNano())
+				_, err := verifier.Verify(t.Context(), token)
+				if step == 1 && strings.Contains(cache, "stale-if-error") {
+					if err != nil {
+						t.Fatalf("sparse 304 lost explicit grace: %v", err)
+					}
+				} else if !errors.Is(err, ErrAccessTokenKeyUnavailable) {
+					t.Fatalf("304 supplied implicit grace: %v", err)
+				}
+			}
+			t.Log("conditional/sparse 304 preserved policy; replacement Cache-Control removed explicit grace")
+		})
 	}
 }
