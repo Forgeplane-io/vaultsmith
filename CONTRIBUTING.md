@@ -76,9 +76,19 @@ Annotation presence alone does not prove default binding. Verify the rendered
 Vaultsmith image and set an explicit verified `image.digest` for those sources.
 Do not substitute a newer helper into historical recovery artifacts.
 
+Chart publication retains the producing Helm push's OCI manifest digest, pulls
+that exact digest, and compares the downloaded archive byte-for-byte with the
+local package before signing. Missing, malformed, or inconsistent manifest
+identity or content aborts before Cosign. Chart signing and release output use
+the retained digest reference, never a fresh version-tag lookup. The chart
+manifest digest and the packaged image digest identify different artifacts.
+This chart-manifest binding also applies to historical-source recovery.
+
 The local source-binding regression uses synthetic repositories and executes the
-workflow's actual chart packaging step with native Helm and simulated registry
-calls. It renders the archive with synthetic native-mode Secret references and
+workflow's actual packaging, signing, and output steps with native Helm packaging
+and simulated registry/signing calls. It checks producing-manifest routing, tag
+replacement, push/digest/readback failures, and immutable release output.
+It renders the archive with synthetic native-mode Secret references and
 checks the default image, overrides, invalid digest handling, and the older-helper
 recovery limitation. Use release-selected Helm and a full-history Git checkout
 before running `node scripts/release-source-test.cjs`; the historical helper

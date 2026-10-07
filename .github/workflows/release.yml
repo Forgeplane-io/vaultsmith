@@ -292,9 +292,10 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5
         with:
-          version: v4.2.3
+          version: v4.3.0
 
       - name: Package and push Helm chart
+        id: chart
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
@@ -315,7 +316,32 @@ jobs:
           helm registry login ghcr.io \
             --username "$GITHUB_ACTOR" \
             --password-stdin <<< "$GH_TOKEN"
-          helm push "dist/chart/vaultsmith-${VERSION}.tgz" "$CHART_REPOSITORY"
+          chart_archive="dist/chart/vaultsmith-${VERSION}.tgz"
+          if ! push_output="$(helm push "$chart_archive" "$CHART_REPOSITORY" 2>&1)"; then
+            printf 'release chart publication: Helm push failed; aborting before signing.\n' >&2
+            exit 1
+          fi
+          chart_digest="$(sed -n 's/^Digest: //p' <<<"$push_output")"
+          if [[ ! "$chart_digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            printf 'release chart publication: push must return one manifest digest sha256:<64 lowercase hex characters>; aborting before signing.\n' >&2
+            exit 1
+          fi
+          chart_reference="${CHART_REPOSITORY#oci://}/vaultsmith@${chart_digest}"
+          mkdir -p "$chart_dir/readback"
+          if ! readback_output="$(helm pull "oci://${chart_reference}" --destination "$chart_dir/readback" 2>&1)"; then
+            printf 'release chart readback: cannot pull the producing manifest digest; aborting before signing.\n' >&2
+            exit 1
+          fi
+          readback_digest="$(sed -n 's/^Digest: //p' <<<"$readback_output")"
+          if [[ "$readback_digest" != "$chart_digest" ]]; then
+            printf 'release chart readback: manifest digest does not match the producing push; aborting before signing.\n' >&2
+            exit 1
+          fi
+          if ! cmp -s "$chart_archive" "$chart_dir/readback/"*.tgz; then
+            printf 'release chart readback: archive does not match the local release package; aborting before signing.\n' >&2
+            exit 1
+          fi
+          printf 'reference=%s\n' "$chart_reference" >> "$GITHUB_OUTPUT"
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
@@ -323,10 +349,11 @@ jobs:
       - name: Sign image and Helm chart
         env:
           COSIGN_YES: 'true'
+          CHART_REFERENCE: ${{ steps.chart.outputs.reference }}
         run: |
           set -euo pipefail
           cosign sign --yes "${IMAGE}@${{ steps.image.outputs.digest }}"
-          cosign sign --yes "ghcr.io/forgeplane-io/charts/vaultsmith:${VERSION}"
+          cosign sign --yes "$CHART_REFERENCE"
 
       - name: Sign release checksums
         run: |
@@ -345,15 +372,17 @@ jobs:
             dist/release/checksums.txt.bundle
 
       - name: Verify release outputs
+        env:
+          CHART_REFERENCE: ${{ steps.chart.outputs.reference }}
         run: |
           set -euo pipefail
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,assets
           printf 'image=%s@%s\n' "$IMAGE" '${{ steps.image.outputs.digest }}'
-          printf 'chart=%s:%s\n' "$CHART_REPOSITORY/vaultsmith" "$VERSION"
+          printf 'chart=%s\n' "$CHART_REFERENCE"
           printf '%s\n' \
             '### Vaultsmith release' \
             "- Tag: $TAG" \
             "- Source: $SOURCE_SHA" \
             "- Image digest: ${IMAGE}@${{ steps.image.outputs.digest }}" \
-            "- Helm chart: ${CHART_REPOSITORY}/vaultsmith:${VERSION}" \
+            "- Helm chart: oci://${CHART_REFERENCE}" \
             >> "$GITHUB_STEP_SUMMARY"

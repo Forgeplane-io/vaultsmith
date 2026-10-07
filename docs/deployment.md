@@ -68,6 +68,20 @@ helm upgrade --install vaultsmith \
 
 For a source checkout, use `deploy/helm/vaultsmith` instead of the OCI reference and omit `--version`; the source chart version is maintained separately.
 
+### Release chart identity
+
+The release workflow records the immutable chart reference
+`oci://ghcr.io/forgeplane-io/charts/vaultsmith@sha256:<chart-manifest-digest>` in
+its summary. It retains the producing push's manifest digest, pulls that exact
+digest, and compares the archive with the local release package before Cosign
+signs the digest reference. A version-tag replacement cannot select different
+chart content for signing. Use the retained digest, not a newly resolved version
+tag, when verifying chart identity.
+
+This applies to normal releases and historical-source recovery. The chart
+manifest digest is separate from the image digest below; chart-manifest binding
+does not change older helpers' image-default limitations.
+
 ### Release image binding and overrides
 
 For release sources containing the packaged-digest image helper, charts packaged
