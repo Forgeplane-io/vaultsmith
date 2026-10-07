@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -349,6 +350,169 @@ func TestGenerateStrictDecoderRejectsAmbiguousInputBeforeGeneration(t *testing.T
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest || len(generator.calls) != 0 || len(executor.plaintext) != 0 {
 		t.Fatalf("invalid UTF-8 response/calls = %d/%#v/%d: %s", response.Code, generator.calls, len(executor.plaintext), response.Body.String())
+	}
+}
+
+func TestGenerateX509CollectionBoundaries(t *testing.T) {
+	for _, transport := range []string{"REST", "MCP"} {
+		for _, field := range []struct {
+			object, name string
+			limit        int
+		}{
+			{object: "subject", name: "country", limit: 8},
+			{object: "subject", name: "organization", limit: 8},
+			{object: "subject", name: "organizationalUnit", limit: 8},
+			{object: "subject", name: "locality", limit: 8},
+			{object: "subject", name: "province", limit: 8},
+			{object: "subject", name: "streetAddress", limit: 8},
+			{object: "subject", name: "postalCode", limit: 8},
+			{object: "sans", name: "dnsNames", limit: 64},
+			{object: "sans", name: "ipAddresses", limit: 64},
+			{object: "sans", name: "emailAddresses", limit: 64},
+			{object: "sans", name: "uris", limit: 64},
+		} {
+			for _, count := range []int{field.limit, field.limit + 1} {
+				t.Run(fmt.Sprintf("%s/%s/%d", transport, field.name, count), func(t *testing.T) {
+					values := make([]string, count)
+					for i := range values {
+						switch field.name {
+						case "country":
+							values[i] = "A" + string(rune('A'+i))
+						case "dnsNames":
+							values[i] = fmt.Sprintf("host%d.example.test", i)
+						case "ipAddresses":
+							values[i] = fmt.Sprintf("192.0.2.%d", i+1)
+						case "emailAddresses":
+							values[i] = fmt.Sprintf("user%d@example.test", i)
+						case "uris":
+							values[i] = fmt.Sprintf("https://example.test/%d", i)
+						default:
+							values[i] = fmt.Sprintf("synthetic-%d", i)
+						}
+					}
+					nested := map[string]any{field.name: values}
+					if field.object == "subject" {
+						nested["commonName"] = "example.test"
+					}
+					raw, err := json.Marshal(map[string]any{"algorithm": "ed25519", field.object: nested})
+					if err != nil {
+						t.Fatal(err)
+					}
+					generator := newRecordingMaterialGenerator()
+					executor := &generateTestExecutor{}
+					handler := generateTestHandler(t, generator, executor, nil)
+					request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(`{"kind":"x509_csr","profileId":"dev","parameters":`+string(raw)+`}`))
+					request.Header.Set("Content-Type", "application/json")
+					if transport == "MCP" {
+						handler = mcpGenerateOffHandler(t, generator, executor, nil)
+						request = newMCPGenerateRequest("generate_x509_csr", `{"profileId":"dev",`+string(raw[1:]))
+					}
+					response := httptest.NewRecorder()
+					handler.ServeHTTP(response, request)
+					if count > field.limit {
+						wantStatus, wantText := http.StatusBadRequest, "generation parameters are invalid"
+						if transport == "MCP" {
+							wantStatus, wantText = http.StatusOK, mcpTextToolFailure
+						}
+						if response.Code != wantStatus || !strings.Contains(response.Body.String(), wantText) || strings.Contains(response.Body.String(), "structuredContent") || len(executor.plaintext) != 0 || len(generator.calls) != 0 {
+							t.Fatalf("overflow status/generator/encrypt calls = %d/%d/%d, want %d/0/0 and safe parameter failure", response.Code, len(generator.calls), len(executor.plaintext), wantStatus)
+						}
+					} else {
+						if response.Code != http.StatusOK || len(executor.plaintext) != 1 {
+							t.Fatalf("boundary status/encrypt calls = %d/%d, want 200/1", response.Code, len(executor.plaintext))
+						}
+						var payload map[string]json.RawMessage
+						if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+							t.Fatal("invalid response JSON")
+						}
+						if transport == "MCP" {
+							var result struct {
+								IsError           bool                       `json:"isError"`
+								StructuredContent map[string]json.RawMessage `json:"structuredContent"`
+							}
+							if json.Unmarshal(payload["result"], &result) != nil || result.IsError {
+								t.Fatal("MCP boundary failed")
+							}
+							payload = result.StructuredContent
+						}
+						var public struct {
+							CSRPEM string `json:"csrPem"`
+						}
+						if json.Unmarshal(payload["public"], &public) != nil {
+							t.Fatal("missing public result")
+						}
+						block, _ := pem.Decode([]byte(public.CSRPEM))
+						if block == nil {
+							t.Fatal("invalid CSR PEM")
+						}
+						csr, err := x509.ParseCertificateRequest(block.Bytes)
+						if err != nil || csr.CheckSignature() != nil {
+							t.Fatal("invalid CSR signature")
+						}
+						gotCount := map[string]int{
+							"country": len(csr.Subject.Country), "organization": len(csr.Subject.Organization),
+							"organizationalUnit": len(csr.Subject.OrganizationalUnit), "locality": len(csr.Subject.Locality),
+							"province": len(csr.Subject.Province), "streetAddress": len(csr.Subject.StreetAddress), "postalCode": len(csr.Subject.PostalCode),
+							"dnsNames": len(csr.DNSNames), "ipAddresses": len(csr.IPAddresses), "emailAddresses": len(csr.EmailAddresses), "uris": len(csr.URIs),
+						}[field.name]
+						if gotCount != count {
+							t.Fatalf("CSR collection count = %d, want %d (must not truncate)", gotCount, count)
+						}
+					}
+					t.Logf("fixture=%s/%s entries=%d status=%d encrypt_calls=%d", transport, field.name, count, response.Code, len(executor.plaintext))
+				})
+			}
+		}
+	}
+}
+
+func TestGenerateX509ArrayStrictnessBeyondCollectionLimit(t *testing.T) {
+	prefix := strings.Repeat(`"synthetic",`, 9)
+	for _, transport := range []string{"REST", "MCP"} {
+		for _, test := range []struct {
+			name, parameters string
+			parseError       bool
+			invalidJSON      bool
+		}{
+			{name: "null array", parameters: `{"algorithm":"ed25519","subject":{"organization":null}}`, parseError: true},
+			{name: "not array", parameters: `{"algorithm":"ed25519","subject":{"organization":"synthetic"}}`, parseError: true},
+			{name: "empty supplied array", parameters: `{"algorithm":"ed25519","subject":{"commonName":"example.test","organization":[]}}`},
+			{name: "duplicate values", parameters: `{"algorithm":"ed25519","subject":{"commonName":"example.test","organization":["same","same"]}}`},
+			{name: "null after overflow", parameters: `{"algorithm":"ed25519","subject":{"organization":[` + prefix + `null]}}`, parseError: true},
+			{name: "number after overflow", parameters: `{"algorithm":"ed25519","subject":{"organization":[` + prefix + `1]}}`, parseError: true},
+			{name: "nested array after overflow", parameters: `{"algorithm":"ed25519","subject":{"organization":[` + prefix + `["synthetic"]]}}`, parseError: true},
+			{name: "surrogate after overflow", parameters: `{"algorithm":"ed25519","subject":{"organization":[` + prefix + `"\ud800"]}}`, parseError: true},
+			{name: "malformed after overflow", parameters: `{"algorithm":"ed25519","subject":{"organization":[` + prefix + `"bad\q"]}}`, parseError: true, invalidJSON: true},
+			{name: "other object invalid after overflow", parameters: `{"algorithm":"ed25519","subject":{"organization":[` + prefix + `"synthetic"]},"sans":{"uris":[null]}}`, parseError: true},
+			{name: "duplicate field with overflow", parameters: `{"algorithm":"ed25519","subject":{"organization":[` + prefix + `"synthetic"],"Organization":[]}}`, parseError: true},
+		} {
+			t.Run(transport+"/"+test.name, func(t *testing.T) {
+				executor := &generateTestExecutor{}
+				handler := generateTestHandler(t, nil, executor, nil)
+				request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(`{"kind":"x509_csr","profileId":"dev","parameters":`+test.parameters+`}`))
+				request.Header.Set("Content-Type", "application/json")
+				wantStatus, wantText := http.StatusBadRequest, "generation parameters are invalid"
+				if test.parseError {
+					wantText = "request is invalid"
+				}
+				if transport == "MCP" {
+					handler = mcpGenerateOffHandler(t, nil, executor, nil)
+					request = newMCPGenerateRequest("generate_x509_csr", `{"profileId":"dev",`+test.parameters[1:])
+					wantStatus, wantText = http.StatusOK, mcpTextToolFailure
+					if test.parseError {
+						wantText = mcpTextInvalidToolArguments
+					}
+					if test.invalidJSON {
+						wantStatus, wantText = http.StatusBadRequest, "parse error"
+					}
+				}
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+				if response.Code != wantStatus || !strings.Contains(response.Body.String(), wantText) || len(executor.plaintext) != 0 {
+					t.Fatalf("strict array status/encrypt calls = %d/%d, want %d/0 with selected error class", response.Code, len(executor.plaintext), wantStatus)
+				}
+			})
+		}
 	}
 }
 

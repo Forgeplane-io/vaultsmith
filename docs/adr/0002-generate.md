@@ -287,6 +287,14 @@ within the same array are rejected. A supplied Subject or SAN object must
 contain at least one member; callers omit an unused object. Omitting `subject`
 is valid for a SAN-only request; omitting `sans` is valid for a CN request.
 
+REST and MCP collection decoding retains at most eight strings per repeated
+Subject field and 64 strings across all SAN fields. It still checks every
+array item's type and surrogate escapes, including items beyond those bounds.
+Cardinality overflow is recorded as a deferred generation-parameter failure:
+profile authorization and resolution retain their existing precedence and
+error classifications, and a retained prefix never reaches generation or
+Vault encryption. The generator also enforces these bounds for direct callers.
+
 Identity strings are preserved byte-for-byte and are not case-folded,
 IDNA-converted, Unicode-normalized, or deduplicated across fields. SAN array
 order is preserved; repeated DN values retain their bytes but DER SET encoding

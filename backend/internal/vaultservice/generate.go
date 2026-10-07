@@ -51,6 +51,11 @@ type GenerateCommand struct {
 	SSHKeyPair  *generate.SSHKeyPairParameters
 	AgeIdentity *AgeIdentityParameters
 	X509CSR     *generate.X509CSRParameters
+
+	// X509CollectionOverflow records a deferred parameter failure from bounded
+	// transport decoding. Its retained prefix must never reach the generator;
+	// rejection follows profile authorization and resolution, as before.
+	X509CollectionOverflow bool
 }
 
 type GeneratedSecret struct {
@@ -298,7 +303,7 @@ func validateGenerateVariant(command GenerateCommand) error {
 			present++
 		}
 	}
-	if present != 1 {
+	if present != 1 || command.X509CollectionOverflow {
 		return invalidRequest("generation parameters are invalid")
 	}
 

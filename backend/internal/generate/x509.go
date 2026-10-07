@@ -36,6 +36,13 @@ const (
 	maximumGeneratedX509CSRBytes = 256 << 10
 )
 
+// MaxX509SubjectValues and MaxX509SANs share ADR 0002's existing cardinality
+// bounds with transports, so decoding and direct generator validation agree.
+const (
+	MaxX509SubjectValues = maximumX509SubjectValues
+	MaxX509SANs          = maximumX509SANs
+)
+
 type validatedX509CSR struct {
 	algorithm          X509Algorithm
 	signatureAlgorithm x509.SignatureAlgorithm
