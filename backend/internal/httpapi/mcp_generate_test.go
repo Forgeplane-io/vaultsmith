@@ -2,8 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -249,23 +253,128 @@ func TestMCPGenerateBearerScopePreflightRejectsEveryToolBeforeBodyRead(t *testin
 
 func TestMCPGeneratePolicyDenialPrecedesParameterValidation(t *testing.T) {
 	handler, issuer, executor := bearerHTTPFixtureWithMCP(t, true)
-	request := newMCPGenerateRequest("generate_token", `{"profileId":"dev","bytes":1}`)
-	request.Header.Set("Authorization", "Bearer "+issuer.tokenWithGroups(t, "https://vaultsmith.example.test", vaultservice.ScopeEncrypt, []string{}))
-	response := httptest.NewRecorder()
-
-	handler.ServeHTTP(response, request)
-
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want policy denial 403 before parameter validation: %s", response.Code, response.Body.String())
-	}
-	if response.Header().Get("WWW-Authenticate") != "" {
-		t.Fatalf("policy denial challenge = %q, want none", response.Header().Get("WWW-Authenticate"))
-	}
-	if response.Body.String() != "{\"error\":{\"code\":\"forbidden\",\"message\":\"operation is not permitted\"}}\n" {
-		t.Fatalf("body = %q", response.Body.String())
+	server := httptest.NewTLSServer(handler)
+	defer server.Close()
+	token := issuer.tokenWithGroups(t, "https://vaultsmith.example.test", vaultservice.ScopeEncrypt, []string{})
+	for _, test := range []struct {
+		name, tool, arguments string
+	}{
+		{name: "token", tool: "generate_token", arguments: `{"profileId":"dev","bytes":1}`},
+		{name: "subject overflow", tool: "generate_x509_csr", arguments: `{"profileId":"dev","algorithm":"ed25519","subject":{"organization":[` + strings.Repeat(`"synthetic",`, 8) + `"synthetic"]}}`},
+		{name: "mixed SAN overflow", tool: "generate_x509_csr", arguments: `{"profileId":"dev","algorithm":"ed25519","sans":{"dnsNames":[` + strings.Repeat(`"example.test",`, 63) + `"example.test"],"uris":["https://example.test"]}}`},
+		{name: "large subject overflow", tool: "generate_x509_csr", arguments: `{"profileId":"dev","algorithm":"ed25519","subject":{"organization":[` + strings.Repeat(`"x",`, 65535) + `"x"]}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, transport := range []string{"REST", "MCP"} {
+				// The large fixture intentionally exceeds REST's separate ceiling.
+				if transport == "REST" && test.name == "large subject overflow" {
+					continue
+				}
+				request := newMCPGenerateRequest(test.tool, test.arguments)
+				if transport == "REST" {
+					kind := "x509_csr"
+					if test.tool == "generate_token" {
+						kind = "token"
+					}
+					parameters := strings.TrimPrefix(test.arguments, `{"profileId":"dev",`)
+					request = httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(`{"kind":"`+kind+`","profileId":"dev","parameters":{`+parameters+`}`))
+					request.Header.Set("Content-Type", "application/json")
+				}
+				// Use the real TLS listener, retaining the fixture's configured token audience.
+				headers := request.Header
+				request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+request.URL.Path, request.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.Header = headers
+				request.Header.Set("Authorization", "Bearer "+token)
+				response, err := server.Client().Do(request)
+				if err != nil {
+					t.Fatal("native request failed")
+				}
+				defer response.Body.Close()
+				body, err := io.ReadAll(response.Body)
+				if err != nil || response.StatusCode != http.StatusForbidden || response.Header.Get("WWW-Authenticate") != "" || string(body) != "{\"error\":{\"code\":\"forbidden\",\"message\":\"operation is not permitted\"}}\n" {
+					t.Fatalf("%s status = %d, want unchanged policy denial 403 with no challenge", transport, response.StatusCode)
+				}
+				t.Logf("transport=%s status=%d policy_denied=true", transport, response.StatusCode)
+			}
+		})
 	}
 	if executor.called {
 		t.Fatal("executor was called after policy denial")
+	}
+}
+
+func TestMCPGenerateX509CombinedSANBudget(t *testing.T) {
+	for _, transport := range []string{"REST", "MCP"} {
+		for _, count := range []int{64, 65} {
+			t.Run(fmt.Sprintf("%s/%d", transport, count), func(t *testing.T) {
+				sans := map[string][]string{}
+				for i := range 16 { // Four equal groups reach ADR 0002's combined limit.
+					sans["dnsNames"] = append(sans["dnsNames"], fmt.Sprintf("host%d.example.test", i))
+					sans["ipAddresses"] = append(sans["ipAddresses"], fmt.Sprintf("192.0.2.%d", i+1))
+					sans["emailAddresses"] = append(sans["emailAddresses"], fmt.Sprintf("user%d@example.test", i))
+					sans["uris"] = append(sans["uris"], fmt.Sprintf("https://example.test/%d", i))
+				}
+				if count == 65 {
+					sans["uris"] = append(sans["uris"], "https://example.test/extra")
+				}
+				raw, err := json.Marshal(map[string]any{"algorithm": "ed25519", "sans": sans})
+				if err != nil {
+					t.Fatal(err)
+				}
+				generator := newRecordingMaterialGenerator()
+				executor := &generateTestExecutor{}
+				handler := generateTestHandler(t, generator, executor, nil)
+				request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(`{"kind":"x509_csr","profileId":"dev","parameters":`+string(raw)+`}`))
+				request.Header.Set("Content-Type", "application/json")
+				if transport == "MCP" {
+					handler = mcpGenerateOffHandler(t, generator, executor, nil)
+					request = newMCPGenerateRequest("generate_x509_csr", `{"profileId":"dev",`+string(raw[1:]))
+				}
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, request)
+				if count == 65 {
+					wantStatus, wantText := http.StatusBadRequest, "generation parameters are invalid"
+					if transport == "MCP" {
+						wantStatus, wantText = http.StatusOK, mcpTextToolFailure
+					}
+					if response.Code != wantStatus || !strings.Contains(response.Body.String(), wantText) || strings.Contains(response.Body.String(), "structuredContent") || len(executor.plaintext) != 0 || len(generator.calls) != 0 {
+						t.Fatalf("combined overflow status/generator/encrypt calls = %d/%d/%d, want %d/0/0", response.Code, len(generator.calls), len(executor.plaintext), wantStatus)
+					}
+				} else {
+					var payload map[string]json.RawMessage
+					if response.Code != http.StatusOK || len(executor.plaintext) != 1 || json.Unmarshal(response.Body.Bytes(), &payload) != nil {
+						t.Fatal("combined boundary was not sealed")
+					}
+					if transport == "MCP" {
+						var result struct {
+							StructuredContent map[string]json.RawMessage `json:"structuredContent"`
+						}
+						if json.Unmarshal(payload["result"], &result) != nil {
+							t.Fatal("invalid MCP result")
+						}
+						payload = result.StructuredContent
+					}
+					var public struct {
+						CSRPEM string `json:"csrPem"`
+					}
+					if json.Unmarshal(payload["public"], &public) != nil {
+						t.Fatal("missing public result")
+					}
+					block, _ := pem.Decode([]byte(public.CSRPEM))
+					if block == nil {
+						t.Fatal("invalid CSR PEM")
+					}
+					csr, err := x509.ParseCertificateRequest(block.Bytes)
+					if err != nil || csr.CheckSignature() != nil || len(csr.DNSNames)+len(csr.IPAddresses)+len(csr.EmailAddresses)+len(csr.URIs) != 64 {
+						t.Fatal("combined CSR boundary was truncated or invalid")
+					}
+				}
+				t.Logf("entries=%d status=%d encrypt_calls=%d", count, response.Code, len(executor.plaintext))
+			})
+		}
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"unicode/utf8"
 
@@ -171,11 +172,12 @@ func parseGenerateCommand(raw []byte) (vaultservice.GenerateCommand, error) {
 		}
 		command.AgeIdentity = &vaultservice.AgeIdentityParameters{}
 	case vaultservice.GenerateKindX509CSR:
-		parameters, err := parseX509CSRParameters(fields["parameters"])
+		parameters, overflow, err := parseX509CSRParameters(fields["parameters"])
 		if err != nil {
 			return vaultservice.GenerateCommand{}, err
 		}
 		command.X509CSR = &parameters
+		command.X509CollectionOverflow = overflow
 	default:
 		return vaultservice.GenerateCommand{}, errors.New("generation kind is invalid")
 	}
@@ -261,40 +263,43 @@ func parseSSHKeyPairParameters(raw json.RawMessage) (generate.SSHKeyPairParamete
 	return generate.SSHKeyPairParameters{Algorithm: generate.SSHAlgorithm(algorithm)}, nil
 }
 
-func parseX509CSRParameters(raw json.RawMessage) (generate.X509CSRParameters, error) {
+func parseX509CSRParameters(raw json.RawMessage) (generate.X509CSRParameters, bool, error) {
 	fields, err := decodeStrictObject(raw, map[string]struct{}{"algorithm": {}, "subject": {}, "sans": {}})
 	if err != nil {
-		return generate.X509CSRParameters{}, err
+		return generate.X509CSRParameters{}, false, err
 	}
 	rawAlgorithm, ok := fields["algorithm"]
 	if !ok {
-		return generate.X509CSRParameters{}, errors.New("algorithm is required")
+		return generate.X509CSRParameters{}, false, errors.New("algorithm is required")
 	}
 	algorithm, err := decodeGenerateString(rawAlgorithm)
 	if err != nil {
-		return generate.X509CSRParameters{}, err
+		return generate.X509CSRParameters{}, false, err
 	}
 	parameters := generate.X509CSRParameters{Algorithm: generate.X509Algorithm(algorithm)}
+	overflow := false
 	if rawSubject, ok := fields["subject"]; ok {
-		subject, err := parseX509Subject(rawSubject)
+		subject, exceeded, err := parseX509Subject(rawSubject)
 		if err != nil {
-			return generate.X509CSRParameters{}, err
+			return generate.X509CSRParameters{}, false, err
 		}
 		parameters.Subject = &subject
+		overflow = exceeded
 	}
 	if rawSANs, ok := fields["sans"]; ok {
-		sans, err := parseX509SANs(rawSANs)
+		sans, exceeded, err := parseX509SANs(rawSANs)
 		if err != nil {
-			return generate.X509CSRParameters{}, err
+			return generate.X509CSRParameters{}, false, err
 		}
 		parameters.SANs = &sans
+		overflow = overflow || exceeded
 	}
-	return parameters, nil
+	return parameters, overflow, nil
 }
 
-func parseX509Subject(raw json.RawMessage) (generate.X509Subject, error) {
+func parseX509Subject(raw json.RawMessage) (generate.X509Subject, bool, error) {
 	if isJSONNull(raw) {
-		return generate.X509Subject{}, errors.New("subject must be an object")
+		return generate.X509Subject{}, false, errors.New("subject must be an object")
 	}
 	fields, err := decodeStrictObject(raw, map[string]struct{}{
 		"commonName": {}, "serialNumber": {}, "country": {}, "organization": {},
@@ -302,19 +307,20 @@ func parseX509Subject(raw json.RawMessage) (generate.X509Subject, error) {
 		"postalCode": {},
 	})
 	if err != nil {
-		return generate.X509Subject{}, err
+		return generate.X509Subject{}, false, err
 	}
 	if len(fields) == 0 {
-		return generate.X509Subject{}, errors.New("subject must not be empty")
+		return generate.X509Subject{}, false, errors.New("subject must not be empty")
 	}
 	subject := generate.X509Subject{}
+	overflow := false
 	for name, target := range map[string]**string{
 		"commonName": &subject.CommonName, "serialNumber": &subject.SerialNumber,
 	} {
 		if value, ok := fields[name]; ok {
 			decoded, err := decodeGenerateString(value)
 			if err != nil {
-				return generate.X509Subject{}, err
+				return generate.X509Subject{}, false, err
 			}
 			*target = &decoded
 		}
@@ -326,43 +332,48 @@ func parseX509Subject(raw json.RawMessage) (generate.X509Subject, error) {
 		"postalCode": &subject.PostalCode,
 	} {
 		if value, ok := fields[name]; ok {
-			decoded, err := decodeJSONStringArray(value)
+			decoded, exceeded, err := decodeJSONStringArray(value, generate.MaxX509SubjectValues)
 			if err != nil {
-				return generate.X509Subject{}, err
+				return generate.X509Subject{}, false, err
 			}
 			*target = decoded
+			overflow = overflow || exceeded
 		}
 	}
-	return subject, nil
+	return subject, overflow, nil
 }
 
-func parseX509SANs(raw json.RawMessage) (generate.X509SANs, error) {
+func parseX509SANs(raw json.RawMessage) (generate.X509SANs, bool, error) {
 	if isJSONNull(raw) {
-		return generate.X509SANs{}, errors.New("sans must be an object")
+		return generate.X509SANs{}, false, errors.New("sans must be an object")
 	}
 	fields, err := decodeStrictObject(raw, map[string]struct{}{
 		"dnsNames": {}, "ipAddresses": {}, "emailAddresses": {}, "uris": {},
 	})
 	if err != nil {
-		return generate.X509SANs{}, err
+		return generate.X509SANs{}, false, err
 	}
 	if len(fields) == 0 {
-		return generate.X509SANs{}, errors.New("sans must not be empty")
+		return generate.X509SANs{}, false, errors.New("sans must not be empty")
 	}
 	sans := generate.X509SANs{}
+	remaining := generate.MaxX509SANs
+	overflow := false
 	for name, target := range map[string]*[]string{
 		"dnsNames": &sans.DNSNames, "ipAddresses": &sans.IPAddresses,
 		"emailAddresses": &sans.EmailAddresses, "uris": &sans.URIs,
 	} {
 		if value, ok := fields[name]; ok {
-			decoded, err := decodeJSONStringArray(value)
+			decoded, exceeded, err := decodeJSONStringArray(value, remaining)
 			if err != nil {
-				return generate.X509SANs{}, err
+				return generate.X509SANs{}, false, err
 			}
 			*target = decoded
+			remaining -= len(decoded)
+			overflow = overflow || exceeded
 		}
 	}
-	return sans, nil
+	return sans, overflow, nil
 }
 
 func decodeJSONInt(raw json.RawMessage) (int, error) {
@@ -387,23 +398,57 @@ func decodeJSONBool(raw json.RawMessage) (bool, error) {
 	return value, nil
 }
 
-func decodeJSONStringArray(raw json.RawMessage) ([]string, error) {
-	if isJSONNull(raw) {
-		return nil, errors.New("request field must be an array")
+func decodeJSONStringArray(raw json.RawMessage, maximum int) ([]string, bool, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	first, err := decoder.Token()
+	if err != nil || first != json.Delim('[') {
+		return nil, false, errors.New("request field must be an array")
 	}
-	var items []json.RawMessage
-	if err := json.Unmarshal(raw, &items); err != nil || items == nil {
-		return nil, errors.New("request field must be an array")
-	}
-	values := make([]string, len(items))
-	for index, item := range items {
-		value, err := decodeGenerateString(item)
-		if err != nil {
-			return nil, errors.New("request array item must be a string")
+	values := make([]string, 0)
+	overflow := false
+	// Reuse one item decoder. After the first excess element, keep checking
+	// types and surrogate pairs without allocating raw-item or string slices.
+	var item generateStringArrayItem
+	for decoder.More() {
+		item.retain = len(values) < maximum
+		if err := decoder.Decode(&item); err != nil {
+			return nil, false, errors.New("request array item must be a string")
 		}
-		values[index] = value
+		if item.retain {
+			values = append(values, item.value)
+		} else {
+			overflow = true
+		}
 	}
-	return values, nil
+	last, err := decoder.Token()
+	if err != nil || last != json.Delim(']') {
+		return nil, false, errors.New("request field must be an array")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, false, errors.New("trailing JSON")
+	}
+	return values, overflow, nil
+}
+
+type generateStringArrayItem struct {
+	retain bool
+	value  string
+}
+
+func (item *generateStringArrayItem) UnmarshalJSON(raw []byte) error {
+	// The standard decoder validates JSON syntax before invoking this method.
+	if len(raw) < 2 || raw[0] != '"' || !hasValidJSONSurrogatePairs(raw) {
+		return errors.New("request array item must be a string")
+	}
+	if item.retain {
+		value, err := decodeOperationString(raw)
+		if err != nil {
+			return err
+		}
+		item.value = value
+	}
+	return nil
 }
 
 func isJSONNull(raw json.RawMessage) bool {
