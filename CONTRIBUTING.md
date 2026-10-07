@@ -64,6 +64,26 @@ equals the validated release source. A recovery run from a different workflow
 commit still publishes and signs the release, but does not emit that additional
 attestation.
 
-The local source-binding regression uses only synthetic repositories and writes
-its sanitized receipt to `.tmp/release-source-test.json`. It does not run hosted
-Actions or verify live signing or registry publication.
+The release workflow stages the chart with the producing image digest in its
+`vaultsmith.io/image-digest` annotation. Missing or malformed digest output aborts
+before chart registry login or push. Operator image values remain independent
+overrides; chart and application version metadata stay release-managed.
+
+Only chart sources with the packaged-digest image helper consume this annotation
+as their default image. Manual recovery preserves older validated tagged sources;
+their historical helpers may ignore the annotation and keep a tag fallback.
+Annotation presence alone does not prove default binding. Verify the rendered
+Vaultsmith image and set an explicit verified `image.digest` for those sources.
+Do not substitute a newer helper into historical recovery artifacts.
+
+The local source-binding regression uses synthetic repositories and executes the
+workflow's actual chart packaging step with native Helm and simulated registry
+calls. It renders the archive with synthetic native-mode Secret references and
+checks the default image, overrides, invalid digest handling, and the older-helper
+recovery limitation. Use release-selected Helm and a full-history Git checkout
+before running `node scripts/release-source-test.cjs`; the historical helper
+fixture is loaded from an immutable pre-change Git object.
+The sanitized receipt is `.tmp/release-source-test.json`; the synthetic archive,
+values, and deployment renders are retained in `.tmp/release-chart-test/`.
+It does not run hosted Actions or verify image pulls, live signing, registry
+publication, or cluster installation.

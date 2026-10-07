@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
-const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
+const { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { createRequire } = require('node:module');
 const { join } = require('node:path');
 
@@ -114,6 +114,7 @@ try {
       'needs.validate.outputs.build_date': outputs.build_date,
       'secrets.GITHUB_TOKEN': 'synthetic-not-a-credential',
       'inputs.tag || github.ref_name': event.inputTag || event.refName,
+      'steps.image.outputs.digest': event.imageDigest,
     };
     return value.replace(/\$\{\{\s*(.*?)\s*\}\}/g, (_, key) => {
       assert.ok(Object.hasOwn(values, key), 'unhandled workflow expression: ' + key);
@@ -267,10 +268,169 @@ try {
       'GitHub event provenance must not attest a different source commit');
   });
 
+  // Run the actual packaging step. Only registry login/push are simulated;
+  // packaging and rendering use the installed Helm binary without a cluster.
+  const chartStep = publish.steps.find((step) => step.run?.includes('helm push '));
+  const helmPath = command('bash', ['-c', 'command -v helm'], root);
+  assert.equal(helmPath.status, 0, 'packaged chart regression requires Helm on PATH');
+  const realHelm = helmPath.stdout.trim();
+  const chartArtifacts = join(scratch, 'release-chart-test');
+  mkdirSync(chartArtifacts, { recursive: true });
+  const producingDigest = 'sha256:' + 'a'.repeat(64);
+  const overrideDigest = 'sha256:' + 'b'.repeat(64);
+  const repository = 'ghcr.io/forgeplane-io/vaultsmith';
+  const valuesFile = join(chartArtifacts, 'native-values.yaml');
+  writeFileSync(valuesFile, `auth:
+  mode: native
+  csrf:
+    existingSecret: synthetic-auth
+    key: csrf-secret
+  oidc:
+    issuerURL: https://idp.example.test/realms/vaultsmith
+    clientID: synthetic-vaultsmith
+    clientSecret:
+      existingSecret: synthetic-auth
+      key: oidc-client-secret
+    redirectURL: https://vault.example.test/auth/callback
+    publicBaseURL: https://vault.example.test
+  policy:
+    existingConfigMap: synthetic-policy
+profiles:
+  - id: dev
+    label: Development
+    passwordEnv: VAULT_PASSWORD_DEV
+    passwordSecretKey: dev
+secret:
+  existingSecret: synthetic-passwords
+`);
+  receipt.chart = {
+    helmVersion: command(realHelm, ['version', '--short'], root).stdout.trim(),
+    producingDigest,
+    registryCallsSimulated: true,
+    artifacts: '.tmp/release-chart-test',
+  };
+  writeFileSync(join(bin, 'helm'), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == push || ( "$1" == registry && "\${2:-}" == login ) ]]; then
+  printf '%s\\n' "$1" >> "$PUBLICATION_MARKER"
+  exit 0
+fi
+exec "$REAL_HELM" "$@"
+`, { mode: 0o755 });
+
+  function packageChart(imageDigest, legacyHelper) {
+    const directory = mkdtempSync(join(fixture, 'chart-package-'));
+    const source = join(directory, 'deploy/helm/vaultsmith');
+    mkdirSync(join(directory, 'deploy/helm'), { recursive: true });
+    cpSync(join(root, 'deploy/helm/vaultsmith'), source, { recursive: true });
+    if (legacyHelper !== undefined) {
+      writeFileSync(join(source, 'templates/_helpers.tpl'), legacyHelper);
+    }
+    const marker = join(directory, 'publication-marker');
+    const stepEnv = Object.fromEntries(Object.entries(chartStep.env || {})
+      .map(([key, value]) => [key, expand(value, outputs, { imageDigest })]));
+    const result = command('bash', ['-e', '-c', expand(chartStep.run, outputs, { imageDigest })], directory, {
+      ...jobEnv(publish, marker), ...stepEnv,
+      REAL_HELM: realHelm, PUBLICATION_MARKER: marker,
+      GITHUB_ACTOR: 'synthetic-fixture', CHART_REPOSITORY: 'oci://registry.example.test/charts',
+    });
+    return { result, marker, source, archive: join(directory, 'dist/chart/vaultsmith-' + outputs.version + '.tgz') };
+  }
+
+  const packaged = packageChart(producingDigest);
+  const archive = join(chartArtifacts, 'vaultsmith-' + outputs.version + '.tgz');
+  check('package chart with synthetic build-push digest', (entry) => {
+    entry.exitCode = packaged.result.status;
+    assert.equal(packaged.result.status, 0, 'workflow chart packaging must succeed');
+    cpSync(packaged.archive, archive);
+    entry.archiveSHA256 = createHash('sha256').update(readFileSync(archive)).digest('hex');
+    assert.deepEqual(readFileSync(packaged.marker, 'utf8').trim().split('\n'), ['registry', 'push']);
+    for (const file of ['Chart.yaml', 'values.yaml']) {
+      assert.equal(readFileSync(join(packaged.source, file), 'utf8'),
+        readFileSync(join(root, 'deploy/helm/vaultsmith', file), 'utf8'), 'packaging must not mutate source ' + file);
+    }
+    const chart = command(realHelm, ['show', 'chart', archive], root);
+    assert.equal(chart.status, 0, 'packaged chart metadata must be readable');
+    const metadata = parse(chart.stdout);
+    assert.equal(metadata.version, outputs.version, 'chart version must stay release-managed');
+    assert.equal(metadata.appVersion, outputs.version, 'appVersion must remain the release version');
+  });
+
+  // Recovery preserves the tagged source helper, not the workflow's newer one.
+  // CI fetches full history so this immutable pre-change fixture is available.
+  const legacyHelperRef = 'fabb2f39bb87f5dc36e3f23c3b629b083901d7ef:deploy/helm/vaultsmith/templates/_helpers.tpl';
+  const legacyHelper = git(root, 'show', legacyHelperRef) + '\n';
+  const legacyPackaged = packageChart(producingDigest, legacyHelper);
+  const legacyArchive = join(chartArtifacts, 'older-helper-vaultsmith-' + outputs.version + '.tgz');
+  check('package recovery chart with historical helper', (entry) => {
+    entry.helperSource = legacyHelperRef;
+    entry.exitCode = legacyPackaged.result.status;
+    assert.equal(legacyPackaged.result.status, 0, 'older-source recovery packaging must remain supported');
+    assert.equal(readFileSync(join(legacyPackaged.source, 'templates/_helpers.tpl'), 'utf8'), legacyHelper,
+      'recovery must not replace the tagged source helper');
+    cpSync(legacyPackaged.archive, legacyArchive);
+    entry.archiveSHA256 = createHash('sha256').update(readFileSync(legacyArchive)).digest('hex');
+    const chart = command(realHelm, ['show', 'chart', legacyArchive], root);
+    assert.equal(chart.status, 0, 'recovery archive metadata must be readable');
+    const metadata = parse(chart.stdout);
+    assert.equal(metadata.version, outputs.version);
+    assert.equal(metadata.appVersion, outputs.version);
+    assert.equal(metadata.annotations['vaultsmith.io/image-digest'], producingDigest,
+      'the annotation alone does not prove the historical helper consumes it');
+  });
+
+  for (const [name, overrides, expected, chartArchive = archive] of [
+    ['default', [], repository + '@' + producingDigest],
+    ['tag', ['--set-string', 'image.tag=v4.5.6'], repository + ':v4.5.6'],
+    ['digest', ['--set-string', 'image.digest=' + overrideDigest], repository + '@' + overrideDigest],
+    ['both', ['--set-string', 'image.tag=v4.5.6,image.digest=' + overrideDigest], repository + '@' + overrideDigest],
+    ['repository', ['--set-string', 'image.repository=registry.example.test/synthetic/vaultsmith'],
+      'registry.example.test/synthetic/vaultsmith@' + producingDigest],
+    ['empty', ['--set-string', 'image.tag=,image.digest='], repository + '@' + producingDigest],
+    ['tag-cleared-digest', ['--set-string', 'image.tag=v4.5.6,image.digest='], repository + ':v4.5.6'],
+    ['older-helper-default', [], repository + ':' + outputs.version, legacyArchive],
+    ['older-helper-digest', ['--set-string', 'image.digest=' + producingDigest],
+      repository + '@' + producingDigest, legacyArchive],
+  ]) {
+    check('packaged chart image ' + name, (entry) => {
+      const rendered = command(realHelm, ['template', 'vaultsmith', chartArchive, '-f', valuesFile,
+        '--show-only', 'templates/deployment.yaml', ...overrides], root);
+      assert.equal(rendered.status, 0, 'packaged chart render must succeed');
+      writeFileSync(join(chartArtifacts, name + '.yaml'), rendered.stdout);
+      const deployment = parse(rendered.stdout);
+      assert.equal(deployment.kind, 'Deployment');
+      const containers = deployment.spec.template.spec.containers.filter((container) => container.name === 'vaultsmith');
+      assert.equal(containers.length, 1, 'assert the Vaultsmith container, not bundled Valkey');
+      entry.image = containers[0].image;
+      entry.expectedImage = expected;
+      assert.equal(entry.image, expected);
+    });
+  }
+  for (const [name, digest] of [
+    ['missing', ''], ['short', 'sha256:abcd'], ['non-hex', 'sha256:' + 'g'.repeat(64)],
+  ]) {
+    check('chart packaging rejects ' + name + ' producing digest', (entry) => {
+      const invalid = packageChart(digest);
+      entry.exitCode = invalid.result.status;
+      entry.reachedPublication = existsSync(invalid.marker);
+      assert.notEqual(invalid.result.status, 0, 'invalid producing digest must abort packaging');
+      assert.ok(!existsSync(invalid.archive), 'invalid digest must not produce a release chart');
+      assert.equal(entry.reachedPublication, false, 'invalid digest must fail before registry login/push');
+      assert.ok(invalid.result.stderr.includes('IMAGE_DIGEST'), 'failure must identify the missing/invalid digest input');
+    });
+  }
+  check('chart workflow consumes producing build-push digest', () => {
+    assert.equal(chartStep.env?.IMAGE_DIGEST, expression('steps.image.outputs.digest'));
+    assert.equal(chartStep.if, undefined, 'digest binding must also run for manual recovery');
+    assert.equal(chartStep['continue-on-error'], undefined, 'chart binding failure must stop publication');
+  });
+
   check('CI selects and executes release regressions', () => {
     const filters = parse(readFileSync(join(root, '.github/ci-paths.yml'), 'utf8'));
     for (const path of ['.github/workflows/release.yml', 'scripts/verify_release_ci.sh',
-      'scripts/release-source-test.cjs', 'scripts/ci-paths-test.cjs']) {
+      'scripts/release-source-test.cjs', 'scripts/ci-paths-test.cjs',
+      'deploy/helm/vaultsmith/Chart.yaml', 'deploy/helm/vaultsmith/values.yaml',
+      'deploy/helm/vaultsmith/templates/_helpers.tpl']) {
       assert.ok(picomatch(filters.release_snapshot, { dot: true })(path), 'release snapshot must cover ' + path);
     }
     const ci = parse(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
@@ -278,6 +438,9 @@ try {
     assert.ok(regression, 'CI must execute the new regression');
     assert.equal(regression.if, undefined, 'regression must run whenever its CI job is selected');
     assert.equal(regression['continue-on-error'], undefined, 'regression failures must fail CI');
+    const ciHelm = ci.jobs['release-snapshot'].steps.find((step) => step.uses?.startsWith('azure/setup-helm@'));
+    const releaseHelm = publish.steps.find((step) => step.uses?.startsWith('azure/setup-helm@'));
+    assert.equal(ciHelm?.with.version, releaseHelm.with.version, 'packaging regression must use release-selected Helm');
   });
 } finally {
   try {
