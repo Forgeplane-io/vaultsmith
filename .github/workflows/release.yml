@@ -295,10 +295,20 @@ jobs:
           version: v4.2.3
 
       - name: Package and push Helm chart
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
+          if [[ ! "${IMAGE_DIGEST:-}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            printf 'release chart packaging: IMAGE_DIGEST must be sha256:<64 lowercase hex characters>; aborting before chart publication.\n' >&2
+            exit 1
+          fi
+          chart_dir="$(mktemp -d)"
+          trap 'rm -rf "$chart_dir"' EXIT
+          cp -R deploy/helm/vaultsmith "$chart_dir/vaultsmith"
+          printf '\nannotations:\n  vaultsmith.io/image-digest: "%s"\n' "$IMAGE_DIGEST" >> "$chart_dir/vaultsmith/Chart.yaml"
           mkdir -p dist/chart
-          helm package deploy/helm/vaultsmith \
+          helm package "$chart_dir/vaultsmith" \
             --version "$VERSION" \
             --app-version "$VERSION" \
             --destination dist/chart

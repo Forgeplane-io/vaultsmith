@@ -84,6 +84,7 @@ release_snapshot:
   - 'scripts/verify_release_ci.sh'
   - 'scripts/release-source-test.cjs'
   - 'scripts/ci-paths-test.cjs'
+  - 'deploy/helm/**'
   - '.goreleaser.yaml'
   - '.nvmrc'
   - 'go.mod'

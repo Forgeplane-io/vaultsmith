@@ -68,6 +68,36 @@ helm upgrade --install vaultsmith \
 
 For a source checkout, use `deploy/helm/vaultsmith` instead of the OCI reference and omit `--version`; the source chart version is maintained separately.
 
+### Release image binding and overrides
+
+For release sources containing the packaged-digest image helper, charts packaged
+by the release workflow select
+`ghcr.io/forgeplane-io/vaultsmith@sha256:<producing-image-digest>` by default.
+Packaging records that release's build-push digest in the chart's
+`vaultsmith.io/image-digest` annotation, without changing `appVersion` or
+populating operator override values. Inspect it with `helm show chart` and
+compare it with the release workflow's image-digest summary. The image's release
+tag is `v<release-version>`; the OCI chart version has no `v` prefix.
+
+Override precedence is explicit `image.digest`, then explicit `image.tag`, then
+the packaged release digest. Setting only `image.repository` retains the release
+digest, so a mirror must contain that exact digest. Empty `image.tag` and
+`image.digest` retain the release binding; specify a non-empty tag to opt out.
+A source chart without the release annotation retains its `appVersion` fallback.
+
+When upgrading to a chart with the updated helper, omit image overrides to select
+the new release's image. A values file or `--reuse-values` that retains a
+non-empty tag/digest still selects that override; remove it deliberately to
+follow the release. Standalone tag and digest overrides do not require migration.
+
+Manual recovery preserves the validated tagged chart source. If that source
+predates the updated image helper, the added annotation is not consumed and the
+default remains the historical tag fallback. These recoveries are outside the
+producing-digest guarantee, even when the annotation is present. Verify the
+rendered Vaultsmith container image for the exact package and set an explicit
+verified `image.digest` for those sources. Do not move or edit immutable release
+tags to obtain the newer helper.
+
 ### Minimal native values
 
 Use an untracked file. The Secret names and addresses below are examples.
