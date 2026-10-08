@@ -10,6 +10,24 @@ All notable changes to Vaultsmith are documented here. Release Please maintains 
 - Proofs use `PUBLIC_BASE_URL` as the issuer and reload a valid changed keyring without restart. A malformed replacement keeps the previous valid keyring active.
 - When proofs are disabled, normal encrypt, decrypt, and rotate behavior remains available and no signing Secret is required.
 
+## [0.9.1](https://github.com/Forgeplane-io/vaultsmith/compare/v0.9.0...v0.9.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **attestation:** bound JSON container nesting ([2e5578d](https://github.com/Forgeplane-io/vaultsmith/commit/2e5578db267b6afae9087d5ac5a4282f6c141a23))
+* **auth:** bind browser sessions to relying party ([7879619](https://github.com/Forgeplane-io/vaultsmith/commit/7879619b52c15cc28e2e00f80c1014a012535b4c))
+* **auth:** honor issuer JWKS trust expiry ([3a706d2](https://github.com/Forgeplane-io/vaultsmith/commit/3a706d25e70a82aadf9bb38659095a969677c2c9))
+* **http:** interrupt uploads at request deadlines ([92139b0](https://github.com/Forgeplane-io/vaultsmith/commit/92139b0837a14afc457f96e1c6c16f3d25b8d31b))
+* **mcp:** bound verification body admission ([8b6214f](https://github.com/Forgeplane-io/vaultsmith/commit/8b6214fc2981783fde4175929b438465828a0830))
+* **mcp:** bound X.509 collection decoding ([fabb2f3](https://github.com/Forgeplane-io/vaultsmith/commit/fabb2f39bb87f5dc36e3f23c3b629b083901d7ef))
+* **release:** bind builds to validated commits ([c86621b](https://github.com/Forgeplane-io/vaultsmith/commit/c86621bf1ac92034f5c70b8a1c4877560cfdf042))
+* **release:** bind chart defaults to image digests ([89a7ac5](https://github.com/Forgeplane-io/vaultsmith/commit/89a7ac5d4dd77d8008d7292f5fe0bb9c9c2e637f))
+* **release:** sign chart manifests by digest ([fbabcdb](https://github.com/Forgeplane-io/vaultsmith/commit/fbabcdb55959fd541d67d5278578603265c4490d))
+* **release:** sign locally produced checksums ([59e82b5](https://github.com/Forgeplane-io/vaultsmith/commit/59e82b5f6c56077635bac175b7ffa348dc0286c4))
+* **server:** default off-mode binding to loopback ([77a08b7](https://github.com/Forgeplane-io/vaultsmith/commit/77a08b72d6c466bb3006b60e9ee27685139dc5dd))
+* **vault:** avoid delimiter-sized parser slices ([0d94810](https://github.com/Forgeplane-io/vaultsmith/commit/0d948100b3202dd7de9c07bf6c64c1723141b7a2))
+
 ## [0.9.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.8.1...v0.9.0) (2026-10-04)
 
 
