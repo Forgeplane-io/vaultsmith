@@ -58,11 +58,25 @@ tag rulesets that prevent updates and deletion of release tags; an environment
 reviewer gate does not replace immutable-tag protection.
 
 Image SHA tags and revision labels use the checked-out Git context. BuildKit
-provenance remains enabled for manual recovery. The additional GitHub provenance
-attestation uses the workflow-event commit, so it is emitted only when that commit
-equals the validated release source. A recovery run from a different workflow
-commit still publishes and signs the release, but does not emit that additional
-attestation.
+provenance remains enabled for supported draft recovery. The additional GitHub
+provenance attestation uses the workflow-event commit, so it is emitted only when
+that commit equals the validated release source. A draft recovery run from a
+different workflow commit still publishes and signs the release, but does not emit
+that additional attestation.
+
+Checksum signing retains the SHA-256 of GoReleaser's local `dist/checksums.txt`
+immediately after production and records it in the workflow run summary. Before
+signing, both the retained local bytes and the downloaded release readback must
+match that producing digest. Cosign signs the local producer file, never the
+downloaded asset. The uploaded asset remains `checksums.txt.bundle`.
+
+Only draft releases that run GoReleaser are currently supported for publication
+or recovery. Non-draft recovery and republishing are rejected before the first
+publication because no independently trusted original checksum receipt is
+available. A matching source tag, a rebuilt snapshot, or the current release
+asset and its API digest do not establish original checksum provenance. Do not
+bypass the guard or mark a published release as a draft to force a rebuild;
+non-draft recovery requires a separately reviewed original-evidence mechanism.
 
 The release workflow stages the chart with the producing image digest in its
 `vaultsmith.io/image-digest` annotation. Missing or malformed digest output aborts
@@ -70,7 +84,7 @@ before chart registry login or push. Operator image values remain independent
 overrides; chart and application version metadata stay release-managed.
 
 Only chart sources with the packaged-digest image helper consume this annotation
-as their default image. Manual recovery preserves older validated tagged sources;
+as their default image. Draft recovery preserves older validated tagged sources;
 their historical helpers may ignore the annotation and keep a tag fallback.
 Annotation presence alone does not prove default binding. Verify the rendered
 Vaultsmith image and set an explicit verified `image.digest` for those sources.
@@ -82,12 +96,15 @@ local package before signing. Missing, malformed, or inconsistent manifest
 identity or content aborts before Cosign. Chart signing and release output use
 the retained digest reference, never a fresh version-tag lookup. The chart
 manifest digest and the packaged image digest identify different artifacts.
-This chart-manifest binding also applies to historical-source recovery.
+This chart-manifest binding also applies to historical-source draft recovery.
 
 The local source-binding regression uses synthetic repositories and executes the
 workflow's actual packaging, signing, and output steps with native Helm packaging
 and simulated registry/signing calls. It checks producing-manifest routing, tag
 replacement, push/digest/readback failures, and immutable release output.
+It also captures synthetic checksum signer input and checks the producing digest,
+readback substitution, missing or changed producer bytes, missing or malformed
+digest output, evidence-less recovery rejection, and download/sign/upload failures.
 It renders the archive with synthetic native-mode Secret references and
 checks the default image, overrides, invalid digest handling, and the older-helper
 recovery limitation. Use release-selected Helm and a full-history Git checkout
