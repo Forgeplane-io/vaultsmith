@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing semver tag to publish or recover
+        description: Existing semver tag to publish or recover a draft release
         required: true
         type: string
       release_id:
-        description: GitHub release ID for an explicit recovery or republish
+        description: GitHub draft release ID for an explicit recovery
         required: false
         type: string
 
@@ -219,6 +219,16 @@ jobs:
           version: v2.14.2
           install-only: true
 
+      - name: Verify checksum producer availability
+        env:
+          RELEASE_DRAFT: ${{ needs.validate.outputs.release_draft }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_DRAFT" != 'true' ]]; then
+            printf 'release checksum provenance: non-draft recovery has no trusted original checksum evidence; aborting before publication. Do not use existing release assets as producer evidence.\n' >&2
+            exit 1
+          fi
+
       - name: Verify remote tag before publication
         run: |
           set -euo pipefail
@@ -243,6 +253,18 @@ jobs:
         run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Record release checksum digest
+        id: checksums
+        run: |
+          set -euo pipefail
+          if [[ ! -f dist/checksums.txt ]]; then
+            printf 'release checksum provenance: missing GoReleaser output dist/checksums.txt; aborting before signing.\n' >&2
+            exit 1
+          fi
+          checksum_sha256="$(sha256sum dist/checksums.txt | cut -d' ' -f1)"
+          printf 'sha256=%s\n' "$checksum_sha256" >> "$GITHUB_OUTPUT"
+          printf 'Release checksums SHA-256: `%s`\n\n' "$checksum_sha256" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -356,16 +378,29 @@ jobs:
           cosign sign --yes "$CHART_REFERENCE"
 
       - name: Sign release checksums
+        env:
+          CHECKSUM_SHA256: ${{ steps.checksums.outputs.sha256 }}
         run: |
           set -euo pipefail
+          if [[ ! "${CHECKSUM_SHA256:-}" =~ ^[a-f0-9]{64}$ ]]; then
+            printf 'release checksum provenance: missing or malformed producing SHA-256; aborting before signing.\n' >&2
+            exit 1
+          fi
           mkdir -p dist/release
           gh release download "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --pattern checksums.txt \
             --dir dist/release
+          for checksum_file in dist/checksums.txt dist/release/checksums.txt; do
+            observed_sha256="$(sha256sum "$checksum_file" | cut -d' ' -f1)"
+            if [[ "$observed_sha256" != "$CHECKSUM_SHA256" ]]; then
+              printf 'release checksum verification: %s does not match the producing SHA-256; aborting before signing.\n' "$checksum_file" >&2
+              exit 1
+            fi
+          done
           cosign sign-blob --yes \
             --bundle dist/release/checksums.txt.bundle \
-            dist/release/checksums.txt
+            dist/checksums.txt
           gh release upload "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber \

@@ -113,11 +113,15 @@ try {
       'needs.validate.outputs.version': outputs.version,
       'needs.validate.outputs.sha': outputs.sha,
       'needs.validate.outputs.build_date': outputs.build_date,
+      'needs.validate.outputs.release_draft': outputs.release_draft,
       'secrets.GITHUB_TOKEN': 'synthetic-not-a-credential',
       'inputs.tag || github.ref_name': event.inputTag || event.refName,
       'steps.image.outputs.digest': event.imageDigest,
       ...(event.chartOutputs === undefined ? {} : {
         ['steps.' + chartStep.id + '.outputs.reference']: event.chartOutputs.reference || '',
+      }),
+      ...(event.checksumOutputs === undefined ? {} : {
+        ['steps.' + checksumRecordStep?.id + '.outputs.sha256']: event.checksumOutputs.sha256 || '',
       }),
     };
     return value.replace(/\$\{\{\s*(.*?)\s*\}\}/g, (_, key) => {
@@ -270,6 +274,163 @@ try {
     const attest = publish.steps.find((step) => step.uses?.startsWith('actions/attest-build-provenance@'));
     assert.equal(attest.if, expression("github.repository_visibility == 'public' && github.sha == needs.validate.outputs.sha"),
       'GitHub event provenance must not attest a different source commit');
+  });
+
+  // Checksum bytes are synthetic; execute the actual workflow with only the
+  // external release download/upload and signer replaced by local captures.
+  const checksumGuard = publish.steps.find((step) => step.name === 'Verify checksum producer availability');
+  const checksumRecordStep = publish.steps.find((step) => step.name === 'Record release checksum digest');
+  const checksumSignStep = publish.steps.find((step) => step.name === 'Sign release checksums');
+  const checksumBin = join(fixture, 'checksum-bin');
+  mkdirSync(checksumBin);
+  const producerChecksums = 'a'.repeat(64) + '  synthetic-release.tar.gz\n';
+  const replacementChecksums = 'b'.repeat(64) + '  synthetic-release.tar.gz\n';
+  const producerChecksumSHA256 = createHash('sha256').update(producerChecksums).digest('hex');
+  const replacementChecksumSHA256 = createHash('sha256').update(replacementChecksums).digest('hex');
+  receipt.checksums = { producerChecksumSHA256, replacementChecksumSHA256,
+    releaseCallsSimulated: true, signingCallsSimulated: true };
+  writeFileSync(join(checksumBin, 'gh'), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == release && "$2" == download ]]; then
+  printf 'download\\n' >> "$CHECKSUM_CALLS"
+  if [[ "$CHECKSUM_STATE" == download-failure ]]; then
+    printf 'synthetic checksum download failure\\n' >&2
+    exit 1
+  fi
+  while (( $# )); do
+    if [[ "$1" == --dir ]]; then
+      cp "$CHECKSUM_READBACK" "$2/checksums.txt"
+      exit 0
+    fi
+    shift
+  done
+elif [[ "$1" == release && "$2" == upload ]]; then
+  printf 'upload\\n' >> "$CHECKSUM_CALLS"
+  if [[ "$CHECKSUM_STATE" == upload-failure ]]; then
+    printf 'synthetic checksum bundle upload failure\\n' >&2
+    exit 1
+  fi
+  cp "\${@: -1}" "$CHECKSUM_UPLOADED_BUNDLE"
+  exit 0
+fi
+exit 1
+`, { mode: 0o755 });
+  writeFileSync(join(checksumBin, 'cosign'), `#!/usr/bin/env bash
+set -euo pipefail
+test "$1" = sign-blob
+printf 'sign\\n' >> "$CHECKSUM_CALLS"
+printf '%s\\n' "\${@: -1}" > "$CHECKSUM_SIGNED_PATH"
+cp "\${@: -1}" "$CHECKSUM_SIGNED_BYTES"
+if [[ "$CHECKSUM_STATE" == signer-failure ]]; then
+  printf 'synthetic checksum signer failure\\n' >&2
+  exit 1
+fi
+while (( $# )); do
+  if [[ "$1" == --bundle ]]; then
+    printf 'synthetic-signature\\n' > "$2"
+    exit 0
+  fi
+  shift
+done
+exit 1
+`, { mode: 0o755 });
+
+  function executeChecksums(state, entry) {
+    const directory = mkdtempSync(join(fixture, 'checksums-'));
+    mkdirSync(join(directory, 'dist'));
+    if (!['missing-producer', 'recovery-without-producer'].includes(state)) {
+      writeFileSync(join(directory, 'dist/checksums.txt'), producerChecksums);
+    }
+    const readback = join(directory, 'readback-checksums');
+    writeFileSync(readback, state === 'substituted-readback' ? replacementChecksums : producerChecksums);
+    const output = join(directory, 'checksum-output');
+    const summary = join(directory, 'summary');
+    writeFileSync(output, '');
+    writeFileSync(summary, '');
+    const checksumEnv = {
+      ...jobEnv(publish, join(directory, 'publication-marker')),
+      PATH: checksumBin + ':' + env.PATH,
+      GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: summary,
+      GITHUB_REPOSITORY: 'synthetic/vaultsmith',
+      CHECKSUM_STATE: state, CHECKSUM_READBACK: readback,
+      CHECKSUM_CALLS: join(directory, 'checksum-calls'),
+      CHECKSUM_SIGNED_PATH: join(directory, 'signed-path'),
+      CHECKSUM_SIGNED_BYTES: join(directory, 'signed-bytes'),
+      CHECKSUM_UPLOADED_BUNDLE: join(directory, 'uploaded-bundle'),
+    };
+    const caseOutputs = { ...outputs, release_draft: state.startsWith('recovery-') ? 'false' : 'true' };
+    const guardEnv = Object.fromEntries(Object.entries(checksumGuard?.env || {})
+      .map(([key, value]) => [key, expand(value, caseOutputs)]));
+    let result = command('bash', ['-e', '-c', checksumGuard?.run || 'true'], directory,
+      { ...checksumEnv, ...guardEnv });
+    if (result.status === 0) {
+      result = command('bash', ['-e', '-c', checksumRecordStep?.run || 'true'], directory, checksumEnv);
+    }
+    const checksumOutputs = Object.fromEntries(readFileSync(output, 'utf8').split('\n').filter(Boolean)
+      .map((line) => line.split('=')));
+    entry.recordedSHA256 = checksumOutputs.sha256 || null;
+    entry.summary = readFileSync(summary, 'utf8').trim();
+    if (state === 'changed-producer') writeFileSync(join(directory, 'dist/checksums.txt'), replacementChecksums);
+    if (state === 'missing-digest') delete checksumOutputs.sha256;
+    if (state === 'malformed-digest') checksumOutputs.sha256 = 'not-a-digest';
+    if (result.status === 0) {
+      const signEnv = Object.fromEntries(Object.entries(checksumSignStep.env || {})
+        .map(([key, value]) => [key, expand(value, outputs, { checksumOutputs })]));
+      result = command('bash', ['-e', '-c', checksumSignStep.run], directory, { ...checksumEnv, ...signEnv });
+    }
+    entry.exitCode = result.status;
+    entry.diagnostic = result.stderr.trim();
+    entry.calls = existsSync(checksumEnv.CHECKSUM_CALLS)
+      ? readFileSync(checksumEnv.CHECKSUM_CALLS, 'utf8').trim().split('\n') : [];
+    entry.signedSHA256 = existsSync(checksumEnv.CHECKSUM_SIGNED_BYTES)
+      ? createHash('sha256').update(readFileSync(checksumEnv.CHECKSUM_SIGNED_BYTES)).digest('hex') : null;
+    entry.signerInput = existsSync(checksumEnv.CHECKSUM_SIGNED_PATH)
+      ? readFileSync(checksumEnv.CHECKSUM_SIGNED_PATH, 'utf8').trim() : null;
+    entry.bundleUploaded = existsSync(checksumEnv.CHECKSUM_UPLOADED_BUNDLE);
+  }
+
+  check('checksum signing uses recorded producer output', (entry) => {
+    executeChecksums('normal', entry);
+    assert.equal(entry.exitCode, 0, 'matching local producer and release readback must permit signing');
+    assert.equal(entry.recordedSHA256, producerChecksumSHA256, 'record the original producing digest');
+    assert.ok(entry.summary.includes(producerChecksumSHA256), 'retain the producing digest in the run summary');
+    assert.equal(entry.signedSHA256, producerChecksumSHA256, 'sign the producing checksum bytes');
+    assert.equal(entry.signerInput, 'dist/checksums.txt', 'the signer must consume local producer output');
+    assert.equal(entry.bundleUploaded, true, 'retain the existing bundle upload');
+  });
+  for (const [state, diagnostic] of [
+    ['substituted-readback', 'checksum'], ['missing-producer', 'checksum'],
+    ['changed-producer', 'checksum'], ['missing-digest', 'checksum'],
+    ['malformed-digest', 'checksum'], ['download-failure', 'download'],
+    ['recovery-without-producer', 'recovery'], ['recovery-with-untrusted-local', 'recovery'],
+  ]) {
+    check('checksum signing rejects ' + state, (entry) => {
+      executeChecksums(state, entry);
+      assert.notEqual(entry.exitCode, 0, 'untrusted or unavailable checksum provenance must abort');
+      assert.equal(entry.signedSHA256, null, 'unverified checksum bytes must not reach the signer');
+      assert.equal(entry.bundleUploaded, false, 'rejection must not upload a checksum bundle');
+      assert.ok(entry.diagnostic.includes(diagnostic), 'failure must identify the operation');
+      assert.ok(!entry.diagnostic.includes('synthetic-not-a-credential'), 'diagnostics must not expose credentials');
+      if (state.startsWith('recovery-')) assert.deepEqual(entry.calls, [], 'reject recovery before release asset access');
+    });
+  }
+  for (const state of ['signer-failure', 'upload-failure']) {
+    check('checksum signing propagates ' + state, (entry) => {
+      executeChecksums(state, entry);
+      assert.notEqual(entry.exitCode, 0, 'signing or upload failure must fail the step');
+      assert.equal(entry.signedSHA256, producerChecksumSHA256, 'even a failed signer must receive trusted bytes');
+      assert.equal(entry.bundleUploaded, false, 'failed publication must not report an uploaded bundle');
+      if (state === 'signer-failure') assert.ok(!entry.calls.includes('upload'), 'signer failure must prevent upload');
+    });
+  }
+  check('checksum workflow rejects evidence-less recovery before first publication', () => {
+    assert.ok(checksumGuard, 'the publish job needs an explicit recovery provenance guard');
+    assert.ok(publish.steps.indexOf(checksumGuard) < firstPublication, 'recovery must abort before any publication');
+    assert.equal(checksumGuard.if, undefined, 'the recovery provenance guard must be unconditional');
+    assert.equal(checksumGuard['continue-on-error'], undefined, 'recovery rejection must stop publication');
+    assert.equal(publish.steps.indexOf(checksumRecordStep), firstPublication + 1,
+      'retain the producing checksum digest immediately after GoReleaser');
+    assert.equal(checksumRecordStep['continue-on-error'], undefined, 'producer recording failure must stop publication');
   });
 
   // Execute the actual packaging, signing, and output steps. Registry operations

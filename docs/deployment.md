@@ -78,9 +78,15 @@ signs the digest reference. A version-tag replacement cannot select different
 chart content for signing. Use the retained digest, not a newly resolved version
 tag, when verifying chart identity.
 
-This applies to normal releases and historical-source recovery. The chart
+This applies to normal releases and historical-source draft recovery. The chart
 manifest digest is separate from the image digest below; chart-manifest binding
 does not change older helpers' image-default limitations.
+
+Only draft releases that run GoReleaser currently support publication or recovery.
+Non-draft recovery and republishing abort before publication because independently
+trusted original checksum evidence is unavailable. Do not mark a published release
+as a draft to force a rebuild. See [release source integrity](../CONTRIBUTING.md#release-source-integrity)
+for checksum producer binding and the recovery trust contract.
 
 ### Release image binding and overrides
 
@@ -104,7 +110,7 @@ the new release's image. A values file or `--reuse-values` that retains a
 non-empty tag/digest still selects that override; remove it deliberately to
 follow the release. Standalone tag and digest overrides do not require migration.
 
-Manual recovery preserves the validated tagged chart source. If that source
+Draft recovery preserves the validated tagged chart source. If that source
 predates the updated image helper, the added annotation is not consumed and the
 default remains the historical tag fallback. These recoveries are outside the
 producing-digest guarantee, even when the annotation is present. Verify the
