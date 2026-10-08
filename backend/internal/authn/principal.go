@@ -48,7 +48,7 @@ type Principal struct {
 	Subject   string
 	Email     string
 	Groups    []string
-	ExpiresAt time.Time
+	ExpiresAt time.Time // Verified identity/group claim deadline, not OAuth token expiry.
 }
 
 func NewSessionManager(store scs.Store, cfg config.SessionConfig) *scs.SessionManager {
@@ -116,7 +116,9 @@ func sessionBinding(oidc config.OIDCConfig) string {
 	// Configuration is already validated and the resource origin canonicalized.
 	// A string array always marshals; JSON keeps component boundaries unambiguous.
 	encoded, _ := json.Marshal([3]string{oidc.IssuerURL, oidc.ClientID, oidc.PublicBaseURL})
-	return fmt.Sprintf("v1:%x", sha256.Sum256(encoded))
+	// v1 sessions may already have renewed claim authority through OAuth-only
+	// refresh. Only a verified login can establish the v2 freshness contract.
+	return fmt.Sprintf("v2:%x", sha256.Sum256(encoded))
 }
 
 func (a *Authenticator) principalFromBoundSession(ctx context.Context) (Principal, bool, error) {

@@ -29,6 +29,13 @@ func (a *Authenticator) AuthenticatedPrincipal(ctx context.Context) (Principal, 
 		return Principal{}, false, nil
 	}
 	now := time.Now()
+	// Loading the session can finish after its absolute deadline.
+	if !a.Sessions.Deadline(ctx).After(now) {
+		if destroyErr := a.destroySession(ctx); destroyErr != nil {
+			return Principal{}, false, destroyErr
+		}
+		return Principal{}, false, ErrNotAuthenticated
+	}
 	if principal.ExpiresAt.After(now.Add(refreshSkew)) {
 		return principal, true, nil
 	}
@@ -120,14 +127,15 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 			}
 			return Principal{}, false, ErrNotAuthenticated
 		}
-	} else {
-		refreshedPrincipal.ExpiresAt = refreshedSessionExpiry(a.Sessions.Deadline(freshCtx), rotated.Expiry)
-		if !refreshedPrincipal.ExpiresAt.After(now) {
-			if destroyErr := a.destroySession(ctx); destroyErr != nil {
-				return Principal{}, false, destroyErr
-			}
-			return Principal{}, false, ErrNotAuthenticated
+	}
+	// OAuth-only refresh can rotate credentials, but cannot renew claim authority.
+	// Check at completion: claims or the session may expire during the exchange.
+	now = time.Now()
+	if !refreshedPrincipal.ExpiresAt.After(now) || !a.Sessions.Deadline(freshCtx).After(now) {
+		if destroyErr := a.destroySession(ctx); destroyErr != nil {
+			return Principal{}, false, destroyErr
 		}
+		return Principal{}, false, ErrNotAuthenticated
 	}
 
 	newRefreshToken := rotated.RefreshToken
@@ -145,8 +153,22 @@ func (a *Authenticator) syncSession(ctx context.Context, principal Principal, re
 	if markRefresh {
 		a.Sessions.Put(ctx, sessionRefreshCheckedKey, time.Now())
 	}
-	if _, _, err := a.Sessions.Commit(ctx); err != nil {
+	_, sessionExpiry, err := a.Sessions.Commit(ctx)
+	if err != nil {
 		return ErrTemporaryUnavailable
+	}
+	// Session-store I/O can cross either authority deadline before success.
+	now := time.Now()
+	if !principal.ExpiresAt.After(now) || !sessionExpiry.After(now) {
+		// The persisted fence can expire with the committed session. Restore
+		// it only under the still-owned lease before fenced destruction.
+		if err := a.activateSessionFence(ctx, a.Sessions.Token(ctx), sessionLockFence(ctx)); err != nil {
+			return err
+		}
+		if err := a.destroySession(ctx); err != nil {
+			return err
+		}
+		return ErrNotAuthenticated
 	}
 	return nil
 }
