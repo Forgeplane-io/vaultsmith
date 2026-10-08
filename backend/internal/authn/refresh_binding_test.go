@@ -3,6 +3,7 @@ package authn
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 // early-return bypass, or refresh-before-validation is permitted.
 func TestAuthenticatedPrincipalSessionBoundary(t *testing.T) {
 	for _, path := range []string{"fresh", "retry", "refresh"} {
-		for _, change := range []string{"unchanged", "issuer", "client", "resource", "legacy", "malformed", "unknown-version", "principal-issuer"} {
+		for _, change := range []string{"unchanged", "issuer", "client", "resource", "legacy", "previous-version", "malformed", "unknown-version", "principal-issuer"} {
 			t.Run(path+"/"+change, func(t *testing.T) {
 				calls := 0
 				service, token := newRefreshService(t, func(context.Context, string) (*oauth2.Token, error) {
@@ -36,6 +37,13 @@ func TestAuthenticatedPrincipalSessionBoundary(t *testing.T) {
 					service.Config.OIDC.PublicBaseURL = "https://other-vault.example"
 				case "legacy":
 					service.Sessions.Remove(ctx, "auth.binding")
+				case "previous-version":
+					binding := service.Sessions.GetString(ctx, sessionBindingKey)
+					_, digest, _ := strings.Cut(binding, ":")
+					service.Sessions.Put(ctx, sessionBindingKey, "v1:"+digest)
+					// OAuth-only refresh in the previous version could already
+					// have overwritten the original verified claim deadline.
+					service.Sessions.Put(ctx, sessionExpiresAtKey, time.Now().Add(time.Hour))
 				case "malformed":
 					service.Sessions.Put(ctx, "auth.binding", 42)
 				case "unknown-version":
@@ -75,31 +83,37 @@ func TestAuthenticatedPrincipalSessionBoundary(t *testing.T) {
 
 func TestAuthenticatedPrincipalValidatesSerializedReload(t *testing.T) {
 	for _, path := range []string{"fresh", "retry", "refresh"} {
-		t.Run(path, func(t *testing.T) {
-			service, token := newRefreshService(t, func(context.Context, string) (*oauth2.Token, error) {
-				t.Fatal("invalid reloaded session reached refresh")
-				return nil, nil
+		for _, binding := range []string{"v999:unsupported", "previous-version"} {
+			t.Run(path+"/"+binding, func(t *testing.T) {
+				service, token := newRefreshService(t, func(context.Context, string) (*oauth2.Token, error) {
+					t.Fatal("invalid reloaded session reached refresh")
+					return nil, nil
+				})
+				stale := mustLoadSession(t, service.Sessions, token)
+				updated := mustLoadSession(t, service.Sessions, token)
+				if binding == "previous-version" {
+					_, digest, _ := strings.Cut(service.Sessions.GetString(updated, sessionBindingKey), ":")
+					binding = "v1:" + digest
+				}
+				service.Sessions.Put(updated, sessionBindingKey, binding)
+				if path == "fresh" {
+					service.Sessions.Put(updated, sessionExpiresAtKey, time.Now().Add(time.Hour))
+				}
+				if path == "retry" {
+					service.Sessions.Put(updated, sessionRefreshCheckedKey, time.Now())
+				}
+				if _, _, err := service.Sessions.Commit(updated); err != nil {
+					t.Fatal(err)
+				}
+				principal, found, err := service.AuthenticatedPrincipal(stale)
+				if !errors.Is(err, ErrNotAuthenticated) || found || principal.Subject != "" {
+					t.Fatalf("reload accepted incompatible principal: found=%t error=%v", found, err)
+				}
+				fresh := mustLoadSession(t, service.Sessions, token)
+				if _, found, err := PrincipalFromSession(fresh, service.Sessions); err != nil || found {
+					t.Fatalf("reloaded session not destroyed: found=%t error=%v", found, err)
+				}
 			})
-			stale := mustLoadSession(t, service.Sessions, token)
-			updated := mustLoadSession(t, service.Sessions, token)
-			service.Sessions.Put(updated, "auth.binding", "v999:unsupported")
-			if path == "fresh" {
-				service.Sessions.Put(updated, sessionExpiresAtKey, time.Now().Add(time.Hour))
-			}
-			if path == "retry" {
-				service.Sessions.Put(updated, sessionRefreshCheckedKey, time.Now())
-			}
-			if _, _, err := service.Sessions.Commit(updated); err != nil {
-				t.Fatal(err)
-			}
-			principal, found, err := service.AuthenticatedPrincipal(stale)
-			if !errors.Is(err, ErrNotAuthenticated) || found || principal.Subject != "" {
-				t.Fatalf("reload accepted incompatible principal: found=%t error=%v", found, err)
-			}
-			fresh := mustLoadSession(t, service.Sessions, token)
-			if _, found, err := PrincipalFromSession(fresh, service.Sessions); err != nil || found {
-				t.Fatalf("reloaded session not destroyed: found=%t error=%v", found, err)
-			}
-		})
+		}
 	}
 }

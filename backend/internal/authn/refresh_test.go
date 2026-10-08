@@ -60,7 +60,7 @@ func newRefreshService(t *testing.T, exchange func(context.Context, string) (*oa
 	return service, token
 }
 
-func TestAuthenticatedPrincipalRotatesRefreshTokenAndExtendsSessionExpiryWithoutIDToken(t *testing.T) {
+func TestAuthenticatedPrincipalRotatesRefreshTokenWithoutExtendingClaims(t *testing.T) {
 	service, token := newRefreshService(t, func(_ context.Context, refreshToken string) (*oauth2.Token, error) {
 		if refreshToken != "old-refresh" {
 			t.Fatalf("refresh token = %q, want old-refresh", refreshToken)
@@ -69,15 +69,24 @@ func TestAuthenticatedPrincipalRotatesRefreshTokenAndExtendsSessionExpiryWithout
 	})
 
 	ctx := mustLoadSession(t, service.Sessions, token)
+	before, _, err := PrincipalFromSession(ctx, service.Sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
 	principal, found, err := service.AuthenticatedPrincipal(ctx)
 	if err != nil || !found {
 		t.Fatalf("AuthenticatedPrincipal() = (%+v, %t, %v)", principal, found, err)
 	}
-	if principal.Subject != "user-123" || !principal.ExpiresAt.After(time.Now().Add(30*time.Minute)) {
-		t.Fatalf("unexpected principal after refresh: %+v", principal)
+	if principal.Subject != before.Subject || !principal.ExpiresAt.Equal(before.ExpiresAt) {
+		t.Fatal("OAuth-only refresh changed identity or verified claim expiry")
 	}
 	if got := RefreshTokenFromSession(ctx, service.Sessions); got != "new-refresh" {
 		t.Fatalf("stored refresh token = %q, want new-refresh", got)
+	}
+	fresh := mustLoadSession(t, service.Sessions, token)
+	stored, _, err := PrincipalFromSession(fresh, service.Sessions)
+	if err != nil || !stored.ExpiresAt.Equal(before.ExpiresAt) {
+		t.Fatalf("persisted claim expiry changed: error=%v", err)
 	}
 }
 
@@ -183,7 +192,7 @@ func TestAuthenticatedPrincipalPreservesSessionOnTransientRefreshFailure(t *test
 	}
 }
 
-func TestAuthenticatedPrincipalRefreshesExpiredPrincipalWhenRefreshTokenExists(t *testing.T) {
+func TestAuthenticatedPrincipalRejectsExpiredClaimsWithoutNewIDToken(t *testing.T) {
 	service, token := newRefreshService(t, func(_ context.Context, refreshToken string) (*oauth2.Token, error) {
 		if refreshToken != "old-refresh" {
 			t.Fatalf("refresh token = %q, want old-refresh", refreshToken)
@@ -198,11 +207,67 @@ func TestAuthenticatedPrincipalRefreshesExpiredPrincipalWhenRefreshTokenExists(t
 	}
 
 	principal, found, err := service.AuthenticatedPrincipal(ctx)
-	if err != nil || !found {
-		t.Fatalf("AuthenticatedPrincipal() = (%+v, %t, %v), want refreshed principal", principal, found, err)
+	if !errors.Is(err, ErrNotAuthenticated) || found || principal.Subject != "" {
+		t.Fatalf("expired claims accepted: found=%t error=%v", found, err)
 	}
-	if !principal.ExpiresAt.After(time.Now()) {
-		t.Fatalf("refreshed principal expiry = %s, want future expiry", principal.ExpiresAt)
+	fresh := mustLoadSession(t, service.Sessions, token)
+	if _, found, err := PrincipalFromSession(fresh, service.Sessions); err != nil || found {
+		t.Fatalf("expired session not destroyed: found=%t error=%v", found, err)
+	}
+}
+
+func TestAuthenticatedPrincipalChecksClaimDeadlineAfterExchange(t *testing.T) {
+	// Delay the response until the persisted claim deadline, rather than using
+	// an arbitrary provider delay. Authority must be checked at completion.
+	var claimsExpire time.Time
+	service, token := newRefreshService(t, func(context.Context, string) (*oauth2.Token, error) {
+		if !time.Now().Before(claimsExpire) {
+			t.Fatal("fixture reached exchange after claim expiry")
+		}
+		time.Sleep(time.Until(claimsExpire))
+		return &oauth2.Token{Expiry: time.Now().Add(time.Hour)}, nil
+	})
+	ctx := mustLoadSession(t, service.Sessions, token)
+	principal, _, err := PrincipalFromSession(ctx, service.Sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimsExpire = principal.ExpiresAt
+	principal, found, err := service.AuthenticatedPrincipal(ctx)
+	if !errors.Is(err, ErrNotAuthenticated) || found || principal.Subject != "" {
+		t.Fatalf("exchange renewed expired authority: found=%t error=%v", found, err)
+	}
+}
+
+func TestAuthenticatedPrincipalRefreshedIDTokenCannotOutliveSession(t *testing.T) {
+	const issuer = "https://issuer.example"
+	raw, jwks := signedIDTokenFixture(t, issuer, "session-deadline", "browser-client")
+	var deadline time.Time
+	service, token := newRefreshService(t, func(context.Context, string) (*oauth2.Token, error) {
+		if !time.Now().Before(deadline) {
+			t.Fatal("fixture reached exchange after session deadline")
+		}
+		time.Sleep(time.Until(deadline))
+		return (&oauth2.Token{Expiry: time.Now().Add(time.Hour)}).WithExtra(map[string]any{"id_token": raw}), nil
+	})
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(jwks))), Request: req}, nil
+	})}
+	provider := (&oidc.ProviderConfig{IssuerURL: issuer, JWKSURL: issuer + "/jwks"}).NewProvider(oidc.ClientContext(context.Background(), client))
+	service.Verifier = provider.Verifier(&oidc.Config{ClientID: "browser-client"})
+	ctx := mustLoadSession(t, service.Sessions, token)
+	principal, _, err := PrincipalFromSession(ctx, service.Sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline = principal.ExpiresAt
+	service.Sessions.SetDeadline(ctx, deadline)
+	if _, _, err := service.Sessions.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	principal, found, err := service.AuthenticatedPrincipal(ctx)
+	if !errors.Is(err, ErrNotAuthenticated) || found || principal.Subject != "" {
+		t.Fatalf("fresh ID token outlived session: found=%t error=%v", found, err)
 	}
 }
 

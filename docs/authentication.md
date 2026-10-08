@@ -26,11 +26,41 @@ binding, missing or malformed binding, or unsupported binding version causes
 session destruction and requires a new verified OIDC login. Old identities and
 groups are never adopted into the current configuration.
 
-Upgrading from a version without this binding signs out existing browser
-sessions on their next authenticated request. Changing any of the three binding
-components also requires reauthentication. See the [rollout and rollback
+Binding version 2 also identifies sessions whose stored expiry is the deadline
+of verified identity/group claims, never a refreshed OAuth token deadline.
+Upgrading from an earlier binding version (or no binding) signs out existing
+browser sessions on their next authenticated request. An old stored expiry may
+already have been extended without fresh claims, so Vaultsmith does not adopt it.
+Changing any of the three binding components also requires reauthentication.
+See the [rollout and rollback
 guidance](deployment.md#upgrade-and-rollback). This does not change Bearer token
 authentication or its audience and scope requirements.
+
+### Browser claim freshness and provider requirements
+
+Browser identity and groups are authoritative only until the verified ID
+token's expiry. Refreshing OAuth credentials without a new ID token can rotate
+the refresh token while those claims remain valid, but cannot extend their
+deadline. At that deadline, a refresh must supply a newly verified ID token;
+otherwise Vaultsmith destroys the session and requires interactive login.
+Protected operations return generic `401 unauthorized` without executing the
+operation. A provider exchange or session-store outage fails closed with `503`,
+not cached authorization.
+
+Providers that support uninterrupted browser sessions must return refreshed ID
+tokens with current groups. Vaultsmith verifies the signature, issuer, browser
+client audience, and expiry, and requires the same issuer and subject as the
+existing session. Fresh groups replace cached groups; an absent groups claim
+grants no permissions, and malformed claims are rejected. Providers that omit
+refreshed ID tokens remain usable but require login at the original claim
+deadline, even if OAuth credentials are still valid.
+
+This is not immediate membership revocation: existing verified groups may be
+used until their claim deadline. Absolute and idle session lifetimes still bound
+the session, including when refresh supplies a new ID token. Confirm your
+provider's refresh and revocation behavior before rollout.
+
+### Machine clients
 
 Use a Bearer access token for canonical REST and MCP machine clients:
 

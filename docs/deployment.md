@@ -307,19 +307,29 @@ For a disposable native OIDC, Redis, and TLS environment, run [`scripts/integrat
 
 Keep the previous image digest and values file available. Upgrade with the same native dependencies and verify readiness and the request matrix after the rollout. Do not roll back an exposed deployment by setting `auth.mode: "off"`; that removes authentication. If sessions must be invalidated, use an approved Redis key-prefix or session-namespace procedure.
 
-Browser sessions from versions without a relying-party binding are invalidated
-on their next authenticated request after upgrade. Missing, malformed,
+Browser sessions from versions without a relying-party binding, or with the
+earlier version 1 binding, are invalidated on their next authenticated request
+after upgrade. Version 2 preserves the verified identity/group claim deadline
+independently of OAuth token expiry. Earlier sessions may already contain an
+expiry extended by OAuth-only refresh, so that deadline cannot be migrated as
+fresh claim evidence. Missing, malformed,
 unsupported-version, or mismatched bindings require a new verified login;
 Vaultsmith does not migrate stored identities or groups. Changes to
 `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, or the canonical `PUBLIC_BASE_URL` origin
 invalidate sessions in the same way. Redis or invalidation failures fail closed
 with temporary unavailability, not authenticated access.
 
-Plan for users to sign in again. Avoid serving old and new binaries in the same
-session namespace during rollout: old binaries can accept unbound or mismatched
-sessions and can create unbound sessions that new binaries reject. Use a
+Plan for users to sign in again, and verify the provider requirements in
+[Browser claim freshness](authentication.md#browser-claim-freshness-and-provider-requirements).
+Providers without refreshed ID tokens now require login at the original claim
+deadline rather than retaining cached groups for the full session lifetime.
+Avoid serving old and new binaries in the same session namespace during rollout:
+old binaries can renew cached group authority without fresh claims and create
+sessions that new binaries reject. Use a
 coordinated cutover or isolated new session namespace with traffic routed only
 to the upgraded instances. Verify rejection of old sessions and successful
-reauthentication. Rolling back to a binary without binding checks removes this
-protection; namespace invalidation alone does not restore it. Assess that
-security regression before rollback and keep relying parties isolated.
+reauthentication. Rolling back to a binary without version 2 claim-freshness
+checks restores the old OAuth-only authorization-renewal behavior, even if it
+checks the version 1 relying-party binding. Namespace invalidation alone does
+not restore claim-freshness enforcement. Assess that security regression before
+rollback and keep relying parties isolated.

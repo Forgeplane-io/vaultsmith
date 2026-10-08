@@ -132,7 +132,7 @@ Do not start machine callers until the release includes the benchmark receipt, c
 
 Run these checks in order:
 
-1. Test the released UI against a mix of old and current replicas. Profile listing and the canonical Encrypt, Decrypt, and Rotate operations must succeed on current replicas; existing legacy operation callers must continue to work.
+1. Test the released UI and existing legacy operation callers against current replicas. Profile listing and the canonical Encrypt, Decrypt, and Rotate operations must succeed. For native browser sessions, follow the [session cutover guidance](deployment.md#upgrade-and-rollback); do not serve old and current replicas in the same session namespace.
 2. Test a Bearer client against one current canary. Verify audience, scopes, Casbin policy, and rejection of mixed credentials.
 3. On every serving replica, verify that `/mcp` returns `404` for every method, including `OPTIONS`, while MCP is disabled.
 4. Roll out the current release to every serving replica before starting external clients on canonical REST.
@@ -146,7 +146,7 @@ Rollback is ordered:
 1. Stop all canonical external REST clients before rolling any replica below the current release.
 2. Stop MCP callers before setting `mcp.enabled=false`.
 3. Record the restart owner and get separate restart approval before the MCP-disable or application-image rollout.
-4. Roll back the application image or route traffic to the previous release replicas.
+4. Assess the [browser claim-freshness regression](deployment.md#upgrade-and-rollback) before rolling back the application image or routing traffic to previous release replicas; keep relying parties isolated.
 
 A rollback must not require profile password or policy changes.
 
