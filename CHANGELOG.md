@@ -10,6 +10,13 @@ All notable changes to Vaultsmith are documented here. Release Please maintains 
 - Proofs use `PUBLIC_BASE_URL` as the issuer and reload a valid changed keyring without restart. A malformed replacement keeps the previous valid keyring active.
 - When proofs are disabled, normal encrypt, decrypt, and rotate behavior remains available and no signing Secret is required.
 
+## [0.9.2](https://github.com/Forgeplane-io/vaultsmith/compare/v0.9.1...v0.9.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* **auth:** preserve browser claim freshness ([dc48dae](https://github.com/Forgeplane-io/vaultsmith/commit/dc48dae39103c68829e2114a8a8499bf8461352e))
+
 ## [0.9.1](https://github.com/Forgeplane-io/vaultsmith/compare/v0.9.0...v0.9.1) (2026-10-08)
 
 
