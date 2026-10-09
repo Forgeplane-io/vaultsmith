@@ -41,6 +41,13 @@ The runtime router is still hand-written. Generated code supplies request, respo
 
 `api/go.mod` isolates `oapi-codegen` 2.8.0 from the application module. `typescript-generator/package.json` pins `openapi-typescript` 7.13.0 and TypeScript 5.9.3. It also pins `js-yaml` 4.3.1 because 4.3.0 is affected by GHSA-5p4m-2wfm-xmqj.
 
+The pinned `openapi-typescript` release requires TypeScript `^5.x`. Dependabot
+therefore defers TypeScript major updates only in `/api/typescript-generator`;
+compatible compiler updates and generator updates remain enabled. Remove this
+ignore once a published generator release supports the newer compiler major,
+then verify the pairing with a clean install, dependency audit, and
+`make api-check`. Do not bypass peer-dependency checks.
+
 ## Check the contract
 
 ```sh
