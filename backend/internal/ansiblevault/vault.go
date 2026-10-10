@@ -230,7 +230,9 @@ func isSupportedHeader(header string) bool {
 	if header == Header11 {
 		return true
 	}
-	parts := strings.Split(header, ";")
+	// Four is the maximum valid field count. Extra separators remain in the
+	// label and fail validation without allocating a slice per delimiter.
+	parts := strings.SplitN(header, ";", 4)
 	if len(parts) != 3 && len(parts) != 4 {
 		return false
 	}
