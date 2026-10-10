@@ -10,6 +10,14 @@ All notable changes to Vaultsmith are documented here. Release Please maintains 
 - Proofs use `PUBLIC_BASE_URL` as the issuer and reload a valid changed keyring without restart. A malformed replacement keeps the previous valid keyring active.
 - When proofs are disabled, normal encrypt, decrypt, and rotate behavior remains available and no signing Secret is required.
 
+## [0.9.3](https://github.com/Forgeplane-io/vaultsmith/compare/v0.9.2...v0.9.3) (2026-10-10)
+
+
+### Bug Fixes
+
+* **deps:** defer API-generator TypeScript majors ([033268f](https://github.com/Forgeplane-io/vaultsmith/commit/033268f97b715bd024b1f502240f9669c64b476d))
+* **vault:** bound header field splitting ([9a8c3b0](https://github.com/Forgeplane-io/vaultsmith/commit/9a8c3b0f57e1bdde2f5f9a37c3910cdbfe260faf))
+
 ## [0.9.2](https://github.com/Forgeplane-io/vaultsmith/compare/v0.9.1...v0.9.2) (2026-10-09)
 
 
