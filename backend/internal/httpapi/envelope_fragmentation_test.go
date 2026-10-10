@@ -39,7 +39,10 @@ func TestFragmentedEnvelopeTransports(t *testing.T) {
 	server := httptest.NewServer(WrapSecurityWithOptions(handler, auth, SecurityOptions{MCPEnabled: true}))
 	defer server.Close()
 	valid := httpSyntheticVaultText(t, "synthetic-value", "synthetic-password", "dev")
+	const headerPrefix = ansiblevault.Header12Prefix + ";"
+	const headerSuffix = "\n00\n"
 	fixtures := []struct{ name, value string }{
+		{"header", headerPrefix + strings.Repeat(";", MaxVaultTextBytes-len(headerPrefix)-len(headerSuffix)) + headerSuffix},
 		{"outer", ansiblevault.Header11 + "\n" + strings.Repeat("0\n", (MaxVaultTextBytes-len(ansiblevault.Header11)-1)/2)},
 		{"inner", ansiblevault.Header11 + "\n" + strings.Repeat(strings.Repeat("0a", 40)+"\n", (MaxVaultTextBytes-len(ansiblevault.Header11)-1)/81)},
 	}
