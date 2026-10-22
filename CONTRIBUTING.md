@@ -45,6 +45,40 @@ Use Conventional Commits. Release Please owns version bumps, release pull reques
 
 In a pull request, state the behavior change, validation performed, security impact, and migration or compatibility effect. Changes to release artifacts, public metadata, image or chart names, or trust boundaries need explicit review.
 
+### Dependency auto-merge
+
+Dependabot patch and minor updates to the root Go module and frontend production
+dependencies are eligible for automatic squash merging after the CI workflow
+succeeds and all `main` rules pass. Every dependency in a group must qualify. Major
+updates, frontend development dependencies, API generators, GitHub Actions, and
+container images remain manual. Existing Dependabot ignore rules still apply.
+
+The workflow accepts only same-repository, non-draft Dependabot PRs and never
+checks out PR code. Fetch Metadata verifies the first commit only, so auto-merge
+requires exactly one signed Dependabot commit. Additional commits produce a
+notice with the observed count; ask Dependabot to recreate the PR or review it
+manually. The workflow waits for CI on the event's exact head commit, then requests
+a merge bound to that commit. It never arms native auto-merge, which could retain
+merge intent after later maintainer edits. A newer PR event cancels the old run;
+CI failures or a changed head prevent merging. If another `main` rule blocks the
+merge, resolve it and rerun the workflow or merge manually.
+
+Before rollout, install a GitHub App on **only this repository** with repository
+permissions **Contents: read and write** and **Pull requests: read and write**.
+Do not grant the App ruleset bypass access. Set the Actions repository variable
+`DEPENDABOT_AUTO_MERGE_APP_CLIENT_ID` and the Actions repository secret
+`DEPENDABOT_AUTO_MERGE_APP_PRIVATE_KEY`. Configure the private key through GitHub's
+secret UI; never paste it into an issue, PR, chat, command, or log. Missing
+credentials fail token creation rather than falling back to another identity.
+
+The App token is minted only after CI succeeds, limited to this repository and
+those permissions, and revoked when the job finishes. Using an App instead of
+`GITHUB_TOKEN` preserves the normal push-triggered full CI and Release Please runs
+after merging. Verify those runs on the first real eligible merge; local tests do
+not prove hosted event delivery.
+Run `node scripts/dependabot-auto-merge-test.cjs` for the synthetic workflow check;
+its sanitized receipt is `.tmp/dependabot-auto-merge-test.json`.
+
 ### Release source integrity
 
 Validation resolves the release tag once. Acceptance and publication check out

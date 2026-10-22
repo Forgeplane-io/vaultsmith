@@ -598,6 +598,7 @@ jobs:
         run: |
           npm ci --prefix frontend --no-audit --no-fund
           node scripts/ci-paths-test.cjs
+          node scripts/dependabot-auto-merge-test.cjs
           node scripts/release-source-test.cjs
       - name: Install Syft
         id: syft_primary
