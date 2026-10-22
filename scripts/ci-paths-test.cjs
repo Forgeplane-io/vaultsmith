@@ -15,6 +15,8 @@ for (const [path, expected] of [
   ['scripts/integration-native.sh', ['native_integration']],
   ['integration/unrelated.txt', []],
   ['integration/Caddyfile-idp', ['native_integration']],
+  ['.github/workflows/dependabot-auto-merge.yml', ['ci', 'dependencies']],
+  ['scripts/dependabot-auto-merge-test.cjs', ['ci']],
 ]) {
   // paths-filter defaults to any matching pattern, with dotfiles included.
   const selected = Object.entries(filters)

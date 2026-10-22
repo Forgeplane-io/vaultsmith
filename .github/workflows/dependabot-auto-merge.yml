@@ -1,0 +1,94 @@
+name: Dependabot auto-merge
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dependabot:
+    if: >-
+      github.repository == 'Forgeplane-io/vaultsmith' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    # Never check out or execute PR code in this privileged workflow.
+    steps:
+      - name: Verify Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ github.token }}
+      - name: Select application patch and minor updates
+        id: policy
+        shell: bash
+        env:
+          PR_COMMITS: ${{ github.event.pull_request.commits }}
+          UPDATED_DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+          # Fetch Metadata verifies only the first commit, so require it to be the whole PR.
+          if [ "$PR_COMMITS" != 1 ]; then
+            echo "::notice::Auto-merge commit budget: configured=1, observed=$PR_COMMITS. Fetch Metadata verifies only the first commit; ask Dependabot to recreate this PR or review manually."
+            echo 'eligible=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          eligible="$(jq -er '
+            if type != "array" then error("Expected a dependency metadata array")
+            elif any(.[]; type != "object") then error("Expected dependency metadata objects")
+            else
+              (length > 0 and all(.[];
+                (.updateType == "version-update:semver-patch" or .updateType == "version-update:semver-minor") and
+                ((.packageEcosystem == "go_modules" and .directory == "/") or
+                 (.packageEcosystem == "npm_and_yarn" and .directory == "/frontend" and .dependencyType == "direct:production"))
+              )) | tostring
+            end
+          ' <<< "$UPDATED_DEPENDENCIES")"
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+          if [ "$eligible" != true ]; then
+            echo 'This update requires manual review; only root Go and frontend production patch/minor updates qualify.'
+          fi
+      - name: Wait for checked commit CI
+        if: steps.policy.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          while :; do
+            run_id="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$PR_HEAD_SHA" --jq '.workflow_runs[0].id // empty')"
+            if [ -n "$run_id" ]; then
+              break
+            fi
+            echo "Waiting for CI to start for $PR_HEAD_SHA; check that CI is enabled if it does not appear."
+            # Use the same polling cadence as gh run watch's default.
+            sleep 3
+          done
+          gh run watch "$run_id" --exit-status --compact
+      - name: Create repository-scoped merge token
+        if: steps.policy.outputs.eligible == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.DEPENDABOT_AUTO_MERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEPENDABOT_AUTO_MERGE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Merge checked commit
+        if: steps.policy.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: gh pr merge --squash --match-head-commit "$PR_HEAD_SHA" "$PR_URL"
