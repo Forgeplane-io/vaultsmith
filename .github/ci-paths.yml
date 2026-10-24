@@ -1,6 +1,8 @@
 ci:
   - '.github/ci-paths.yml'
   - '.github/workflows/ci.yml'
+  - '.github/workflows/dependabot-auto-merge.yml'
+  - 'scripts/dependabot-auto-merge-test.cjs'
   - 'Makefile'
 
 frontend:
