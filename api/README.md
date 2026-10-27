@@ -39,7 +39,12 @@ The generated files are committed:
 
 The runtime router is still hand-written. Generated code supplies request, response, and contract types. The Markdown reference is a release artifact, not a runtime route. Only change generator lockfiles for reviewed contract changes or dependency updates; run `make api-check` afterward.
 
-`api/go.mod` isolates `oapi-codegen` 2.8.0 from the application module. `typescript-generator/package.json` pins `openapi-typescript` 7.13.0 and TypeScript 5.9.3. It also pins `js-yaml` 4.3.1 because 4.3.0 is affected by GHSA-5p4m-2wfm-xmqj.
+`api/go.mod` isolates `oapi-codegen` from the application module. It temporarily
+pins the upstream commit containing [oapi-codegen#2608](https://github.com/oapi-codegen/oapi-codegen/pull/2608)
+for compatibility with Speakeasy OpenAPI's YAML package migration. Replace this
+pin with a stable release containing the fix when one is available.
+
+`typescript-generator/package.json` pins `openapi-typescript` 7.13.0 and TypeScript 5.9.3. It also pins `js-yaml` 4.3.1 because 4.3.0 is affected by GHSA-5p4m-2wfm-xmqj.
 
 The pinned `openapi-typescript` release requires TypeScript `^5.x`. Dependabot
 therefore defers TypeScript major updates only in `/api/typescript-generator`;
