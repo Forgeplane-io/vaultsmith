@@ -8,7 +8,7 @@ require (
 	github.com/dprotaso/go-yit v0.0.0-20250804204205-7afe4252a1dd // indirect
 	github.com/getkin/kin-openapi v0.152.0 // indirect
 	github.com/go-openapi/jsonpointer v1.0.2 // indirect
-	github.com/kr/pretty v0.1.0 // indirect
+	github.com/kr/pretty v0.3.1 // indirect
 	github.com/oapi-codegen/oapi-codegen/v2 v2.8.1-0.20261025104655-81d5ab58fad7 // indirect
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
