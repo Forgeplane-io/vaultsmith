@@ -50,6 +50,12 @@ updates:
       timezone: Europe/Berlin
     allow:
       - dependency-type: all
+    # v2.8.1 lacks oapi-codegen#2608, required by Speakeasy OpenAPI 1.26.
+    # Keep the commit pin until a stable release contains the fix.
+    ignore:
+      - dependency-name: github.com/oapi-codegen/oapi-codegen/v2
+        versions:
+          - "2.8.1"
     open-pull-requests-limit: 5
     groups:
       api-go-tools:
