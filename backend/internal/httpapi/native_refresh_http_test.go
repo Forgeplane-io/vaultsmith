@@ -277,6 +277,98 @@ func (f *nativeRefreshFlow) login(t *testing.T) {
 	}
 }
 
+func TestNativeHTTPReloginStoresOnlySessionHash(t *testing.T) {
+	f := newNativeRefreshFlow(t, "oauth-only", false)
+	containsRawSession := false
+	hashMatches := false
+	callbackStatus := 0
+	t.Cleanup(func() {
+		receipt := map[string]any{
+			"fixture":                  "synthetic-tls-code-pkce-native-http",
+			"scenario":                 "authenticated-relogin-session-hash",
+			"transaction_contains_raw": containsRawSession,
+			"transaction_hash_matches": hashMatches,
+			"callback_status":          callbackStatus,
+			"passed":                   !t.Failed(),
+		}
+		data, err := json.MarshalIndent(receipt, "", "  ")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.WriteFile(filepath.Join(t.ArtifactDir(), "receipt.json"), data, 0o600); err != nil {
+			t.Error(err)
+		}
+	})
+
+	f.login(t)
+	status, body, _ := f.request(t, http.MethodGet, "/api/v1/session")
+	var session sessionResponse
+	if status != http.StatusOK || json.Unmarshal(body, &session) != nil || !session.Authenticated {
+		t.Fatal("authenticated re-login fixture did not establish a session")
+	}
+
+	base, err := url.Parse(f.server.URL)
+	if err != nil {
+		t.Fatal("fixture server URL could not be parsed")
+	}
+	var sessionToken string
+	for _, cookie := range f.client.Jar.Cookies(base) {
+		if cookie.Name == f.auth.Config.Session.CookieName {
+			sessionToken = cookie.Value
+		}
+	}
+	if sessionToken == "" {
+		t.Fatal("authenticated re-login fixture session token is missing")
+	}
+
+	status, _, headers := f.request(t, http.MethodGet, "/auth/login?return_to=%2F")
+	if status != http.StatusSeeOther {
+		t.Fatalf("authenticated re-login status=%d", status)
+	}
+	authorizationURL, err := url.Parse(headers.Get("Location"))
+	if err != nil || authorizationURL.Query().Get("state") == "" {
+		t.Fatal("authenticated re-login did not return an authorization state")
+	}
+	transactionKey := f.auth.Config.Redis.KeyPrefix + "transaction:" + authorizationURL.Query().Get("state")
+	rawTransaction, err := f.redis.Get(transactionKey)
+	if err != nil {
+		t.Fatal("authenticated re-login transaction is missing")
+	}
+	var transaction map[string]string
+	if err := json.Unmarshal([]byte(rawTransaction), &transaction); err != nil {
+		t.Fatal("authenticated re-login transaction could not be decoded")
+	}
+	containsRawSession = strings.Contains(rawTransaction, sessionToken)
+	if containsRawSession {
+		t.Fatal("authenticated re-login transaction contains the raw session token")
+	}
+	if _, found := transaction["pre_auth_session"]; found {
+		t.Fatal("authenticated re-login transaction retains the raw-session field")
+	}
+	sessionHash := sha256.Sum256([]byte(sessionToken))
+	hashMatches = transaction["pre_auth_session_hash"] == base64.RawURLEncoding.EncodeToString(sessionHash[:])
+	if !hashMatches {
+		t.Fatal("authenticated re-login transaction does not contain the expected session hash")
+	}
+
+	client := f.issuer.server.Client()
+	client.CheckRedirect = f.client.CheckRedirect
+	response, err := client.Get(headers.Get("Location"))
+	if err != nil {
+		t.Fatal("authenticated re-login authorization failed")
+	}
+	_ = response.Body.Close()
+	callback, err := url.Parse(response.Header.Get("Location"))
+	if err != nil || response.StatusCode != http.StatusSeeOther {
+		t.Fatal("authenticated re-login authorization did not return a callback")
+	}
+	callbackStatus, _, _ = f.request(t, http.MethodGet, callback.RequestURI())
+	if callbackStatus != http.StatusSeeOther {
+		t.Fatalf("authenticated re-login callback status=%d", callbackStatus)
+	}
+}
+
 func TestNativeHTTPRefreshClaimFreshness(t *testing.T) {
 	for _, scenario := range []struct {
 		name string

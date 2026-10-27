@@ -21,10 +21,10 @@ return value
 `)
 
 type LoginTransaction struct {
-	Nonce          string `json:"nonce"`
-	PKCEVerifier   string `json:"pkce_verifier"`
-	PreAuthSession string `json:"pre_auth_session"`
-	ReturnTo       string `json:"return_to"`
+	Nonce              string `json:"nonce"`
+	PKCEVerifier       string `json:"pkce_verifier"`
+	PreAuthSessionHash string `json:"pre_auth_session_hash"`
+	ReturnTo           string `json:"return_to"`
 }
 
 func (r *RedisRuntime) SaveLoginTransaction(ctx context.Context, state string, transaction LoginTransaction) error {
