@@ -1,0 +1,9 @@
+services:
+  edge:
+    network_mode: host
+    ports: !reset []
+    extra_hosts: !reset {}
+    volumes:
+      - ./Caddyfile-linux:/etc/caddy/Caddyfile:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --insecure --resolve localhost:18443:127.0.0.1 https://localhost:18443/ >/dev/null && curl --fail --silent http://127.0.0.1:18080/readyz >/dev/null"]

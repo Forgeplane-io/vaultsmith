@@ -183,10 +183,11 @@ func (h *Handler) serveProfiles(w http.ResponseWriter, r *http.Request) {
 			Id:    profile.ID,
 			Label: profile.Label,
 			Capabilities: apimodels.ProfileCapabilities{
-				Encrypt:           profile.Capabilities.Encrypt,
-				Decrypt:           profile.Capabilities.Decrypt,
-				RotateSource:      profile.Capabilities.RotateSource,
-				RotateDestination: profile.Capabilities.RotateDestination,
+				Encrypt:              profile.Capabilities.Encrypt,
+				Decrypt:              profile.Capabilities.Decrypt,
+				RotateSource:         profile.Capabilities.RotateSource,
+				RotateDestination:    profile.Capabilities.RotateDestination,
+				RotateDestinationIds: profile.Capabilities.RotateDestinationIDs,
 			},
 		})
 	}

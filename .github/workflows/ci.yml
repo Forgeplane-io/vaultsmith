@@ -542,6 +542,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Check native harness topology and fixtures
+        run: python3 -B -m unittest discover -s scripts -p integration_native_test.py
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+      - name: Check browser acceptance lifecycle
+        run: node --test scripts/delegated-rekey-browser-test.mjs
       - name: Run native OIDC integration
         run: ./scripts/integration-native.sh
 

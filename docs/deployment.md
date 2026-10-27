@@ -198,6 +198,8 @@ p, role:operator, profile:dev, encrypt, allow
 p, role:operator, profile:dev, decrypt, allow
 ```
 
+This policy grants direct Encrypt, Decrypt, and Generate, but no re-key operation. Add reviewed exact `rotation:<source>:<destination>, rotate` rows for the intended configured pairs; do not derive them mechanically from direct rights. See [delegated re-key policy](authentication.md#delegated-re-key-policy) for a lane-only example and deny semantics.
+
 Use an external ConfigMap when policy changes should be managed separately from Helm. Keep credentials in Secrets, not in the policy ConfigMap.
 
 ### NetworkPolicy
@@ -306,6 +308,25 @@ For a disposable native OIDC, Redis, and TLS environment, run [`scripts/integrat
 ## Upgrade and rollback
 
 Keep the previous image digest and values file available. Upgrade with the same native dependencies and verify readiness and the request matrix after the rollout. Do not roll back an exposed deployment by setting `auth.mode: "off"`; that removes authentication. If sessions must be invalidated, use an approved Redis key-prefix or session-namespace procedure.
+
+### Delegated re-key cutover
+
+Explicit-only re-key authorization is a breaking policy migration. Inventory intended directed pairs, effective direct rights, inherited groups, and destination-password custody. Review each explicit rotation row; do not migrate the cross-product of old decrypt and encrypt grants.
+
+Stage binaries and policy using approved traffic-isolation and drain procedures, not a mixed-version zero-downtime rollout:
+
+1. Isolate affected traffic and drain existing work before the authorization cutover.
+2. Replace every serving binary before exposing the new policy semantics. A new binary with a valid old policy preserves direct rights but denies re-keying until reviewed explicit rows are installed. New rotation rows are invalid to old binaries.
+3. Atomically replace the policy with a stable file whose observed modification time or size changes. Inline Helm policy affects the deployment checksum; external ConfigMap projection is asynchronous. `auth.policy.existingConfigMap` can reference a separately staged policy.
+4. Probe every serving replica with synthetic allowed pairs and denied no-lane, reverse, and crossed pairs before resuming traffic. Readiness alone proves neither the loaded policy nor drained work. Ensure the new bundled client cannot reach an old server; it requires exact-pair discovery.
+
+Policy reload checks file modification time and size. A detected missing or invalid replacement fails closed without a last-good fallback. A replacement with equal metadata can go undetected. Keep the intended replacement stable during probes.
+
+A successful deny probe does not drain older authorization acquisitions. An acquisition overlapping replacement can finish preparation and execution using its old snapshot even after removal is observed by another request. Do not promise immediate revocation, globally monotonic reload publication, or simultaneous cross-replica removal; use traffic isolation and draining when that boundary is required.
+
+Rollback is another security migration. An old binary with old direct rights can restore prohibited implicit rotation. Prepare a reviewed old-format policy and isolate affected identities or traffic before downgrade. If preserving direct rights would reopen prohibited rotation, keep that traffic disabled or do not downgrade. Merely dropping rotation rows and restarting old code is not a safe rollback. Do not expand lane grants into direct rights or use authentication-off mode to recover availability.
+
+### Browser session cutover
 
 Browser sessions from versions without a relying-party binding, or with the
 earlier version 1 binding, are invalidated on their next authenticated request

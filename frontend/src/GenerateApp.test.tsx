@@ -27,8 +27,9 @@ const session = (authenticated = false) => authenticated
 
 const profilesResponse = () => jsonResponse({
   profiles: [
-    { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
-    { id: 'read', label: 'Read only', capabilities: { encrypt: false, decrypt: true, rotateSource: true, rotateDestination: false } },
+    { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true, rotateDestinationIds: ['dev'] } },
+    { id: 'read', label: 'Read only', capabilities: { encrypt: false, decrypt: true, rotateSource: true, rotateDestination: false, rotateDestinationIds: ['lane-destination'] } },
+    { id: 'lane-destination', label: 'Lane destination', capabilities: { encrypt: false, decrypt: false, rotateSource: false, rotateDestination: true, rotateDestinationIds: [] } },
   ],
 })
 
@@ -78,6 +79,7 @@ describe('Generate view integration', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Generate sealed private material' })).toBeVisible()
     expect(screen.getByRole('combobox', { name: 'Environment' })).toHaveValue('dev')
     expect(screen.queryByRole('option', { name: 'Read only' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Lane destination' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Generate sealed material' }))
 
     expect(await screen.findByRole('textbox', { name: 'Sealed Vault value' })).toHaveValue(passwordResult.secret.vaultText)
@@ -184,7 +186,7 @@ describe('Generate view integration', () => {
 
     await act(async () => resolveProfiles(jsonResponse({
       profiles: [
-        { id: 'read', label: 'Read only', capabilities: { encrypt: false, decrypt: true, rotateSource: true, rotateDestination: false } },
+        { id: 'read', label: 'Read only', capabilities: { encrypt: false, decrypt: true, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] } },
       ],
     })))
 
@@ -214,7 +216,7 @@ describe('Generate view integration', () => {
 
     await act(async () => resolveRefresh(jsonResponse({
       profiles: [
-        { id: 'production', label: 'Production', capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: false } },
+        { id: 'production', label: 'Production', capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] } },
       ],
     })))
 

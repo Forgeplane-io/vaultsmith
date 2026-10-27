@@ -46,20 +46,28 @@ const sessionSchema = z.looseObject({
   attestationEnabled: z.optional(z.boolean()),
 })
 
+const profileIdSchema = z.string().check(z.regex(/^[a-z0-9][a-z0-9._-]{0,63}$/))
 const profileSchema = z.looseObject({
-  id: z.string(),
+  id: profileIdSchema,
   label: z.string(),
   capabilities: z.looseObject({
     encrypt: z.boolean(),
     decrypt: z.boolean(),
     rotateSource: z.boolean(),
     rotateDestination: z.boolean(),
+    rotateDestinationIds: z.array(profileIdSchema),
   }),
 }) satisfies z.ZodMiniType<Profile>
 
 const profilesResponseSchema = z.looseObject({
   profiles: z.array(profileSchema),
-})
+}).check(z.refine(({ profiles }) => {
+  const ids = new Set(profiles.map((profile) => profile.id))
+  return ids.size === profiles.length && profiles.every((profile) => {
+    const destinations = profile.capabilities.rotateDestinationIds
+    return new Set(destinations).size === destinations.length && destinations.every((id) => ids.has(id))
+  })
+}))
 
 const attestationBindingSchema = z.looseObject({
   repository: z.optional(z.string()),

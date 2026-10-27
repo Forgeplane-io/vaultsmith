@@ -48,7 +48,7 @@ describe('API client', () => {
       jsonResponse({ profiles: [{
         id: 'dev',
         label: 'Development',
-        capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: true },
+        capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] },
       }] }),
     )
 
@@ -56,7 +56,7 @@ describe('API client', () => {
       {
         id: 'dev',
         label: 'Development',
-        capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: true },
+        capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] },
       },
     ])
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/profiles', expect.objectContaining({ headers: { Accept: 'application/json' } }))
@@ -69,11 +69,70 @@ describe('API client', () => {
       capabilities: {
         encrypt: true,
         decrypt: false,
-        rotateSource: true,
+        rotateSource: false,
         rotateDestination: false,
+        rotateDestinationIds: [],
+        futureCapability: true,
       },
       futureCapability: true,
     }]
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ profiles }))
+
+    await expect(api.fetchProfiles()).resolves.toEqual(profiles)
+  })
+
+  it('preserves ordered exact lanes and valid self-pairs without inferring direct rights', async () => {
+    const profiles = [
+      { id: 'source', label: 'Source', capabilities: { encrypt: false, decrypt: false, rotateSource: true, rotateDestination: true, rotateDestinationIds: ['source', 'target'] } },
+      { id: 'target', label: 'Target', capabilities: { encrypt: false, decrypt: false, rotateSource: false, rotateDestination: true, rotateDestinationIds: [] } },
+    ]
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ profiles }))
+
+    await expect(api.fetchProfiles()).resolves.toEqual(profiles)
+  })
+
+  it.each([
+    { name: 'empty', profiles: [] },
+    { name: 'direct only', profiles: [
+      { id: 'direct', label: 'Direct', capabilities: { encrypt: true, decrypt: true, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] } },
+    ] },
+  ])('accepts successful $name catalogs with no exact lanes', async ({ profiles }) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ profiles }))
+
+    await expect(api.fetchProfiles()).resolves.toEqual(profiles)
+  })
+
+  const oldProfile = {
+    id: 'dev', label: 'Development',
+    capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true },
+  }
+  const exactProfile = (id: string, destinations: JsonValue = []) => ({
+    id, label: id,
+    capabilities: { encrypt: false, decrypt: false, rotateSource: true, rotateDestination: true, rotateDestinationIds: destinations },
+  })
+
+  it.each<{ name: string; profiles: JsonValue }>([
+    { name: 'missing exact relation', profiles: [oldProfile] },
+    { name: 'mixed relation presence', profiles: [oldProfile, exactProfile('prod')] },
+    ...[null, 'prod', {}, true, [null], [1], [{}], ['']].map((destinations) => ({
+      name: `malformed relation ${JSON.stringify(destinations)}`, profiles: [exactProfile('dev', destinations)],
+    })),
+    ...['', 'Dev', 'team/dev', '-dev', ' dev', 'dev\n', 'd'.repeat(65)].map((id) => ({
+      name: `invalid catalog ID ${JSON.stringify(id)}`, profiles: [exactProfile(id)],
+    })),
+    { name: 'invalid destination ID', profiles: [exactProfile('dev', ['Dev'])] },
+    { name: 'duplicate catalog IDs', profiles: [exactProfile('dev'), exactProfile('dev')] },
+    { name: 'duplicate destination IDs', profiles: [exactProfile('dev', ['dev', 'dev'])] },
+    { name: 'dangling destination reference', profiles: [exactProfile('dev', ['missing'])] },
+  ])('rejects $name rather than using boolean fallback', async ({ profiles }) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ profiles }))
+
+    await expect(api.fetchProfiles()).rejects.toMatchObject({ name: 'ApiError', code: 'invalid_response' })
+  })
+
+  it('accepts the existing canonical profile ID boundary', async () => {
+    const id = `a${'._-0'.repeat(15)}xyz`
+    const profiles = [exactProfile(id, [id])]
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ profiles }))
 
     await expect(api.fetchProfiles()).resolves.toEqual(profiles)

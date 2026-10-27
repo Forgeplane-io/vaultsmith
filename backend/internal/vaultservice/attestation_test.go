@@ -268,6 +268,30 @@ func TestAttestedRotationIssuesCanonicalProofAndLegacyRunRemainsString(t *testin
 	}
 }
 
+func TestDelegatedRotationPreservesProofBindingAndDenial(t *testing.T) {
+	policy, _ := loadedServicePolicy(t, testProfiles(), "g, group:operators, role:operator\np, role:operator, rotation:dev:prod, rotate, allow\np, role:operator, profile:dev, decrypt, deny\np, role:operator, profile:prod, encrypt, deny\n")
+	input := syntheticVaultText(t, "synthetic input", "synthetic source password", "dev")
+	output := syntheticVaultText(t, "synthetic output", "synthetic destination password", "prod")
+	manager := newSyntheticAttestationManager("https://vaultsmith.synthetic.test")
+	executor := &fakeExecutor{encrypt: func(context.Context, string, string) (string, error) { return output, nil }}
+	service := NewWithOptions(testProfiles(), executor, policy, testAdmission(t), ServiceOptions{AttestationEnabled: true, AttestationManager: manager})
+	lease := acquireLease(t, service.Admission())
+	bound := lease.Context(context.Background())
+	result, err := service.RotateResult(bound, bearerCaller(t, ScopeRotate), "dev", "prod", input, &AttestationRequest{Binding: syntheticBinding()})
+	if err != nil || result.Attestation == nil || result.VaultText != output || manager.signCalls != 1 || len(executor.calls) != 2 {
+		t.Fatalf("delegated RotateResult() did not return the expected proof/output; error = %v", err)
+	}
+	claims, err := service.VerifyAttestation(bound, *result.Attestation, input, output, syntheticBinding())
+	if err != nil || claims.SourceProfileID != "dev" || claims.DestinationProfileID != "prod" {
+		t.Fatalf("delegated proof verification failed or lost its pair binding; error = %v", err)
+	}
+	executor.calls = nil
+	result, err = service.RotateResult(bound, bearerCaller(t, ScopeRotate), "prod", "dev", input, &AttestationRequest{Binding: syntheticBinding()})
+	if !IsPolicyDenied(err) || result.VaultText != "" || result.Attestation != nil || manager.signCalls != 1 || len(executor.calls) != 0 {
+		t.Fatalf("denied delegated rotation returned output, proof, or work; error = %v", err)
+	}
+}
+
 func TestLegacyRunRejectsAttestationBeforeVaultWork(t *testing.T) {
 	input := syntheticVaultText(t, "synthetic input", "synthetic source password", "dev")
 	executor := &fakeExecutor{

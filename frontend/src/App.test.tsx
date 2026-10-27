@@ -1,7 +1,7 @@
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { MAX_PLAINTEXT_BYTES, MAX_VAULT_TEXT_BYTES, OPERATION_TIMEOUT_MS } from './api'
+import { MAX_PLAINTEXT_BYTES, MAX_VAULT_TEXT_BYTES, OPERATION_TIMEOUT_MS, type Profile } from './api'
 import App from './App'
 
 type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue }
@@ -19,38 +19,28 @@ const rotateResultResponse = (value: string) => jsonResponse({ vaultText: value 
 
 const emptyResponse = (status = 204) => new Response(null, { status })
 
-const defaultProfiles = [{ id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } }]
-const sourceAndDestinationProfiles = [
-  ...defaultProfiles,
-  { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
+const defaultProfiles: Profile[] = [{ id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true, rotateDestinationIds: ['dev'] } }]
+const sourceAndDestinationProfiles: Profile[] = [
+  { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true, rotateDestinationIds: ['prod'] } },
+  { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true, rotateDestinationIds: ['dev'] } },
 ]
-const asymmetricProfiles = [
-  { id: 'write', label: 'Write only', capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: true } },
-  { id: 'read', label: 'Read only', capabilities: { encrypt: false, decrypt: true, rotateSource: true, rotateDestination: false } },
+const encryptOnlyProfile: Profile = { id: 'write', label: 'Write only', capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] } }
+const decryptOnlyProfile: Profile = { id: 'read', label: 'Read only', capabilities: { encrypt: false, decrypt: true, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] } }
+const asymmetricProfiles: Profile[] = [
+  { ...encryptOnlyProfile, capabilities: { ...encryptOnlyProfile.capabilities, rotateDestination: true } },
+  { ...decryptOnlyProfile, capabilities: { ...decryptOnlyProfile.capabilities, rotateSource: true, rotateDestinationIds: ['write'] } },
+]
+const laneOnlyProfiles: Profile[] = [
+  { id: 'a', label: 'Source A', capabilities: { encrypt: false, decrypt: false, rotateSource: true, rotateDestination: false, rotateDestinationIds: ['x'] } },
+  { id: 'b', label: 'Source B', capabilities: { encrypt: false, decrypt: false, rotateSource: true, rotateDestination: false, rotateDestinationIds: ['y'] } },
+  { id: 'x', label: 'Destination X', capabilities: { encrypt: false, decrypt: false, rotateSource: false, rotateDestination: true, rotateDestinationIds: [] } },
+  { id: 'y', label: 'Destination Y', capabilities: { encrypt: false, decrypt: false, rotateSource: false, rotateDestination: true, rotateDestinationIds: [] } },
 ]
 
-type TestProfile = {
-  id: string
-  label: string
-  capabilities: {
-    encrypt: boolean
-    decrypt: boolean
-    rotateSource?: boolean
-    rotateDestination?: boolean
-  }
-}
+type TestProfile = Profile
 
 function profilesResponse(profiles: TestProfile[] = defaultProfiles) {
-  return jsonResponse({
-    profiles: profiles.map((profile) => ({
-      ...profile,
-      capabilities: {
-        ...profile.capabilities,
-        rotateSource: profile.capabilities.rotateSource ?? profile.capabilities.decrypt,
-        rotateDestination: profile.capabilities.rotateDestination ?? profile.capabilities.encrypt,
-      },
-    })),
-  })
+  return jsonResponse({ profiles })
 }
 
 const sessionResponse = () => jsonResponse({ authenticated: false, authRequired: false, csrfToken: '' })
@@ -798,6 +788,243 @@ describe('Vaultsmith operator experience', () => {
     expect(input).toHaveValue('')
   })
 
+  it('starts lane-only sessions in Re-key and offers only exact destinations', async () => {
+    const fetchMock = mockAuthenticatedProfileLoad(laneOnlyProfiles)
+    const user = userEvent.setup()
+    render(<App />)
+
+    const source = await screen.findByRole('combobox', { name: 'From environment' })
+    const destination = screen.getByRole('combobox', { name: 'To environment' })
+    expect(screen.getByRole('button', { name: 'Set re-key mode' })).toHaveAttribute('aria-pressed', 'true')
+    for (const mode of ['encrypt', 'decrypt', 'generate']) {
+      expect(screen.getByRole('button', { name: `Set ${mode} mode` })).toBeDisabled()
+    }
+    expect(within(source).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual(['a', 'b'])
+    expect(within(destination).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual(['x'])
+    fireEvent.change(screen.getByRole('textbox', { name: 'Protected value to re-key' }), { target: { value: pastedVault } })
+    fireEvent.change(destination, { target: { value: 'y' } })
+    fireEvent.submit(screen.getByRole('form', { name: 'Vault operation form' }))
+    expect(operationCalls(fetchMock)).toHaveLength(0)
+
+    await user.selectOptions(source, 'b')
+    expect(destination).toHaveValue('')
+    expect(within(destination).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual(['', 'y'])
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
+  })
+
+  it('does not infer lanes from direct rights or rotation summary flags', async () => {
+    mockProfileLoad([{ ...defaultProfiles[0], capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true, rotateDestinationIds: [] } }])
+    render(<App />)
+    await findReadyValueInput()
+
+    expect(screen.getByRole('button', { name: 'Set encrypt mode' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Set generate mode' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Set re-key mode' })).toBeDisabled()
+    expect(screen.getByText('Re-key requires an explicitly allowed source and destination pair.')).toBeVisible()
+  })
+
+  it.each(['manual', 'suggestion'].flatMap((selection) => [false, true].map((retained) => ({ selection, retained }))))(
+    '$selection source change retains the destination only when allowed: $retained', async ({ selection, retained }) => {
+      const profiles = laneOnlyProfiles.map((profile) => profile.id === 'b'
+        ? { ...profile, capabilities: { ...profile.capabilities, rotateDestinationIds: retained ? ['x', 'y'] : ['y'] } }
+        : profile)
+      const fetchMock = mockAttestedProfileLoad(profiles).mockResolvedValueOnce(jsonResponse({
+        vaultText: pastedVault,
+        attestation: { protected: 'header', payload: 'claims', signature: 'signature' },
+      }))
+      const user = userEvent.setup()
+      render(<App />)
+      const source = await screen.findByRole('combobox', { name: 'From environment' })
+      const destination = screen.getByRole('combobox', { name: 'To environment' })
+      const input = screen.getByRole('textbox', { name: 'Protected value to re-key' })
+      const retainedInput = '$ANSIBLE_VAULT;1.2;AES256;b\nsynthetic'
+      fireEvent.change(input, { target: { value: retainedInput } })
+      await user.click(screen.getByRole('checkbox', { name: 'Issue attestation' }))
+      await user.click(screen.getByRole('button', { name: 'Re-key' }))
+      await screen.findByRole('textbox', { name: 'Attestation JSON' })
+
+      if (selection === 'manual') await user.selectOptions(source, 'b')
+      else await user.click(screen.getByRole('button', { name: 'Use Source B' }))
+
+      expect(source).toHaveValue('b')
+      expect(destination).toHaveValue(retained ? 'x' : '')
+      expect(input).toHaveValue(retainedInput)
+      expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue('')
+      expect(screen.queryByRole('textbox', { name: 'Attestation JSON' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Copy attestation' })).not.toBeInTheDocument()
+      if (retained) expect(screen.getByRole('button', { name: 'Re-key' })).toBeEnabled()
+      else {
+        expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
+        fireEvent.submit(screen.getByRole('form', { name: 'Vault operation form' }))
+      }
+      expect(operationCalls(fetchMock)).toHaveLength(1)
+    },
+  )
+
+  it('does not suggest an incoming-only lane profile or enable its decrypt handoff', async () => {
+    const fetchMock = mockProfileLoad(laneOnlyProfiles).mockResolvedValueOnce(rotateResultResponse(pastedVault))
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByRole('combobox', { name: 'From environment' })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Protected value to re-key' }), { target: { value: '$ANSIBLE_VAULT;1.2;AES256;y\nsynthetic' } })
+    expect(screen.queryByRole('button', { name: 'Use Destination Y' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    await waitFor(() => expect(operationCalls(fetchMock)).toHaveLength(1))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Copy result' })).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Decrypt with destination environment' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Set generate mode' })).toBeDisabled()
+  })
+
+  it('clears a removed exact pair after forbidden without replay or substitution', async () => {
+    let resolveRefresh!: (response: Response) => void
+    const refreshed = laneOnlyProfiles.map((profile) => profile.id === 'a' || profile.id === 'b'
+      ? { ...profile, capabilities: { ...profile.capabilities, rotateDestinationIds: [profile.id === 'a' ? 'y' : 'x'] } }
+      : profile)
+    const fetchMock = mockAttestedProfileLoad(laneOnlyProfiles)
+      .mockResolvedValueOnce(jsonResponse({ vaultText: pastedVault, attestation: { protected: 'header', payload: 'claims', signature: 'signature' } }))
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'forbidden' } }, { status: 403 }))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveRefresh = resolve }))
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByRole('combobox', { name: 'From environment' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to re-key' })
+    fireEvent.change(input, { target: { value: pastedVault } })
+    await user.click(screen.getByRole('checkbox', { name: 'Issue attestation' }))
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    await screen.findByRole('textbox', { name: 'Attestation JSON' })
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5))
+    expect(screen.queryByRole('textbox', { name: 'Attestation JSON' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Clear values' })).toBeEnabled()
+    fireEvent.submit(screen.getByRole('form', { name: 'Vault operation form' }))
+    await act(async () => resolveRefresh(profilesResponse(refreshed)))
+
+    expect(screen.getByRole('combobox', { name: 'From environment' })).toHaveValue('a')
+    const destination = screen.getByRole('combobox', { name: 'To environment' })
+    expect(destination).toHaveValue('')
+    expect(within(destination).queryByRole('option', { name: 'Destination X' })).not.toBeInTheDocument()
+    expect(within(destination).getByRole('option', { name: 'Destination Y' })).toBeInTheDocument()
+    expect(input).toHaveValue(pastedVault)
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
+    expect(operationCalls(fetchMock)).toHaveLength(2)
+  })
+
+  it.each(['unavailable', 'malformed'])('locks a %s refresh and recovers only by explicit retry', async (failure) => {
+    const fetchMock = mockProfileLoad(laneOnlyProfiles)
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'forbidden' } }, { status: 403 }))
+      .mockResolvedValueOnce(failure === 'unavailable'
+        ? jsonResponse({ error: { code: 'not_ready' } }, { status: 503 })
+        : jsonResponse({ profiles: [{ id: 'a', label: 'Source A', capabilities: { encrypt: false, decrypt: false, rotateSource: true, rotateDestination: false } }] }))
+      .mockResolvedValueOnce(sessionResponse())
+      .mockResolvedValueOnce(profilesResponse([]))
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByRole('combobox', { name: 'From environment' })
+    const input = screen.getByRole('textbox', { name: 'Protected value to re-key' })
+    fireEvent.change(input, { target: { value: pastedVault } })
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('environments could not be refreshed')
+    expect(input).toHaveValue(pastedVault)
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Retry loading environments' })).toBeEnabled()
+    fireEvent.submit(screen.getByRole('form', { name: 'Vault operation form' }))
+    expect(operationCalls(fetchMock)).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Retry loading environments' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry loading environments' })).not.toBeInTheDocument())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Set re-key mode' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Clear values' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Clear values' }))
+    expect(screen.getByRole('textbox', { name: 'Value to encrypt' })).toHaveValue('')
+    expect(operationCalls(fetchMock)).toHaveLength(1)
+  })
+
+  it('ignores a timed-out refresh after a newer discovery succeeds', async () => {
+    let resolveOldRefresh!: (response: Response) => void
+    let refreshSignal: AbortSignal | null | undefined
+    const refreshed = laneOnlyProfiles.map((profile) => profile.id === 'a' || profile.id === 'b'
+      ? { ...profile, capabilities: { ...profile.capabilities, rotateDestinationIds: [profile.id === 'a' ? 'y' : 'x'] } }
+      : profile)
+    const fetchMock = mockProfileLoad(laneOnlyProfiles)
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'forbidden' } }, { status: 403 }))
+      .mockImplementationOnce((_path, init) => {
+        refreshSignal = init?.signal
+        return new Promise<Response>((resolve) => { resolveOldRefresh = resolve })
+      })
+      .mockResolvedValueOnce(sessionResponse())
+      .mockResolvedValueOnce(profilesResponse(refreshed))
+    render(<App />)
+    await screen.findByRole('combobox', { name: 'From environment' })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Protected value to re-key' }), { target: { value: pastedVault } })
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: 'Re-key' }))
+    await act(async () => { await Promise.resolve() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(refreshSignal?.aborted).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading environments' }))
+    await act(async () => { await Promise.resolve() })
+    const destination = screen.getByRole('combobox', { name: 'To environment' })
+    expect(within(destination).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual(['', 'y'])
+    await act(async () => resolveOldRefresh(profilesResponse(laneOnlyProfiles)))
+    expect(within(destination).getAllByRole('option').map((option) => option.getAttribute('value'))).toEqual(['', 'y'])
+    expect(operationCalls(fetchMock)).toHaveLength(1)
+  })
+
+  it('cancels discovery authority on logout and ignores a late forbidden refresh', async () => {
+    let resolveRefresh!: (response: Response) => void
+    let refreshSignal: AbortSignal | null | undefined
+    const fetchMock = mockAuthenticatedProfileLoad(laneOnlyProfiles)
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'forbidden' } }, { status: 403 }))
+      .mockImplementationOnce((_path, init) => {
+        refreshSignal = init?.signal
+        return new Promise<Response>((resolve) => { resolveRefresh = resolve })
+      })
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'not_ready' } }, { status: 503 }))
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByRole('combobox', { name: 'From environment' })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Protected value to re-key' }), { target: { value: pastedVault } })
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
+    await user.click(screen.getByRole('button', { name: 'Sign out' }))
+    expect(refreshSignal?.aborted).toBe(true)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sign-out was not confirmed')
+    await act(async () => resolveRefresh(profilesResponse(laneOnlyProfiles.map((profile) => ({ ...profile, label: `Late ${profile.label}` })))))
+    expect(screen.queryByRole('option', { name: 'Late Source A' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
+    expect(screen.getByRole('textbox', { name: 'Protected value to re-key' })).toHaveValue('')
+    expect(screen.queryByText(/Environments were refreshed/)).not.toBeInTheDocument()
+  })
+
+  it.each(['cancel', 'logout'])('does not restore a late lane result or proof after %s', async (action) => {
+    let resolveOperation!: (response: Response) => void
+    let operationSignal: AbortSignal | null | undefined
+    mockAttestedProfileLoad(laneOnlyProfiles)
+      .mockImplementationOnce((_path, init) => {
+        operationSignal = init?.signal
+        return new Promise<Response>((resolve) => { resolveOperation = resolve })
+      })
+      .mockResolvedValueOnce(emptyResponse())
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findByRole('combobox', { name: 'From environment' })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Protected value to re-key' }), { target: { value: pastedVault } })
+    await user.click(screen.getByRole('checkbox', { name: 'Issue attestation' }))
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    await user.click(screen.getByRole('button', { name: action === 'cancel' ? 'Cancel' : 'Sign out' }))
+    expect(operationSignal?.aborted).toBe(true)
+    await act(async () => resolveOperation(jsonResponse({ vaultText: pastedVault, attestation: { protected: 'header', payload: 'claims', signature: 'signature' } })))
+    expect(screen.queryByRole('textbox', { name: 'Attestation JSON' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Copy attestation' })).not.toBeInTheDocument()
+    if (action === 'cancel') {
+      expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue('')
+      expect(screen.getByRole('button', { name: 'Copy result' })).toBeDisabled()
+    } else expect(screen.getByRole('heading', { name: 'Signed out' })).toBeInTheDocument()
+  })
+
   it('supports rotate mode with source and destination profiles', async () => {
     const fetchMock = mockProfileLoad(sourceAndDestinationProfiles)
       .mockResolvedValueOnce(rotateResultResponse('$ANSIBLE_VAULT;1.2;AES256;prod\nrotated-ciphertext'))
@@ -1144,11 +1371,14 @@ describe('Vaultsmith operator experience', () => {
     expect(within(destinationSelect).getByRole('option', { name: 'Write only' })).toBeInTheDocument()
     expect(within(destinationSelect).queryByRole('option', { name: 'Read only' })).not.toBeInTheDocument()
     expect(sourceSelect).toHaveValue('read')
-    await waitFor(() => expect(destinationSelect).toHaveValue('write'))
+    expect(destinationSelect).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
+    await user.selectOptions(destinationSelect, 'write')
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeEnabled()
   })
 
   it('selects the first available operation when Encrypt is unavailable at startup', async () => {
-    mockProfileLoad([asymmetricProfiles[1]])
+    mockProfileLoad([decryptOnlyProfile])
 
     render(<App />)
     await screen.findByRole('option', { name: 'Read only' })
@@ -1207,7 +1437,7 @@ describe('Vaultsmith operator experience', () => {
   })
 
   it('disables unavailable modes and exposes the reason', async () => {
-    mockProfileLoad([asymmetricProfiles[0]])
+    mockProfileLoad([encryptOnlyProfile])
 
     render(<App />)
     await screen.findByRole('option', { name: 'Write only' })
@@ -1216,7 +1446,7 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('button', { name: 'Set decrypt mode' })).toBeDisabled()
     expect(screen.getByText('No environments are available for decryption.')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Set re-key mode' })).toBeDisabled()
-    expect(screen.getByText('Re-key requires an available decrypt source and encrypt destination.')).toBeVisible()
+    expect(screen.getByText('Re-key requires an explicitly allowed source and destination pair.')).toBeVisible()
   })
 
   it('does not hand a rotated result to an ineligible decrypt destination', async () => {
@@ -1453,8 +1683,8 @@ describe('Vaultsmith operator experience', () => {
       resolveRefresh = resolve
     })
     const refreshedProfiles = [
-      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false } },
-      { id: 'prod', label: 'Production', capabilities: { encrypt: false, decrypt: true } },
+      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: true, rotateDestinationIds: [] } },
+      { id: 'prod', label: 'Production', capabilities: { encrypt: false, decrypt: true, rotateSource: true, rotateDestination: false, rotateDestinationIds: ['dev'] } },
     ]
     const fetchMock = mockProfileLoad(sourceAndDestinationProfiles)
       .mockResolvedValueOnce(jsonResponse(
@@ -1495,7 +1725,10 @@ describe('Vaultsmith operator experience', () => {
     expect(screen.getByRole('combobox', { name: 'From environment' })).toHaveValue('')
     expect(screen.getByRole('combobox', { name: 'To environment' })).toHaveValue('')
     expect(within(screen.getByRole('combobox', { name: 'From environment' })).getByRole('option', { name: 'Production' })).toBeInTheDocument()
+    expect(within(screen.getByRole('combobox', { name: 'To environment' })).queryByRole('option', { name: 'Development' })).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'From environment' }), 'prod')
     expect(within(screen.getByRole('combobox', { name: 'To environment' })).getByRole('option', { name: 'Development' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'To environment' })).toHaveValue('')
     expect(operationCalls(fetchMock)).toHaveLength(1)
   })
 
@@ -1505,7 +1738,7 @@ describe('Vaultsmith operator experience', () => {
         { error: { code: 'forbidden', message: 'private-policy-detail' } },
         { status: 403 },
       ))
-      .mockResolvedValueOnce(profilesResponse([asymmetricProfiles[1]]))
+      .mockResolvedValueOnce(profilesResponse([decryptOnlyProfile]))
     const user = userEvent.setup()
 
     render(<App />)
@@ -1731,7 +1964,7 @@ describe('Vaultsmith operator experience', () => {
   it('changes only the rotate source when a Vault ID suggestion is accepted', async () => {
     const profiles = [
       ...sourceAndDestinationProfiles,
-      { id: 'stage', label: 'Staging', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
+      { id: 'stage', label: 'Staging', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: false, rotateDestinationIds: ['prod'] } },
     ]
     const fetchMock = mockProfileLoad(profiles)
     const user = userEvent.setup()
@@ -1756,9 +1989,9 @@ describe('Vaultsmith operator experience', () => {
 
   it('does not offer a Vault ID action for ineligible or unsafe inspection states', async () => {
     const profiles = [
-      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
-      { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: false } },
-      { id: 'stage', label: 'Staging', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
+      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] } },
+      { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] } },
+      { id: 'stage', label: 'Staging', capabilities: { encrypt: true, decrypt: true, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] } },
     ]
     mockProfileLoad(profiles)
     const user = userEvent.setup()
@@ -1785,8 +2018,8 @@ describe('Vaultsmith operator experience', () => {
 
   it('offers a retained Vault ID after a permission refresh clears the selection', async () => {
     const refreshedProfiles = [
-      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false } },
-      { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
+      { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: false, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] } },
+      { id: 'prod', label: 'Production', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true, rotateDestinationIds: ['prod'] } },
     ]
     const fetchMock = mockProfileLoad(sourceAndDestinationProfiles)
       .mockResolvedValueOnce(jsonResponse(

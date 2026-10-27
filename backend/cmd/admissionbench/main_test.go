@@ -1,9 +1,12 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 
+	"github.com/forgeplane-io/vaultsmith/backend/internal/authz"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/caller"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/httpapi"
 )
 
@@ -31,6 +34,34 @@ func TestValidateBenchmarkEnvironment(t *testing.T) {
 				t.Fatalf("validateBenchmarkEnvironment() error = %v, wantError %t", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestBenchmarkFixtureAuthorizesOnlyTheDeclaredRotation(t *testing.T) {
+	fixture, err := newBenchmarkFixture(2)
+	if err != nil {
+		t.Fatal("construct synthetic benchmark fixture failed")
+	}
+	defer fixture.Close()
+	policy, err := authz.LoadPolicy(fixture.policy, []string{"bench-0", "bench-1"})
+	if err != nil {
+		t.Fatalf("LoadPolicy() error = %v", err)
+	}
+	authorizer, err := authz.NewAuthorizer(policy)
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+	actor, err := caller.NewSession("https://issuer.example.test", "synthetic-subject", []string{"admins"})
+	if err != nil {
+		t.Fatal("construct synthetic benchmark actor failed")
+	}
+	if err := authorizer.AuthorizeRotate(actor, "bench-0", "bench-1"); err != nil {
+		t.Fatalf("declared benchmark rotation error = %v, want explicit allow", err)
+	}
+	for _, destination := range []string{"bench-0", "bench-1"} {
+		if err := authorizer.AuthorizeRotate(actor, "bench-1", destination); !errors.Is(err, authz.ErrForbidden) {
+			t.Fatalf("undeclared benchmark rotation error = %v, want forbidden", err)
+		}
 	}
 }
 

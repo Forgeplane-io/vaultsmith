@@ -398,6 +398,7 @@ func newAuthenticatedBenchmarkFixture(profiles []httpapi.Profile) (benchmarkFixt
 		fmt.Fprintf(&policy, "p, role:admin, profile:%s, encrypt, allow\n", profile.ID)
 		fmt.Fprintf(&policy, "p, role:admin, profile:%s, decrypt, allow\n", profile.ID)
 	}
+	policy.WriteString("p, role:admin, rotation:bench-0:bench-1, rotate, allow\n")
 	if err := os.WriteFile(fixture.policy, []byte(policy.String()), 0o600); err != nil {
 		fixture.Close()
 		return benchmarkFixture{}, fmt.Errorf("write benchmark policy: %w", err)

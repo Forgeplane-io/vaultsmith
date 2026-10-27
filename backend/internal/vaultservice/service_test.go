@@ -3,8 +3,11 @@ package vaultservice
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -145,6 +148,326 @@ func bearerCaller(t *testing.T, scopes ...string) caller.Caller {
 	return actor
 }
 
+func loadedServicePolicy(t *testing.T, profiles []Profile, content string) (*authz.Authorizer, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "policy.csv")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal("write synthetic policy failed")
+	}
+	ids := make([]string, len(profiles))
+	for index, profile := range profiles {
+		ids[index] = profile.ID
+	}
+	policy, err := authz.LoadPolicy(path, ids)
+	if err != nil {
+		t.Fatalf("LoadPolicy() error = %v", err)
+	}
+	authorizer, err := authz.NewAuthorizer(policy)
+	if err != nil {
+		t.Fatalf("NewAuthorizer() error = %v", err)
+	}
+	return authorizer, path
+}
+
+func replaceServicePolicy(t *testing.T, path, content string) {
+	t.Helper()
+	previous, err := os.Stat(path)
+	if err != nil {
+		t.Fatal("stat synthetic policy failed")
+	}
+	replacement := path + ".replacement"
+	if err := os.WriteFile(replacement, []byte(content), 0o600); err != nil {
+		t.Fatal("write synthetic replacement failed")
+	}
+	changed := previous.ModTime().Add(time.Second)
+	if err := os.Chtimes(replacement, changed, changed); err != nil {
+		t.Fatal("change synthetic replacement metadata failed")
+	}
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal("publish synthetic replacement failed")
+	}
+}
+
+func TestRotateRejectsDirectRightsWithoutAnExplicitPair(t *testing.T) {
+	policy, _ := loadedServicePolicy(t, testProfiles(), "g, group:operators, role:operator\np, role:operator, profile:dev, decrypt, allow\np, role:operator, profile:prod, encrypt, allow\n")
+	executor := &fakeExecutor{}
+	service := New(testProfiles(), executor, policy, testAdmission(t))
+	lease := acquireLease(t, service.Admission())
+	prepared, err := service.Prepare(lease.Context(context.Background()), sessionCaller(t), Command{
+		Operation: OperationRotate, SourceProfileID: "dev", DestinationProfileID: "prod", Value: "synthetic input",
+	}, lease)
+	if prepared != nil || !IsPolicyDenied(err) || !HasCode(err, CodeForbidden) {
+		t.Fatalf("Prepare() returned an operation or error = %v, want policy denial without a pair", err)
+	}
+	if len(executor.calls) != 0 {
+		t.Fatal("denied rotation executed Vault work")
+	}
+}
+
+func TestRotateExecutesOnlyExplicitDirectedPairs(t *testing.T) {
+	profiles := []Profile{{ID: "a", Label: "A"}, {ID: "b", Label: "B"}, {ID: "x", Label: "X"}, {ID: "y", Label: "Y"}, {ID: "z", Label: "Z"}}
+	policy, _ := loadedServicePolicy(t, profiles, "g, group:operators, role:operator\np, role:operator, rotation:a:x, rotate, allow\np, role:operator, rotation:b:y, rotate, allow\np, role:operator, rotation:x:z, rotate, allow\np, role:operator, rotation:b:b, rotate, allow\n")
+	for _, test := range []struct {
+		name, source, destination string
+		allowed                   bool
+	}{
+		{name: "first", source: "a", destination: "x", allowed: true},
+		{name: "second", source: "b", destination: "y", allowed: true},
+		{name: "following edge", source: "x", destination: "z", allowed: true},
+		{name: "self", source: "b", destination: "b", allowed: true},
+		{name: "reverse", source: "x", destination: "a"},
+		{name: "crossed first", source: "a", destination: "y"},
+		{name: "crossed second", source: "b", destination: "x"},
+		{name: "transitive", source: "a", destination: "z"},
+		{name: "unrelated", source: "a", destination: "b"},
+		{name: "implicit self", source: "a", destination: "a"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &fakeExecutor{}
+			service := New(profiles, executor, policy, testAdmission(t))
+			lease := acquireLease(t, service.Admission())
+			result, err := service.RotateResult(lease.Context(context.Background()), sessionCaller(t), test.source, test.destination, "synthetic input", nil)
+			if !test.allowed {
+				if result.VaultText != "" || !IsPolicyDenied(err) || len(executor.calls) != 0 {
+					t.Fatalf("denied RotateResult() returned output, executor work, or error = %v", err)
+				}
+				return
+			}
+			if err != nil || result.VaultText != "encrypted" || len(executor.calls) != 2 {
+				t.Fatalf("allowed RotateResult() error = %v; executor call count = %d", err, len(executor.calls))
+			}
+			if executor.calls[0].operation != "decrypt" || executor.calls[0].profileID != test.source || executor.calls[1].operation != "encrypt" || executor.calls[1].profileID != test.destination {
+				t.Fatal("rotation did not use the exact source and destination executors")
+			}
+		})
+	}
+}
+
+func TestRotatePolicyTruthTableAndDirectRightsAreIndependent(t *testing.T) {
+	for _, topology := range []struct {
+		name, rows, allowRole, denyRole string
+		groups                          []string
+	}{
+		{name: "same role", allowRole: "operator", denyRole: "operator", groups: []string{"operators"}},
+		{name: "parent allow", rows: "g, role:operator, role:base\n", allowRole: "base", denyRole: "operator", groups: []string{"operators"}},
+		{name: "parent deny", rows: "g, role:operator, role:base\n", allowRole: "operator", denyRole: "base", groups: []string{"operators"}},
+		{name: "separate groups", rows: "g, group:blocked, role:block\np, role:block, rotation:prod:dev, rotate, deny\n", allowRole: "operator", denyRole: "block", groups: []string{"operators", "blocked"}},
+	} {
+		for _, lane := range []struct {
+			name                 string
+			allow, deny, allowed bool
+		}{
+			{name: "neither"},
+			{name: "deny", deny: true},
+			{name: "allow", allow: true, allowed: true},
+			{name: "conflict", allow: true, deny: true},
+		} {
+			for _, direct := range []struct {
+				name, effect string
+				allowed      bool
+			}{
+				{name: "none"},
+				{name: "allow", effect: "allow", allowed: true},
+				{name: "deny", effect: "deny"},
+			} {
+				t.Run(topology.name+"/"+lane.name+"/direct "+direct.name, func(t *testing.T) {
+					content := "g, group:operators, role:operator\np, role:operator, profiles, profiles:list, allow\n" + topology.rows
+					if lane.allow {
+						content += "p, role:" + topology.allowRole + ", rotation:dev:prod, rotate, allow\n"
+					}
+					if lane.deny {
+						content += "p, role:" + topology.denyRole + ", rotation:dev:prod, rotate, deny\n"
+					}
+					if direct.effect != "" {
+						content += "p, role:operator, profile:dev, decrypt, " + direct.effect + "\np, role:operator, profile:prod, encrypt, " + direct.effect + "\n"
+					}
+					policy, _ := loadedServicePolicy(t, testProfiles(), content)
+					executor := &fakeExecutor{}
+					generator := newRecordingMaterialGenerator()
+					service := NewWithOptions(testProfiles(), executor, policy, testAdmission(t), ServiceOptions{Generator: generator})
+					actor, err := caller.NewSession("https://issuer.example", "subject", topology.groups)
+					if err != nil {
+						t.Fatal("construct synthetic actor failed")
+					}
+					lease := acquireLease(t, service.Admission())
+					bound := lease.Context(context.Background())
+					_, err = service.Rotate(bound, actor, "dev", "prod", "synthetic input")
+					if lane.allowed && err != nil || !lane.allowed && !IsPolicyDenied(err) {
+						t.Fatalf("Rotate() error = %v, want allowed = %t", err, lane.allowed)
+					}
+					if !lane.allowed && len(executor.calls) != 0 {
+						t.Fatal("denied rotation executed Vault work")
+					}
+					for _, operation := range []Operation{OperationEncrypt, OperationDecrypt} {
+						executor.calls = nil
+						var err error
+						if operation == OperationEncrypt {
+							_, err = service.Encrypt(bound, actor, "prod", "synthetic input")
+						} else {
+							_, err = service.Decrypt(bound, actor, "dev", "synthetic input")
+						}
+						if direct.allowed && err != nil || !direct.allowed && !IsPolicyDenied(err) {
+							t.Fatalf("direct operation error = %v, want allowed = %t", err, direct.allowed)
+						}
+						if !direct.allowed && len(executor.calls) != 0 {
+							t.Fatal("denied direct operation executed Vault work")
+						}
+					}
+					if !direct.allowed {
+						_, err := service.Generate(bound, actor, GenerateCommand{ProfileID: "prod", Kind: GenerateKindAgeIdentity, AgeIdentity: &AgeIdentityParameters{}})
+						if !IsPolicyDenied(err) || len(generator.calls) != 0 || len(executor.calls) != 0 {
+							t.Fatalf("lane-only Generate() executed work or error = %v", err)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestRotateBearerRequiresOnlyTheExactRotateScope(t *testing.T) {
+	policy, _ := loadedServicePolicy(t, testProfiles(), "g, group:operators, role:operator\np, role:operator, rotation:dev:prod, rotate, allow\n")
+	for _, test := range []struct {
+		name    string
+		scopes  []string
+		allowed bool
+	}{
+		{name: "rotate only", scopes: []string{ScopeRotate}, allowed: true},
+		{name: "all operation scopes", scopes: []string{ScopeRotate, ScopeDecrypt, ScopeEncrypt}, allowed: true},
+		{name: "direct scopes", scopes: []string{ScopeDecrypt, ScopeEncrypt}},
+		{name: "wrong case", scopes: []string{"vaultsmith.Rotate"}},
+		{name: "none"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &fakeExecutor{}
+			service := New(testProfiles(), executor, policy, testAdmission(t))
+			lease := acquireLease(t, service.Admission())
+			_, err := service.Rotate(lease.Context(context.Background()), bearerCaller(t, test.scopes...), "dev", "prod", "synthetic input")
+			if test.allowed && err != nil || !test.allowed && (!HasCode(err, CodeForbidden) || IsPolicyDenied(err)) {
+				t.Fatalf("Rotate() error = %v, want scope allowed = %t", err, test.allowed)
+			}
+			if !test.allowed && len(executor.calls) != 0 {
+				t.Fatal("scope-denied rotation executed Vault work")
+			}
+		})
+	}
+}
+
+func TestRotateDenialAndPolicyOutageHideTargetsAndValues(t *testing.T) {
+	for _, state := range []string{"denied", "invalid", "missing"} {
+		for _, target := range []struct {
+			name, source, destination string
+		}{
+			{name: "known", source: "dev", destination: "prod"},
+			{name: "unknown source", source: "missing", destination: "prod"},
+			{name: "unknown destination", source: "dev", destination: "missing"},
+		} {
+			for _, value := range []struct{ name, value string }{
+				{name: "ordinary", value: "synthetic-sensitive-input"},
+				{name: "invalid UTF-8", value: string([]byte{0xff})},
+				{name: "oversized", value: strings.Repeat("x", MaxVaultTextBytes+1)},
+			} {
+				for _, actor := range []struct {
+					name string
+					make func(*testing.T) caller.Caller
+				}{
+					{name: "session", make: sessionCaller},
+					{name: "bearer", make: func(t *testing.T) caller.Caller { return bearerCaller(t, ScopeRotate) }},
+				} {
+					t.Run(state+"/"+target.name+"/"+value.name+"/"+actor.name, func(t *testing.T) {
+						policy, path := loadedServicePolicy(t, testProfiles(), "g, group:operators, role:operator\np, role:operator, profiles, profiles:list, allow\n")
+						if state == "invalid" {
+							replaceServicePolicy(t, path, "p, role:operator, rotation:dev:missing, rotate, allow\n")
+						} else if state == "missing" {
+							if err := os.Remove(path); err != nil {
+								t.Fatal("remove synthetic policy failed")
+							}
+						}
+						executor := &fakeExecutor{}
+						service := New(testProfiles(), executor, policy, testAdmission(t))
+						lease := acquireLease(t, service.Admission())
+						prepared, err := service.Prepare(lease.Context(context.Background()), actor.make(t), Command{Operation: OperationRotate, SourceProfileID: target.source, DestinationProfileID: target.destination, Value: value.value}, lease)
+						wantCode, wantMessage := CodeForbidden, "operation is not permitted"
+						if state != "denied" {
+							wantCode, wantMessage = CodeNotReady, "authorization is not ready"
+						}
+						if prepared != nil || !HasCode(err, wantCode) || err.Error() != wantMessage || IsPolicyDenied(err) != (state == "denied") || len(executor.calls) != 0 {
+							t.Fatalf("Prepare() exposed a result/work or error = %v, want safe %s", err, wantCode)
+						}
+					})
+				}
+			}
+		}
+	}
+	policy, _ := loadedServicePolicy(t, testProfiles(), "p, role:operator, profiles, profiles:list, allow\n")
+	service := New(testProfiles(), &fakeExecutor{}, policy, testAdmission(t))
+	lease := acquireLease(t, service.Admission())
+	_, err := service.Prepare(lease.Context(context.Background()), sessionCaller(t), Command{Operation: OperationRotate, SourceProfileID: "Dev", DestinationProfileID: "prod", Value: "synthetic input"}, lease)
+	if !HasCode(err, CodeInvalidRequest) || IsPolicyDenied(err) {
+		t.Fatalf("malformed ID error = %v, want invalid_request", err)
+	}
+}
+
+func TestOldRotationPreparationMayFinishAfterObservedRemoval(t *testing.T) {
+	policy, path := loadedServicePolicy(t, testProfiles(), "g, group:operators, role:operator\np, role:operator, rotation:dev:prod, rotate, allow\n")
+	acquired, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var unblock sync.Once
+	oldEvaluations := 0
+	executor := &fakeExecutor{}
+	oldService := New(testProfiles(), executor, authorizerFunc(func(actor caller.Caller, checks []authz.Check) ([]bool, error) {
+		oldEvaluations++
+		allowed, err := policy.Evaluate(actor, checks)
+		close(acquired)
+		<-release
+		return allowed, err
+	}), testAdmission(t))
+	freshExecutor := &fakeExecutor{}
+	freshService := New(testProfiles(), freshExecutor, policy, testAdmission(t))
+	oldLease := acquireLease(t, oldService.Admission())
+	oldContext := oldLease.Context(context.Background())
+	actor := sessionCaller(t)
+	command := Command{Operation: OperationRotate, SourceProfileID: "dev", DestinationProfileID: "prod", Value: "synthetic input"}
+	type preparation struct {
+		prepared *PreparedOperation
+		err      error
+	}
+	result := make(chan preparation, 1)
+	t.Cleanup(func() {
+		unblock.Do(func() { close(release) })
+		<-finished
+	})
+	go func() {
+		defer close(finished)
+		prepared, err := oldService.Prepare(oldContext, actor, command, oldLease)
+		result <- preparation{prepared: prepared, err: err}
+	}()
+	<-acquired
+	replaceServicePolicy(t, path, "g, group:operators, role:operator\np, role:operator, profiles, profiles:list, allow\n")
+	freshLease := acquireLease(t, freshService.Admission())
+	freshContext := freshLease.Context(context.Background())
+	if prepared, err := freshService.Prepare(freshContext, actor, command, freshLease); prepared != nil || !IsPolicyDenied(err) {
+		t.Fatalf("removal probe error = %v, want policy denial", err)
+	}
+	unblock.Do(func() { close(release) })
+	old := <-result
+	if old.prepared == nil || old.err != nil {
+		t.Fatalf("old Prepare() error = %v, want its acquired allow snapshot", old.err)
+	}
+	copied := *old.prepared
+	if _, err := old.prepared.RunResult(oldContext); err != nil {
+		t.Fatalf("old RunResult() error = %v", err)
+	}
+	if _, err := copied.RunResult(oldContext); !HasCode(err, CodeNotReady) {
+		t.Fatalf("copied RunResult() error = %v, want one-shot rejection", err)
+	}
+	if oldEvaluations != 1 || len(executor.calls) != 2 {
+		t.Fatal("old execution repeated authorization or Vault work")
+	}
+	if prepared, err := freshService.Prepare(freshContext, actor, command, freshLease); prepared != nil || !IsPolicyDenied(err) || len(freshExecutor.calls) != 0 {
+		t.Fatalf("fresh Prepare() error = %v, want policy denial without execution", err)
+	}
+}
+
 func TestListProfilesFailsClosedWhenServiceIsNotReady(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -164,6 +487,231 @@ func TestListProfilesFailsClosedWhenServiceIsNotReady(t *testing.T) {
 	}
 }
 
+func TestListProfilesDirectRightsDoNotImplyRotation(t *testing.T) {
+	policy, _ := loadedServicePolicy(t, testProfiles(), "g, group:operators, role:operator\np, role:operator, profiles, profiles:list, allow\np, role:operator, profile:dev, decrypt, allow\np, role:operator, profile:prod, encrypt, allow\n")
+	service := New(testProfiles(), &fakeExecutor{}, policy, testAdmission(t))
+	profiles, err := service.ListProfiles(context.Background(), sessionCaller(t))
+	if err != nil || len(profiles) != 2 {
+		t.Fatalf("ListProfiles() error = %v; visible profiles = %d, want both direct profiles", err, len(profiles))
+	}
+	for _, profile := range profiles {
+		if profile.Capabilities.RotateSource || profile.Capabilities.RotateDestination {
+			t.Fatal("direct rights incorrectly created rotation participation")
+		}
+		if profile.Capabilities.RotateDestinationIDs == nil || len(profile.Capabilities.RotateDestinationIDs) != 0 {
+			t.Fatal("direct-only profile must have an explicit empty destination array")
+		}
+	}
+}
+
+func TestListProfilesProjectsExactOrderedPairsAndExecutionParity(t *testing.T) {
+	catalog := []Profile{{ID: "y", Label: "Y"}, {ID: "a", Label: "A"}, {ID: "hidden", Label: "Hidden"}, {ID: "x", Label: "X"}, {ID: "b", Label: "B"}, {ID: "z", Label: "Z"}, {ID: "direct", Label: "Direct"}}
+	content := "g, group:operators, role:operator\ng, role:operator, role:base\ng, group:operators, role:block\n" +
+		"p, role:base, profiles, profiles:list, allow\n" +
+		"p, role:base, rotation:a:x, rotate, allow\np, role:operator, rotation:b:y, rotate, allow\n" +
+		"p, role:operator, rotation:a:y, rotate, allow\np, role:operator, rotation:x:z, rotate, allow\np, role:operator, rotation:b:b, rotate, allow\n" +
+		"p, role:base, rotation:a:z, rotate, allow\np, role:block, rotation:a:z, rotate, deny\n" +
+		"p, role:operator, rotation:a:hidden, rotate, allow\np, role:block, rotation:a:hidden, rotate, deny\n" +
+		"p, role:operator, rotation:hidden:z, rotate, allow\np, role:block, rotation:hidden:z, rotate, deny\n" +
+		"p, role:operator, profile:a, decrypt, deny\np, role:operator, profile:x, encrypt, deny\np, role:operator, profile:direct, encrypt, allow\n"
+	policy, _ := loadedServicePolicy(t, catalog, content)
+	executor := &fakeExecutor{}
+	service := New(catalog, executor, policy, testAdmission(t))
+	actor := sessionCaller(t)
+	got, err := service.ListProfiles(context.Background(), actor)
+	want := []Profile{
+		{ID: "y", Label: "Y", Capabilities: ProfileCapabilities{RotateDestination: true, RotateDestinationIDs: []string{}}},
+		{ID: "a", Label: "A", Capabilities: ProfileCapabilities{RotateSource: true, RotateDestinationIDs: []string{"y", "x"}}},
+		{ID: "x", Label: "X", Capabilities: ProfileCapabilities{RotateSource: true, RotateDestination: true, RotateDestinationIDs: []string{"z"}}},
+		{ID: "b", Label: "B", Capabilities: ProfileCapabilities{RotateSource: true, RotateDestination: true, RotateDestinationIDs: []string{"y", "b"}}},
+		{ID: "z", Label: "Z", Capabilities: ProfileCapabilities{RotateDestination: true, RotateDestinationIDs: []string{}}},
+		{ID: "direct", Label: "Direct", Capabilities: ProfileCapabilities{Encrypt: true, RotateDestinationIDs: []string{}}},
+	}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("ListProfiles() = %#v, %v; want ordered exact relation %#v", got, err, want)
+	}
+	if len(executor.calls) != 0 {
+		t.Fatal("profile discovery executed Vault work")
+	}
+	lease := acquireLease(t, service.Admission())
+	bound := lease.Context(context.Background())
+	for _, source := range catalog {
+		for _, destination := range catalog {
+			allowed := false
+			for _, profile := range want {
+				if profile.ID == source.ID {
+					for _, id := range profile.Capabilities.RotateDestinationIDs {
+						allowed = allowed || id == destination.ID
+					}
+				}
+			}
+			executor.calls = nil
+			_, err := service.Rotate(bound, actor, source.ID, destination.ID, "synthetic input")
+			if allowed && err != nil || !allowed && (!IsPolicyDenied(err) || len(executor.calls) != 0) {
+				t.Fatalf("execution disagreed with explicit discovery for %s to %s; error = %v", source.ID, destination.ID, err)
+			}
+		}
+	}
+}
+
+func TestListProfilesScopesKeepLaneOnlyVisibilitySeparate(t *testing.T) {
+	catalog := []Profile{{ID: "dev", Label: "Development"}, {ID: "prod", Label: "Production"}, {ID: "direct", Label: "Direct"}}
+	policy, _ := loadedServicePolicy(t, catalog, "g, group:operators, role:operator\np, role:operator, profiles, profiles:list, allow\np, role:operator, rotation:dev:prod, rotate, allow\np, role:operator, profile:direct, encrypt, allow\np, role:operator, profile:direct, decrypt, allow\n")
+	for _, test := range []struct {
+		name  string
+		actor caller.Caller
+		want  []Profile
+	}{
+		{name: "session", actor: sessionCaller(t), want: []Profile{
+			{ID: "dev", Label: "Development", Capabilities: ProfileCapabilities{RotateSource: true, RotateDestinationIDs: []string{"prod"}}},
+			{ID: "prod", Label: "Production", Capabilities: ProfileCapabilities{RotateDestination: true, RotateDestinationIDs: []string{}}},
+			{ID: "direct", Label: "Direct", Capabilities: ProfileCapabilities{Encrypt: true, Decrypt: true, RotateDestinationIDs: []string{}}},
+		}},
+		{name: "rotate scope", actor: bearerCaller(t, ScopeProfileRead, ScopeRotate), want: []Profile{
+			{ID: "dev", Label: "Development", Capabilities: ProfileCapabilities{RotateSource: true, RotateDestinationIDs: []string{"prod"}}},
+			{ID: "prod", Label: "Production", Capabilities: ProfileCapabilities{RotateDestination: true, RotateDestinationIDs: []string{}}},
+		}},
+		{name: "direct scopes without rotate", actor: bearerCaller(t, ScopeProfileRead, ScopeEncrypt, ScopeDecrypt), want: []Profile{
+			{ID: "direct", Label: "Direct", Capabilities: ProfileCapabilities{Encrypt: true, Decrypt: true, RotateDestinationIDs: []string{}}},
+		}},
+		{name: "encrypt scope", actor: bearerCaller(t, ScopeProfileRead, ScopeEncrypt), want: []Profile{
+			{ID: "direct", Label: "Direct", Capabilities: ProfileCapabilities{Encrypt: true, RotateDestinationIDs: []string{}}},
+		}},
+		{name: "profile read alone", actor: bearerCaller(t, ScopeProfileRead), want: []Profile{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := New(catalog, &fakeExecutor{}, policy, testAdmission(t))
+			got, err := service.ListProfiles(context.Background(), test.actor)
+			if err != nil || !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("ListProfiles() = %#v, %v; want %#v", got, err, test.want)
+			}
+		})
+	}
+	evaluations := 0
+	service := New(catalog, &fakeExecutor{}, authorizerFunc(func(actor caller.Caller, checks []authz.Check) ([]bool, error) {
+		evaluations++
+		return policy.Evaluate(actor, checks)
+	}), testAdmission(t))
+	if _, err := service.ListProfiles(context.Background(), bearerCaller(t, ScopeRotate)); !HasCode(err, CodeForbidden) || evaluations != 0 {
+		t.Fatalf("missing profile-read scope reached policy or error = %v", err)
+	}
+}
+
+func TestListProfilesAnonymousProjectsIndependentCompleteRelations(t *testing.T) {
+	service := New(testProfiles(), &fakeExecutor{}, nil, testAdmission(t))
+	got, err := service.ListProfiles(context.Background(), caller.Anonymous())
+	all := ProfileCapabilities{Encrypt: true, Decrypt: true, RotateSource: true, RotateDestination: true, RotateDestinationIDs: []string{"dev", "prod"}}
+	want := []Profile{{ID: "dev", Label: "Development", Capabilities: all}, {ID: "prod", Label: "Production", Capabilities: all}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("anonymous ListProfiles() = %#v, %v; want complete development relation", got, err)
+	}
+	got[0].Capabilities.RotateDestinationIDs[0] = "changed"
+	if got[1].Capabilities.RotateDestinationIDs[0] != "dev" {
+		t.Fatal("destination relations alias each other")
+	}
+	got, err = service.ListProfiles(context.Background(), caller.Anonymous())
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatal("mutating a discovery response changed later development authority")
+	}
+}
+
+func TestListProfilesPolicyRemovalClearsLastEdgeDespiteDirectRights(t *testing.T) {
+	initial := "g, group:operators, role:operator\np, role:operator, profiles, profiles:list, allow\np, role:operator, profile:dev, decrypt, allow\np, role:operator, profile:prod, encrypt, allow\np, role:operator, rotation:dev:prod, rotate, allow\n"
+	policy, path := loadedServicePolicy(t, testProfiles(), initial)
+	service := New(testProfiles(), &fakeExecutor{}, policy, testAdmission(t))
+	got, err := service.ListProfiles(context.Background(), sessionCaller(t))
+	if err != nil || len(got) != 2 || !reflect.DeepEqual(got[0].Capabilities.RotateDestinationIDs, []string{"prod"}) || !got[1].Capabilities.RotateDestination {
+		t.Fatalf("initial discovery did not contain the allowed edge; error = %v", err)
+	}
+	replaceServicePolicy(t, path, initial+"p, role:operator, rotation:dev:prod, rotate, deny\n")
+	got, err = service.ListProfiles(context.Background(), sessionCaller(t))
+	want := []Profile{
+		{ID: "dev", Label: "Development", Capabilities: ProfileCapabilities{Decrypt: true, RotateDestinationIDs: []string{}}},
+		{ID: "prod", Label: "Production", Capabilities: ProfileCapabilities{Encrypt: true, RotateDestinationIDs: []string{}}},
+	}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("removed edge retained participation or changed direct rights; error = %v", err)
+	}
+}
+
+func TestListProfilesDistinguishesRealPolicyDenialFromUnavailablePolicy(t *testing.T) {
+	initial := "g, group:operators, role:operator\np, role:operator, profiles, profiles:list, allow\np, role:operator, rotation:dev:prod, rotate, allow\n"
+	for _, state := range []struct {
+		name, replacement string
+		unavailable       bool
+		remove            bool
+	}{
+		{name: "empty", replacement: ""},
+		{name: "no profiles:list", replacement: "g, group:operators, role:operator\np, role:operator, rotation:dev:prod, rotate, allow\n"},
+		{name: "denied profiles:list", replacement: initial + "p, role:operator, profiles, profiles:list, deny\n"},
+		{name: "all pairs denied", replacement: initial + "p, role:operator, rotation:dev:prod, rotate, deny\n"},
+		{name: "invalid", replacement: initial + "p, role:operator, rotation:dev:missing, rotate, deny\n", unavailable: true},
+		{name: "missing", remove: true, unavailable: true},
+	} {
+		t.Run(state.name, func(t *testing.T) {
+			policy, path := loadedServicePolicy(t, testProfiles(), initial)
+			service := New(testProfiles(), &fakeExecutor{}, policy, testAdmission(t))
+			if state.remove {
+				if err := os.Remove(path); err != nil {
+					t.Fatal("remove synthetic policy failed")
+				}
+			} else {
+				replaceServicePolicy(t, path, state.replacement)
+			}
+			got, err := service.ListProfiles(context.Background(), sessionCaller(t))
+			if state.unavailable {
+				if got != nil || !HasCode(err, CodeNotReady) || err.Error() != "authorization is not ready" {
+					t.Fatalf("unavailable discovery returned a catalog or error = %v, want safe not_ready", err)
+				}
+			} else if err != nil || got == nil || len(got) != 0 {
+				t.Fatalf("denied discovery = %#v, %v; want explicit empty success", got, err)
+			}
+			if state.remove {
+				if err := os.WriteFile(path, []byte(initial+"# recovered\n"), 0o600); err != nil {
+					t.Fatal("restore synthetic policy failed")
+				}
+			} else {
+				replaceServicePolicy(t, path, initial+"# recovered\n")
+			}
+			got, err = service.ListProfiles(context.Background(), sessionCaller(t))
+			if err != nil || len(got) != 2 || !reflect.DeepEqual(got[0].Capabilities.RotateDestinationIDs, []string{"prod"}) {
+				t.Fatalf("recovered discovery did not restore its edge; error = %v", err)
+			}
+		})
+	}
+}
+
+func TestListProfilesUsesOneCoherentRealPolicyEvaluation(t *testing.T) {
+	initial := "g, group:operators, role:operator\np, role:operator, profiles, profiles:list, allow\np, role:operator, profile:dev, decrypt, allow\np, role:operator, rotation:dev:prod, rotate, allow\n"
+	policy, path := loadedServicePolicy(t, testProfiles(), initial)
+	evaluations := 0
+	executor := &fakeExecutor{}
+	service := New(testProfiles(), executor, authorizerFunc(func(actor caller.Caller, checks []authz.Check) ([]bool, error) {
+		evaluations++
+		allowed, err := policy.Evaluate(actor, checks)
+		if evaluations == 1 {
+			replaceServicePolicy(t, path, "g, group:operators, role:operator\np, role:operator, profiles, profiles:list, allow\np, role:operator, profile:prod, encrypt, allow\np, role:operator, rotation:prod:prod, rotate, allow\n")
+			if err := policy.AuthorizeRotate(actor, "dev", "prod"); !errors.Is(err, authz.ErrForbidden) {
+				t.Fatalf("replacement probe error = %v, want forbidden", err)
+			}
+		}
+		return allowed, err
+	}), testAdmission(t))
+	got, err := service.ListProfiles(context.Background(), sessionCaller(t))
+	want := []Profile{
+		{ID: "dev", Label: "Development", Capabilities: ProfileCapabilities{Decrypt: true, RotateSource: true, RotateDestinationIDs: []string{"prod"}}},
+		{ID: "prod", Label: "Production", Capabilities: ProfileCapabilities{RotateDestination: true, RotateDestinationIDs: []string{}}},
+	}
+	if err != nil || !reflect.DeepEqual(got, want) || evaluations != 1 {
+		t.Fatalf("old discovery mixed snapshots or used %d evaluations; error = %v", evaluations, err)
+	}
+	got, err = service.ListProfiles(context.Background(), sessionCaller(t))
+	want = []Profile{{ID: "prod", Label: "Production", Capabilities: ProfileCapabilities{Encrypt: true, RotateSource: true, RotateDestination: true, RotateDestinationIDs: []string{"prod"}}}}
+	if err != nil || !reflect.DeepEqual(got, want) || evaluations != 2 || len(executor.calls) != 0 {
+		t.Fatalf("fresh discovery was incoherent or executed work; evaluations = %d, error = %v", evaluations, err)
+	}
+}
+
 func TestListProfilesUsesCallerScopeAndPolicyIntersection(t *testing.T) {
 	policy := &fakeAuthorizer{decisions: map[string]error{
 		authz.ActionDecrypt + "\x00" + authz.ProfileResource("prod"): authz.ErrForbidden,
@@ -174,7 +722,7 @@ func TestListProfilesUsesCallerScopeAndPolicyIntersection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("anonymous ListProfiles() error = %v", err)
 	}
-	all := ProfileCapabilities{Encrypt: true, Decrypt: true, RotateSource: true, RotateDestination: true}
+	all := ProfileCapabilities{Encrypt: true, Decrypt: true, RotateSource: true, RotateDestination: true, RotateDestinationIDs: []string{"dev", "prod"}}
 	if want := []Profile{{ID: "dev", Label: "Development", Capabilities: all}, {ID: "prod", Label: "Production", Capabilities: all}}; !reflect.DeepEqual(anonymous, want) {
 		t.Fatalf("anonymous profiles = %#v, want %#v", anonymous, want)
 	}
@@ -189,7 +737,7 @@ func TestListProfilesUsesCallerScopeAndPolicyIntersection(t *testing.T) {
 	}
 	wantSession := []Profile{
 		{ID: "dev", Label: "Development", Capabilities: all},
-		{ID: "prod", Label: "Production", Capabilities: ProfileCapabilities{Encrypt: true, RotateDestination: true}},
+		{ID: "prod", Label: "Production", Capabilities: ProfileCapabilities{Encrypt: true, RotateSource: true, RotateDestination: true, RotateDestinationIDs: []string{"dev", "prod"}}},
 	}
 	if !reflect.DeepEqual(session, wantSession) {
 		t.Fatalf("session profiles = %#v, want %#v", session, wantSession)
@@ -201,8 +749,8 @@ func TestListProfilesUsesCallerScopeAndPolicyIntersection(t *testing.T) {
 		t.Fatalf("bearer ListProfiles() error = %v", err)
 	}
 	wantBearer := []Profile{
-		{ID: "dev", Label: "Development", Capabilities: ProfileCapabilities{RotateSource: true, RotateDestination: true}},
-		{ID: "prod", Label: "Production", Capabilities: ProfileCapabilities{RotateDestination: true}},
+		{ID: "dev", Label: "Development", Capabilities: ProfileCapabilities{RotateSource: true, RotateDestination: true, RotateDestinationIDs: []string{"dev", "prod"}}},
+		{ID: "prod", Label: "Production", Capabilities: ProfileCapabilities{RotateSource: true, RotateDestination: true, RotateDestinationIDs: []string{"dev", "prod"}}},
 	}
 	if !reflect.DeepEqual(rotateOnly, wantBearer) {
 		t.Fatalf("bearer profiles = %#v, want %#v", rotateOnly, wantBearer)
@@ -630,8 +1178,8 @@ func TestBearerOperationRequiresExactScopeAndCasbin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare(rotate scope) error = %v", err)
 	}
-	if policy.evaluations != 1 || len(policy.calls) != 2 {
-		t.Fatalf("rotate policy evaluations/calls = %d/%#v, want one evaluation with two checks", policy.evaluations, policy.calls)
+	if policy.evaluations != 1 || !reflect.DeepEqual(policy.calls, []authorizationCall{{kind: caller.KindBearer, action: authz.ActionRotate, resource: authz.RotationResource("dev", "prod")}}) {
+		t.Fatalf("rotate policy evaluations/calls = %d/%#v, want one exact pair check", policy.evaluations, policy.calls)
 	}
 	if _, err := prepared.Run(leaseContext); err != nil {
 		t.Fatalf("Run() error = %v", err)

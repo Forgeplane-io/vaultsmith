@@ -1,0 +1,24 @@
+{
+  admin off
+  auto_https disable_redirects
+  skip_install_trust
+}
+
+https://localhost:18443 {
+  bind 127.0.0.1
+  tls internal
+  @private path /healthz /readyz
+  respond @private 404
+  reverse_proxy 127.0.0.1:18080 {
+    # Preserve Authorization, but never let a caller supply an identity that
+    # an upstream authenticating proxy could otherwise mistake as trusted.
+    header_up -X-Auth-Request-User
+    header_up -X-Auth-Request-Email
+    header_up -X-Auth-Request-Groups
+    header_up -X-Forwarded-User
+    header_up -X-Forwarded-Email
+    header_up -X-Remote-User
+    header_up -X-Remote-Groups
+    header_up -X-Groups
+  }
+}

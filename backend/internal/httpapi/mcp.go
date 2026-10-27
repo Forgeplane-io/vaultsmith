@@ -374,10 +374,11 @@ func (h *Handler) serveMCPToolCall(w http.ResponseWriter, r *http.Request, id js
 				Id:    profile.ID,
 				Label: profile.Label,
 				Capabilities: apimodels.ProfileCapabilities{
-					Encrypt:           profile.Capabilities.Encrypt,
-					Decrypt:           profile.Capabilities.Decrypt,
-					RotateSource:      profile.Capabilities.RotateSource,
-					RotateDestination: profile.Capabilities.RotateDestination,
+					Encrypt:              profile.Capabilities.Encrypt,
+					Decrypt:              profile.Capabilities.Decrypt,
+					RotateSource:         profile.Capabilities.RotateSource,
+					RotateDestination:    profile.Capabilities.RotateDestination,
+					RotateDestinationIds: profile.Capabilities.RotateDestinationIDs,
 				},
 			})
 		}
@@ -1095,10 +1096,22 @@ func (h *Handler) mcpTools(actor caller.Caller) []*mcp.Tool {
 	decryptScope, _ := vaultservice.RequiredScope(vaultservice.OperationDecrypt)
 	rotateScope, _ := vaultservice.RequiredScope(vaultservice.OperationRotate)
 	if mcpToolVisible(actor, vaultservice.ScopeProfileRead) {
+		capabilitiesSchema := mcpObjectSchema([]string{"encrypt", "decrypt", "rotateSource", "rotateDestination", "rotateDestinationIds"}, map[string]any{
+			"encrypt":           map[string]any{"type": "boolean"},
+			"decrypt":           map[string]any{"type": "boolean"},
+			"rotateSource":      map[string]any{"type": "boolean"},
+			"rotateDestination": map[string]any{"type": "boolean"},
+			"rotateDestinationIds": map[string]any{
+				"type": "array", "uniqueItems": true, "items": mcpGenerateProfileIDSchema(),
+			},
+		})
+		profileSchema := mcpObjectSchema([]string{"id", "label", "capabilities"}, map[string]any{
+			"id": mcpGenerateProfileIDSchema(), "label": mcpStringSchema(), "capabilities": capabilitiesSchema,
+		})
 		tools = append(tools, &mcp.Tool{
-			Name: "list_profiles", Description: "List visible Vault profiles.",
+			Name: "list_profiles", Description: "List visible Vault profiles and exact allowed re-key destinations.",
 			InputSchema:  mcpObjectSchema(nil, nil),
-			OutputSchema: mcpObjectSchema([]string{"profiles"}, map[string]any{"profiles": map[string]any{"type": "array"}}),
+			OutputSchema: mcpObjectSchema([]string{"profiles"}, map[string]any{"profiles": map[string]any{"type": "array", "items": profileSchema}}),
 		})
 	}
 	if mcpToolVisible(actor, encryptScope) {
@@ -1118,7 +1131,7 @@ func (h *Handler) mcpTools(actor caller.Caller) []*mcp.Tool {
 	if mcpToolVisible(actor, rotateScope) {
 		tools = append(tools, &mcp.Tool{
 			Name:        "rotate",
-			Description: "Rotate Vault text from one profile to another. An optional attestation authenticates the rotation statement; it is not an independent plaintext-equality proof.",
+			Description: "Rotate Vault text along an explicitly allowed directed profile pair, independently of direct decrypt/encrypt permissions. An optional attestation authenticates the rotation statement; it is not an independent plaintext-equality proof.",
 			InputSchema: mcpObjectSchema([]string{"sourceProfileId", "destinationProfileId", "vaultText"}, map[string]any{
 				"sourceProfileId": mcpStringSchema(), "destinationProfileId": mcpStringSchema(), "vaultText": mcpStringSchema(),
 				"attestation": mcpObjectSchema(nil, map[string]any{"binding": bindingSchema}),

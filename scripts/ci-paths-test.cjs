@@ -12,6 +12,10 @@ const filters = parse(readFileSync(join(__dirname, '../.github/ci-paths.yml'), '
 for (const [path, expected] of [
   ['integration/Caddyfile', ['native_integration']],
   ['integration/docker-compose.yml', ['native_integration']],
+  ['integration/docker-compose.linux.yml', ['native_integration']],
+  ['scripts/integration_native_test.py', ['native_integration']],
+  ['scripts/delegated-rekey-browser-test.mjs', ['native_integration']],
+  ['integration/delegated-rekey-browser.mjs', ['native_integration']],
   ['scripts/integration-native.sh', ['native_integration']],
   ['integration/unrelated.txt', []],
   ['integration/Caddyfile-idp', ['native_integration']],

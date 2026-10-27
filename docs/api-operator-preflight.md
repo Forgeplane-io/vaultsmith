@@ -99,7 +99,7 @@ Available scopes are case-sensitive:
 - `vaultsmith.rotate`
 
 - [ ] Each token uses the `PUBLIC_BASE_URL` origin as its resource or audience.
-- [ ] A rotation-only caller gets `vaultsmith.rotate`. It gets decrypt scope only if it also needs direct decryption.
+- [ ] A rotation-only caller gets `vaultsmith.rotate` and, for discovery, `vaultsmith.profile.read`. It gets decrypt or encrypt scope only if it also needs the corresponding direct operation.
 - [ ] Each token contains the groups needed by the same Casbin policy as browser sessions.
 - [ ] Issuance and revocation were tested without logging a token.
 
@@ -113,6 +113,16 @@ Available scopes are case-sensitive:
 - [ ] Profile order is reviewed and consistent across replicas.
 - [ ] Every serving replica has the same profile IDs and policy before machine callers start.
 - [ ] The checklist contains no passwords or password environment names.
+
+### Delegated re-key policy
+
+- [ ] Every intended native pair has a reviewed `p, role:<role>, rotation:<source>:<destination>, rotate, allow` row using configured profile IDs and no effective exact-pair deny. Existing group mappings and role inheritance are included in the review.
+- [ ] Direct rights were reviewed independently; no decrypt/encrypt cross-product was used to generate rotation grants. Lane-only callers have no unintended direct Encrypt, Decrypt, or Generate rights.
+- [ ] Destination-password custody was reviewed: its holder can decrypt re-keyed output. Pair denies do not restrict independently authorized direct decrypt-then-encrypt operations.
+- [ ] Duplicate permission rows, malformed permission/grouping rows, ambiguous CSV key collisions, and unsupported model-assertion rows are treated as whole-policy failures, not a usable subset.
+- [ ] REST discovery and MCP `list_profiles` return exact ordered `rotateDestinationIds` arrays, including `[]`, with matching source/destination flags. No boolean cross-product fallback is used.
+- [ ] The new bundled client reaches only servers supporting the required relation contract; missing or malformed relations fail discovery.
+- [ ] Native legacy operations remain session-only, native MCP remains Bearer-only, and existing CSRF, proof, and Verify requirements remain in force.
 
 ## Build and capacity
 
@@ -132,10 +142,10 @@ Do not start machine callers until the release includes the benchmark receipt, c
 
 Run these checks in order:
 
-1. Test the released UI and existing legacy operation callers against current replicas. Profile listing and the canonical Encrypt, Decrypt, and Rotate operations must succeed. For native browser sessions, follow the [session cutover guidance](deployment.md#upgrade-and-rollback); do not serve old and current replicas in the same session namespace.
-2. Test a Bearer client against one current canary. Verify audience, scopes, Casbin policy, and rejection of mixed credentials.
+1. Stage binaries and reviewed policy under the [delegated re-key cutover procedure](deployment.md#delegated-re-key-cutover), with affected traffic isolated and existing work drained. New binaries preserve valid old-policy direct rights but deny rotation without explicit rows; new rows are invalid to old binaries. Do not assume a mixed-version zero-downtime migration. Follow the [session cutover guidance](deployment.md#upgrade-and-rollback) as well.
+2. Test the released UI, legacy session callers, and a canonical Bearer client against upgraded isolated replicas. Verify permitted direct operations, explicit-pair rotations, audience, scopes, Casbin policy, and rejection of mixed credentials. Probe every replica with synthetic allowed pairs and denied no-lane, reverse, and crossed pairs; direct decrypt plus encrypt grants must never authorize a rotation.
 3. On every serving replica, verify that `/mcp` returns `404` for every method, including `OPTIONS`, while MCP is disabled.
-4. Roll out the current release to every serving replica before starting external clients on canonical REST.
+4. Confirm every serving replica uses the new binary and stable reviewed policy before resuming affected traffic or starting external clients. Use atomic policy replacement that changes observed modification time or size. A detected missing or invalid policy fails closed without a last-good fallback; equal metadata can hide a change. A deny probe does not drain old snapshot acquisitions, which may still finish preparation and execution after removal is observed. Do not infer immediate or globally monotonic revocation.
 5. Set `mcp.enabled=true` in a separate rollout. Start MCP callers only after every serving replica has MCP enabled.
 6. Run `server/discover`, `tools/list`, and one call for each tool with protocol revision `2026-07-28`. Confirm that responses stay within the protocol limits.
 7. Check `/healthz`, `/readyz`, issuer readiness, and JWKS readiness against their documented statuses.
@@ -148,7 +158,7 @@ Rollback is ordered:
 3. Record the restart owner and get separate restart approval before the MCP-disable or application-image rollout.
 4. Assess the [browser claim-freshness regression](deployment.md#upgrade-and-rollback) before rolling back the application image or routing traffic to previous release replicas; keep relying parties isolated.
 
-A rollback must not require profile password or policy changes.
+Rollback does not require changing profile passwords, but policy compatibility and authorization must be reviewed. An old binary with old direct rights can restore prohibited implicit rotation. Prepare a reviewed old-format policy and isolate affected identities or traffic; if retaining direct rights would reopen prohibited rotation, keep that traffic disabled or do not downgrade. Dropping rotation rows and restarting old code is not a safe rollback. Do not expand lane grants into direct rights or switch authentication off.
 
 ## Legacy operation endpoint removal
 
