@@ -10,6 +10,14 @@ All notable changes to Vaultsmith are documented here. Release Please maintains 
 - Proofs use `PUBLIC_BASE_URL` as the issuer and reload a valid changed keyring without restart. A malformed replacement keeps the previous valid keyring active.
 - When proofs are disabled, normal encrypt, decrypt, and rotate behavior remains available and no signing Secret is required.
 
+## [0.9.5](https://github.com/Forgeplane-io/vaultsmith/compare/v0.9.4...v0.9.5) (2026-10-27)
+
+
+### Bug Fixes
+
+* **api:** align attestation size contract ([af7a670](https://github.com/Forgeplane-io/vaultsmith/commit/af7a670adb7594c1abd9b3629ca7f6fe77553312))
+* **auth:** validate Redis connection addresses ([a585a29](https://github.com/Forgeplane-io/vaultsmith/commit/a585a298598d49c0f6fc227506d607ed4ca944ff))
+
 ## [0.9.4](https://github.com/Forgeplane-io/vaultsmith/compare/v0.9.3...v0.9.4) (2026-10-27)
 
 
