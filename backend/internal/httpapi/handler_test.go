@@ -73,6 +73,42 @@ func (f *fakeProfileExecutor) Decrypt(_ context.Context, value string) (string, 
 	return f.owner.value, f.owner.err
 }
 
+func assertDiscoveryJSON(t *testing.T, payload []byte, expected string) {
+	t.Helper()
+	var catalog struct {
+		Profiles []struct {
+			ID           string                     `json:"id"`
+			Capabilities map[string]json.RawMessage `json:"capabilities"`
+		} `json:"profiles"`
+	}
+	if err := json.Unmarshal(payload, &catalog); err != nil || catalog.Profiles == nil {
+		t.Fatal("discovery must contain a profiles array")
+	}
+	for _, profile := range catalog.Profiles {
+		var destinations []string
+		if err := json.Unmarshal(profile.Capabilities["rotateDestinationIds"], &destinations); err != nil || destinations == nil {
+			t.Fatal("discovery rotateDestinationIds is missing, null, or not an array")
+		}
+	}
+	var got, want any
+	if json.Unmarshal(payload, &got) != nil || json.Unmarshal([]byte(expected), &want) != nil {
+		t.Fatal("decode synthetic discovery expectation failed")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatal("discovery did not preserve the expected ordered profiles, exact pairs, or capabilities")
+	}
+}
+
+func TestProfilesEndpointAlwaysEmitsExactDestinationArrays(t *testing.T) {
+	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, &fakeExecutor{})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/profiles", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("discovery status = %d, want 200", response.Code)
+	}
+	assertDiscoveryJSON(t, response.Body.Bytes(), `{"profiles":[{"id":"dev","label":"Development","capabilities":{"encrypt":true,"decrypt":true,"rotateSource":true,"rotateDestination":true,"rotateDestinationIds":["dev"]}}]}`)
+}
+
 func TestProfilesEndpoint(t *testing.T) {
 	executor := &fakeExecutor{}
 	handler := newHandler([]Profile{{ID: "dev", Label: "Development"}}, executor)
@@ -85,8 +121,8 @@ func TestProfilesEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
 	profiles := decodeJSONBody[profilesResponse](t, response).Profiles
-	want := apimodels.Profile{Id: "dev", Label: "Development", Capabilities: apimodels.ProfileCapabilities{Encrypt: true, Decrypt: true, RotateSource: true, RotateDestination: true}}
-	if len(profiles) != 1 || profiles[0] != want {
+	want := apimodels.Profile{Id: "dev", Label: "Development", Capabilities: apimodels.ProfileCapabilities{Encrypt: true, Decrypt: true, RotateSource: true, RotateDestination: true, RotateDestinationIds: []string{"dev"}}}
+	if len(profiles) != 1 || !reflect.DeepEqual(profiles[0], want) {
 		t.Fatalf("profiles = %#v", profiles)
 	}
 	if response.Header().Get("X-Request-ID") == "" {

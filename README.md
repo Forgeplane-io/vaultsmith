@@ -6,7 +6,7 @@ Vaultsmith is a web UI and HTTP API for encrypting, decrypting, and re-keying An
 
 - Encrypt a value with a selected vault profile.
 - Decrypt an existing Ansible Vault value.
-- Re-key a value from one profile to another.
+- Re-key a value along an explicitly authorized source-to-destination profile pair in native mode.
 - Generate passwords, tokens, SSH keypairs, age identities, and X.509 private keys with CSRs, returning the sealed Vault text and permitted public companion without private plaintext.
 - Copy an Ansible `!vault` variable snippet from an encrypted, re-keyed, or generated result.
 
@@ -63,6 +63,8 @@ An unset or blank mode is a startup error. Native mode does not fall back to `of
 
 Native mode uses the verified `(iss, sub)` pair as identity. Browser users authenticate with OIDC Authorization Code + PKCE and Redis-backed sessions. Machine clients can use RFC 9068 JWT Bearer access tokens whose audience is the `PUBLIC_BASE_URL` HTTPS origin. Client-provided identity headers are ignored. If the issuer uses a private CA, mount a PEM bundle and set `OIDC_CA_FILE`. Do not disable TLS verification.
 
+Native re-key authorization requires an exact `rotation:<source>:<destination>` grant with action `rotate` and no effective pair deny. Direct decrypt and encrypt rights do not authorize re-keying; a pair grant does not grant direct Encrypt, Decrypt, or Generate. See [delegated re-key policy](docs/authentication.md#delegated-re-key-policy) and the [upgrade and rollback guidance](docs/deployment.md#delegated-re-key-cutover).
+
 ### HTTP API
 
 The bundled UI uses the canonical REST API. The deprecated legacy operation endpoint remains for v1 compatibility only. Canonical REST and the legacy endpoint share the same service behavior, limits, no-store responses, request IDs, 30-second application deadline, and admission limit. Configured CORS origins are explicit.
@@ -97,7 +99,7 @@ The bundled UI uses the canonical REST API. The deprecated legacy operation endp
 
 `POST /api/v1/operations` is the deprecated legacy operation endpoint. It remains only for existing v1 compatibility callers. New clients and the bundled UI must use the canonical REST API above. Generate is available only at `POST /api/v1/generate`; it is not a legacy operation mode.
 
-Operation modes are `encrypt`, `decrypt`, and `rotate` (the API name for re-key). A re-key request names `sourceProfileId` and `destinationProfileId`. In native mode, session mutations require the CSRF token returned by `/api/v1/session`; Bearer requests do not use sessions or CSRF and require the exact operation scope. Attestation verification uses `vaultsmith.attestation.verify`; issuance uses the rotate path and does not create a new operation scope. MCP is disabled by default with `mcp.enabled: false` / `MCP_ENABLED=false`. Proofs are disabled by default with `proofs.enabled: false`; normal Vault operations remain available when proofs are disabled.
+Operation modes are `encrypt`, `decrypt`, and `rotate` (the API name for re-key). A re-key request names `sourceProfileId` and `destinationProfileId`. The legacy endpoint remains session-only in native mode; native MCP uses Bearer credentials only. In native mode, session mutations require the CSRF token returned by `/api/v1/session`; Bearer requests do not use sessions or CSRF and require the exact operation scope. Attestation verification uses `vaultsmith.attestation.verify`; issuance uses the rotate path and does not create a new operation scope. MCP is disabled by default with `mcp.enabled: false` / `MCP_ENABLED=false`. Proofs are disabled by default with `proofs.enabled: false`; normal Vault operations remain available when proofs are disabled.
 
 Keep plaintext, ciphertext, passwords, cookies, and tokens out of shell history, logs, screenshots, tickets, and pull requests.
 

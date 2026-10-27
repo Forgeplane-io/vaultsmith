@@ -132,7 +132,7 @@ Generates one password, token, SSH keypair, age X25519 identity, or X.509 privat
 
 **Operation ID:** `listProfiles`
 
-Returns safe profile metadata in configured order. A native session or Bearer caller without catalog policy access receives a successful empty list. Bearer callers also need vaultsmith.profile.read, and each returned capability is the intersection of an operation scope and Casbin policy. Off mode returns every configured profile with all capabilities true. Response clients must ignore unknown properties.
+Returns safe profile metadata in configured order. A native session or Bearer caller without catalog policy access receives a successful empty list. Bearer callers also need vaultsmith.profile.read, and each returned capability is the intersection of an operation scope and Casbin policy. rotateDestinationIds lists only effective explicitly allowed directed destinations in configured order. Every referenced destination occurs in this response. Rotation flags summarize outgoing/incoming allowed pairs; they do not authorize every source/destination combination. Direct encrypt/decrypt permissions are independent of rotation. Without rotate scope, Bearer callers receive empty destination arrays and no lane-only profiles. Arrays are always present, including [] rather than null. Explicit off mode is loopback-only local development: it returns every configured profile with all capabilities true and every destination ID. Response clients must ignore unknown properties. The updated bundled client requires this exact-pair discovery contract from its server.
 
 **Authentication:** `SessionCookie` or `BearerAuth`
 
@@ -245,7 +245,7 @@ Encrypts plaintext with the selected server-owned profile and emits Ansible Vaul
 
 **Operation ID:** `rotateValue`
 
-Decrypts with the source profile and re-encrypts with the destination profile. Plaintext is never returned. The decrypted intermediate value must be no larger than 1 MiB. Bearer callers need vaultsmith.rotate plus decrypt policy on the source and encrypt policy on the destination. The server does not retry this randomized operation.
+Decrypts with the source profile and re-encrypts with the destination profile. Plaintext is never returned. The decrypted intermediate value must be no larger than 1 MiB. Every native caller needs an explicit allow for the exact directed `rotation:<source>:<destination>` resource and rotate action; an applicable pair deny overrides an allow. Bearer callers also need vaultsmith.rotate, not the direct encrypt/decrypt scopes. Direct encrypt/decrypt grants and denies are independent: they neither grant rotation nor veto an explicitly allowed pair. Old policies without rotate rows grant no rotation. Wildcard, reverse, crossed, and transitive grants are not inferred; explicit self-pairs are supported. The server does not retry this randomized operation.
 
 **Authentication:** `CsrfHeader` + `SessionCookie` or `BearerAuth`
 
@@ -305,7 +305,7 @@ Decrypts with the source profile and re-encrypts with the destination profile. P
 
 **Deprecated:** Yes
 
-Compatibility-only adapter retained for existing v1 callers. New clients and the bundled UI use the canonical REST routes instead. It accepts browser sessions only in native mode and is anonymous in off mode. It keeps the released tagged variants and generic value response, while also requiring present non-null values and canonical profile IDs, rejecting every variant-irrelevant member, non-canonical field casing, duplicate JSON keys, malformed raw UTF-8, unsupported Content-Encoding, oversized decrypted plaintext, and ambiguous credentials. Legacy CORS and CSRF failures use the stable error-code table. The adapter executes through the shared service once.
+Compatibility-only adapter retained for existing v1 callers. New clients and the bundled UI use the canonical REST routes instead. It accepts browser sessions only in native mode and is anonymous in off mode. It keeps the released tagged variants and generic value response, while also requiring present non-null values and canonical profile IDs, rejecting every variant-irrelevant member, non-canonical field casing, duplicate JSON keys, malformed raw UTF-8, unsupported Content-Encoding, oversized decrypted plaintext, and ambiguous credentials. Legacy CORS and CSRF failures use the stable error-code table. The adapter executes through the shared service once. Native rotation requires the same exact directed rotate permission as POST /api/v1/rotations; direct decrypt/encrypt permissions are not a fallback.
 
 **Authentication:** `CsrfHeader` + `SessionCookie`
 
@@ -915,8 +915,9 @@ Effective caller capabilities. Clients ignore unknown properties.
 | --- | --- | --- | --- |
 | `decrypt` | boolean | yes |  |
 | `encrypt` | boolean | yes |  |
-| `rotateDestination` | boolean | yes |  |
-| `rotateSource` | boolean | yes |  |
+| `rotateDestination` | boolean | yes | Participates as a destination in at least one allowed pair after scope filtering. |
+| `rotateDestinationIds` | array of [ProfileId](#schema-profileid) | yes | Exact effective destinations for this source, in configured order. Always present; [] means no allowed pair. Every destination occurs in the same response. Direct permissions do not create pairs. |
+| `rotateSource` | boolean | yes | Participates as a source in at least one allowed pair after scope filtering. |
 
 ## Schema `ProfileId`
 

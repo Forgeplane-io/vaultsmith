@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -152,6 +153,81 @@ func TestMCPDiscoverAndListUseCompletePrivateResults(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assertMCPDiscoveryJSON(t *testing.T, response *httptest.ResponseRecorder, expected string) {
+	t.Helper()
+	var envelope struct {
+		Result struct {
+			IsError           bool            `json:"isError"`
+			StructuredContent json.RawMessage `json:"structuredContent"`
+			Content           []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(response.Body.Bytes(), &envelope) != nil || envelope.Result.IsError || len(envelope.Result.Content) != 1 || envelope.Result.Content[0].Type != "text" {
+		t.Fatal("MCP discovery must return matching successful structured and text content")
+	}
+	assertDiscoveryJSON(t, envelope.Result.StructuredContent, expected)
+	assertDiscoveryJSON(t, []byte(envelope.Result.Content[0].Text), expected)
+}
+
+func TestMCPListProfilesAlwaysEmitsExactDestinationArrays(t *testing.T) {
+	request := newMCPRequest("tools/call", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_profiles","arguments":{},`+mcpMeta+`}}`)
+	request.Header.Set("Mcp-Name", "list_profiles")
+	response := httptest.NewRecorder()
+	mcpOffHandler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("MCP discovery status = %d, want 200", response.Code)
+	}
+	assertMCPDiscoveryJSON(t, response, `{"profiles":[{"id":"dev","label":"Development","capabilities":{"encrypt":true,"decrypt":true,"rotateSource":true,"rotateDestination":true,"rotateDestinationIds":["dev"]}}]}`)
+}
+
+func TestMCPListProfilesOutputSchemaRequiresExactDestinationArrays(t *testing.T) {
+	type schema struct {
+		Type        string            `json:"type"`
+		Required    []string          `json:"required"`
+		Properties  map[string]schema `json:"properties"`
+		Items       *schema           `json:"items"`
+		Pattern     string            `json:"pattern"`
+		MinLength   int               `json:"minLength"`
+		MaxLength   int               `json:"maxLength"`
+		UniqueItems bool              `json:"uniqueItems"`
+	}
+	var envelope struct {
+		Result struct {
+			Tools []struct {
+				Name         string `json:"name"`
+				OutputSchema schema `json:"outputSchema"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	response := httptest.NewRecorder()
+	mcpOffHandler().ServeHTTP(response, newMCPRequest("tools/list", `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{`+mcpMeta+`}}`))
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &envelope) != nil {
+		t.Fatal("MCP tools/list did not return a schema")
+	}
+	for _, tool := range envelope.Result.Tools {
+		if tool.Name != "list_profiles" {
+			continue
+		}
+		profiles := tool.OutputSchema.Properties["profiles"]
+		if !slices.Contains(tool.OutputSchema.Required, "profiles") || profiles.Type != "array" || profiles.Items == nil {
+			t.Fatal("list_profiles output schema must require typed profile array items")
+		}
+		capabilities := profiles.Items.Properties["capabilities"]
+		if !slices.Contains(profiles.Items.Required, "capabilities") || capabilities.Type != "object" || !slices.Contains(capabilities.Required, "rotateDestinationIds") {
+			t.Fatal("list_profiles output schema must require rotateDestinationIds")
+		}
+		destinations := capabilities.Properties["rotateDestinationIds"]
+		if destinations.Type != "array" || !destinations.UniqueItems || destinations.Items == nil || destinations.Items.Type != "string" || destinations.Items.Pattern != "^[a-z0-9][a-z0-9._-]{0,63}$" || destinations.Items.MinLength != 1 || destinations.Items.MaxLength != 64 {
+			t.Fatal("MCP destination array items must use the configured profile ID grammar")
+		}
+		return
+	}
+	t.Fatal("list_profiles tool missing")
 }
 
 func TestMCPUnsupportedJSONRPCMethodReturnsMethodNotFound(t *testing.T) {

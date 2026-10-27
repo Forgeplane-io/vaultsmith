@@ -49,10 +49,11 @@ type Profile struct {
 }
 
 type ProfileCapabilities struct {
-	Encrypt           bool
-	Decrypt           bool
-	RotateSource      bool
-	RotateDestination bool
+	Encrypt              bool
+	Decrypt              bool
+	RotateSource         bool
+	RotateDestination    bool
+	RotateDestinationIDs []string
 }
 
 type Command struct {
@@ -168,7 +169,11 @@ func (s *Service) ListProfiles(ctx context.Context, actor caller.Caller) ([]Prof
 				return nil, err
 			}
 			profile := entry.profile
-			profile.Capabilities = ProfileCapabilities{Encrypt: true, Decrypt: true, RotateSource: true, RotateDestination: true}
+			destinations := make([]string, len(s.profiles))
+			for destinationIndex, destination := range s.profiles {
+				destinations[destinationIndex] = destination.profile.ID
+			}
+			profile.Capabilities = ProfileCapabilities{Encrypt: true, Decrypt: true, RotateSource: true, RotateDestination: true, RotateDestinationIDs: destinations}
 			profiles[index] = profile
 		}
 		return profiles, nil
@@ -190,6 +195,14 @@ func (s *Service) ListProfiles(ctx context.Context, actor caller.Caller) ([]Prof
 			authz.Check{Action: authz.ActionDecrypt, Resource: resource},
 		)
 	}
+	for _, source := range s.profiles {
+		if err := contextError(ctx); err != nil {
+			return nil, err
+		}
+		for _, destination := range s.profiles {
+			checks = append(checks, authz.Check{Action: authz.ActionRotate, Resource: authz.RotationResource(source.profile.ID, destination.profile.ID)})
+		}
+	}
 	allowed, err := s.authorizer.Evaluate(actor, checks)
 	if contextErr := contextError(ctx); contextErr != nil {
 		return nil, contextErr
@@ -201,35 +214,49 @@ func (s *Service) ListProfiles(ctx context.Context, actor caller.Caller) ([]Prof
 		return []Profile{}, nil
 	}
 
-	profiles := make([]Profile, 0, len(s.profiles))
+	profiles := make([]Profile, len(s.profiles))
 	for index, entry := range s.profiles {
 		if err := contextError(ctx); err != nil {
 			return nil, err
 		}
-		encryptAllowed := allowed[1+index*2]
-		decryptAllowed := allowed[2+index*2]
 		capabilities := ProfileCapabilities{
-			Encrypt:           encryptAllowed,
-			Decrypt:           decryptAllowed,
-			RotateSource:      decryptAllowed,
-			RotateDestination: encryptAllowed,
+			Encrypt:              allowed[1+index*2],
+			Decrypt:              allowed[2+index*2],
+			RotateDestinationIDs: []string{},
 		}
 		if actor.Kind() == caller.KindBearer {
 			capabilities.Encrypt = capabilities.Encrypt && actor.HasScope(ScopeEncrypt)
 			capabilities.Decrypt = capabilities.Decrypt && actor.HasScope(ScopeDecrypt)
-			capabilities.RotateSource = capabilities.RotateSource && actor.HasScope(ScopeRotate)
-			capabilities.RotateDestination = capabilities.RotateDestination && actor.HasScope(ScopeRotate)
 		}
-		if capabilities.any() {
-			profile := entry.profile
-			profile.Capabilities = capabilities
-			profiles = append(profiles, profile)
+		profiles[index] = entry.profile
+		profiles[index].Capabilities = capabilities
+	}
+	if actor.Kind() != caller.KindBearer || actor.HasScope(ScopeRotate) {
+		pairOffset := 1 + len(profiles)*2
+		for sourceIndex := range profiles {
+			if err := contextError(ctx); err != nil {
+				return nil, err
+			}
+			for destinationIndex := range profiles {
+				if allowed[pairOffset+sourceIndex*len(profiles)+destinationIndex] {
+					source := &profiles[sourceIndex].Capabilities
+					source.RotateSource = true
+					source.RotateDestinationIDs = append(source.RotateDestinationIDs, profiles[destinationIndex].ID)
+					profiles[destinationIndex].Capabilities.RotateDestination = true
+				}
+			}
+		}
+	}
+	visible := make([]Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		if profile.Capabilities.any() {
+			visible = append(visible, profile)
 		}
 	}
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
-	return profiles, nil
+	return visible, nil
 }
 
 func (s *Service) Prepare(ctx context.Context, actor caller.Caller, command Command, lease *Lease) (*PreparedOperation, error) {
@@ -491,10 +518,7 @@ func operationChecks(command Command) []authz.Check {
 	case OperationDecrypt:
 		return []authz.Check{{Action: authz.ActionDecrypt, Resource: authz.ProfileResource(command.ProfileID)}}
 	case OperationRotate:
-		return []authz.Check{
-			{Action: authz.ActionDecrypt, Resource: authz.ProfileResource(command.SourceProfileID)},
-			{Action: authz.ActionEncrypt, Resource: authz.ProfileResource(command.DestinationProfileID)},
-		}
+		return []authz.Check{{Action: authz.ActionRotate, Resource: authz.RotationResource(command.SourceProfileID, command.DestinationProfileID)}}
 	default:
 		return nil
 	}

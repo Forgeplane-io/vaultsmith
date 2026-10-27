@@ -1,16 +1,20 @@
 package authz
 
 import (
+	"bufio"
 	_ "embed"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
+	"github.com/casbin/casbin/v2/persist"
 	"github.com/casbin/casbin/v2/persist/file-adapter"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/caller"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
@@ -23,6 +27,7 @@ const (
 	ActionListProfiles = "profiles:list"
 	ActionEncrypt      = "encrypt"
 	ActionDecrypt      = "decrypt"
+	ActionRotate       = "rotate"
 
 	ResourceProfiles = "profiles"
 )
@@ -65,6 +70,48 @@ type Authorizer struct {
 	policy *Policy
 }
 
+type policyFileAdapter struct {
+	*fileadapter.Adapter
+	path string
+}
+
+func (a policyFileAdapter) LoadPolicy(m model.Model) error {
+	file, err := os.Open(a.path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	seenRows := make(map[string][]string)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		reader := csv.NewReader(strings.NewReader(line))
+		reader.Comment = '#'
+		reader.TrimLeadingSpace = true
+		row, err := reader.Read()
+		if err != nil {
+			return err
+		}
+		if len(row) == 0 || row[0] != "p" && row[0] != "g" {
+			return errors.New("invalid policy row type")
+		}
+		// Casbin skips comma-key collisions; only identical grouping rows are safe to skip.
+		key := strings.Join(row, model.DefaultSep)
+		if previous, exists := seenRows[key]; exists && (row[0] == "p" || !slices.Equal(previous, row)) {
+			return errors.New("duplicate or ambiguous policy row")
+		}
+		seenRows[key] = row
+		if err := persist.LoadPolicyArray(row, m); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
+}
+
 func LoadPolicy(path string, profileIDs []string) (*Policy, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("%w: policy file is required", ErrPolicy)
@@ -77,7 +124,7 @@ func LoadPolicy(path string, profileIDs []string) (*Policy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: embedded model invalid", ErrPolicy)
 	}
-	enforcer, err := casbin.NewEnforcer(m, fileadapter.NewAdapter(path))
+	enforcer, err := casbin.NewEnforcer(m, policyFileAdapter{Adapter: fileadapter.NewAdapter(path), path: path})
 	if err != nil {
 		return nil, fmt.Errorf("%w: policy adapter unavailable", ErrPolicy)
 	}
@@ -258,18 +305,15 @@ func (a *Authorizer) CapabilitiesForProfiles(actor caller.Caller, profileIDs []s
 }
 
 func (a *Authorizer) AuthorizeRotate(actor caller.Caller, sourceProfileID, destinationProfileID string) error {
-	policy, err := a.currentPolicy()
-	if err != nil {
-		return err
-	}
-	if err := authorizeWithPolicy(policy, actor, ActionDecrypt, ProfileResource(sourceProfileID)); err != nil {
-		return err
-	}
-	return authorizeWithPolicy(policy, actor, ActionEncrypt, ProfileResource(destinationProfileID))
+	return a.Authorize(actor, ActionRotate, RotationResource(sourceProfileID, destinationProfileID))
 }
 
 func ProfileResource(profileID string) string {
 	return "profile:" + profileID
+}
+
+func RotationResource(sourceProfileID, destinationProfileID string) string {
+	return "rotation:" + sourceProfileID + ":" + destinationProfileID
 }
 
 func (p *Policy) rolesForGroups(groups []string) map[string]struct{} {
@@ -303,7 +347,7 @@ func validatePolicy(policy *Policy, profileIDs []string) error {
 		if rule.Effect != "allow" && rule.Effect != "deny" {
 			return fmt.Errorf("%w: invalid permission effect", ErrPolicy)
 		}
-		if rule.Action != ActionListProfiles && rule.Action != ActionEncrypt && rule.Action != ActionDecrypt {
+		if rule.Action != ActionListProfiles && rule.Action != ActionEncrypt && rule.Action != ActionDecrypt && rule.Action != ActionRotate {
 			return fmt.Errorf("%w: invalid permission action", ErrPolicy)
 		}
 		key := strings.Join([]string{rule.Subject, rule.Object, rule.Action, rule.Effect}, "\x00")
@@ -366,6 +410,18 @@ func matchPolicyRole(args ...interface{}) (interface{}, error) {
 }
 
 func validateObject(object, action string, profiles map[string]struct{}) error {
+	if action == ActionRotate {
+		endpoints := strings.Split(object, ":")
+		if len(endpoints) != 3 || endpoints[0] != "rotation" {
+			return fmt.Errorf("%w: invalid rotation resource", ErrPolicy)
+		}
+		for _, id := range endpoints[1:] {
+			if _, ok := profiles[id]; !ok || !config.IsValidProfileID(id) {
+				return fmt.Errorf("%w: rotation references unknown profile", ErrPolicy)
+			}
+		}
+		return nil
+	}
 	if object == ResourceProfiles {
 		if action != ActionListProfiles {
 			return fmt.Errorf("%w: global resource only supports profiles:list", ErrPolicy)

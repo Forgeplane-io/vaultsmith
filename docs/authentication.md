@@ -148,7 +148,7 @@ Scopes are case-sensitive.
 | `vaultsmith.rotate` | Rotate between profiles | `rotate` |
 | `vaultsmith.attestation.verify` | Verify a rotation attestation | `verify_rotation_attestation` |
 
-A scope permits a class of operation. It does not grant access to a profile. Casbin must also permit the verified caller's groups to use the requested profile. Rotation requires decrypt policy on the source and encrypt policy on the destination. Generate adds no scope or per-kind policy: REST and direct MCP tool calls require `vaultsmith.encrypt` and encrypt policy on the destination profile. `vaultsmith.profile.read` is needed separately to browse profiles or list MCP tools.
+A scope permits a class of operation. It does not grant policy access. Casbin must also permit the verified caller's groups to perform the requested operation. Rotation requires an explicit grant for the exact directed pair, not source decrypt and destination encrypt permissions. Generate adds no scope or per-kind policy: REST and direct MCP tool calls require `vaultsmith.encrypt` and encrypt policy on the destination profile. `vaultsmith.profile.read` is needed separately to browse profiles or list MCP tools.
 
 A missing fixed scope returns `403` with an `insufficient_scope` Bearer challenge before Vaultsmith reads the request body. A missing Casbin grant returns a generic `403 forbidden` without an insufficient-scope challenge because adding a scope cannot satisfy policy.
 
@@ -166,6 +166,24 @@ p, role:operator, profile:dev, decrypt, allow
 ```
 
 `client_id` is useful token metadata, but it does not grant a role. A client-credentials token still needs a stable subject, exact scopes, and the groups required by policy. A valid profile-read token with no authorized groups receives a successful empty profile list.
+
+## Delegated re-key policy
+
+Every native rotation, including legacy session operations and rotations with attestations, requires an effective exact-pair allow and no effective exact-pair deny:
+
+```csv
+g, group:migration-team, role:migrator
+p, role:migrator, profiles, profiles:list, allow
+p, role:migrator, rotation:source-a:destination-b, rotate, allow
+```
+
+This synthetic example assumes both profile IDs are configured. It permits only `source-a` → `destination-b`. Self-pairs are valid when explicitly granted. Wildcard rotation endpoints are invalid; reverse, crossed, and transitive pairs are not inferred. Existing group mappings and role inheritance apply. An exact-pair deny overrides an allow, including an inherited allow or one obtained through another group.
+
+Direct Encrypt, Decrypt, and Generate permissions remain independent. Direct decrypt/encrypt denies do not block an allowed pair, and direct allows never substitute for a rotation grant. A lane-only caller receives none of those direct permissions. Bearer callers still need `vaultsmith.rotate` to rotate and `vaultsmith.profile.read` to discover profiles, plus `profiles:list` policy for discovery. There is no new scope, route, MCP tool, login flow, or administration UI. Native MCP remains Bearer-only; legacy operations remain session-only. CSRF, proof issuance, and standalone verification requirements are unchanged.
+
+Re-keying does not return plaintext, but a caller who knows the destination password can decrypt the result. This is not graph-wide information-flow enforcement: independently authorized direct decrypt and encrypt operations can still move plaintext between profiles despite a pair deny. Re-keying changes neither cryptography nor secret storage; submitted values and results are not persisted.
+
+Policy validation rejects duplicate permission rows rather than silently deduplicating them. Malformed permission or grouping rows, ambiguous CSV key collisions, and rows for model assertions other than `p` and `g` invalidate the whole policy; no permissive subset is loaded. See [cutover and policy replacement](deployment.md#delegated-re-key-cutover) before upgrading or removing a grant.
 
 ## Delegated-user tokens
 

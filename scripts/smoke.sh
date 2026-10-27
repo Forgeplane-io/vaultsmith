@@ -53,7 +53,7 @@ profiles="$(curl -fsS http://127.0.0.1:${PORT}/api/v1/profiles)"
 if [[ "$profiles" == *'VAULT_PASSWORD_DEV'* || "$profiles" == *'VAULT_PASSWORD_PROD'* || "$profiles" == *'smoke-password'* || "$profiles" == *'smoke-destination-password'* ]]; then
   fail 'profile response exposed secret configuration'
 fi
-printf '%s' "$profiles" | python3 -c 'import json, sys; profiles=json.load(sys.stdin)["profiles"]; expected={"encrypt": True, "decrypt": True, "rotateSource": True, "rotateDestination": True}; assert len(profiles) == 2 and all(profile["capabilities"] == expected for profile in profiles), profiles'
+printf '%s' "$profiles" | python3 -c 'import json, sys; profiles=json.load(sys.stdin)["profiles"]; expected={"encrypt": True, "decrypt": True, "rotateSource": True, "rotateDestination": True, "rotateDestinationIds": ["dev", "prod"]}; assert len(profiles) == 2 and all(profile["capabilities"] == expected for profile in profiles), profiles'
 
 session_headers="$TMP_DIR/session.headers"
 session_body="$TMP_DIR/session.json"

@@ -47,6 +47,16 @@ curl --fail-with-body --silent --show-error \
 
 Do not add an `Authorization` header in off mode. Vaultsmith rejects it.
 
+### Exact re-key destinations
+
+REST profile discovery and MCP `list_profiles` return the same ordered capabilities. Each profile's required `capabilities.rotateDestinationIds` array lists its effective explicitly allowed destinations in configured catalog order, without duplicates. It is always an array, including `[]`, never omitted or `null`. Every referenced destination appears in the same response. A profile is visible through a direct capability or participation in an allowed pair; unrelated profiles are not exposed.
+
+`rotateSource` and `rotateDestination` summarize outgoing and incoming allowed pairs, respectively. They do not authorize their cross-product. Direct Encrypt/Decrypt flags remain independent. Native discovery requires `profiles:list` policy; Bearer discovery also requires `vaultsmith.profile.read`. Without `vaultsmith.rotate`, Bearer callers receive empty destination arrays, false rotation flags, and no lane-only visibility. Off-mode local development retains full anonymous access and lists every configured destination.
+
+Select a destination only from the selected source's array. Discovery is not an authorization ticket: execution checks policy again during preparation. After a denial, refresh capabilities without replaying the operation; a failed refresh must not restore stale eligibility.
+
+The new bundled client requires a server with this relation contract. Missing or mixed field presence, malformed arrays, invalid or duplicate IDs, and dangling destination references are discovery errors, not grounds for a boolean fallback. An empty profile list is valid. See [cutover guidance](deployment.md#delegated-re-key-cutover) before pairing client and server versions.
+
 ## Encrypt standard input
 
 This pipeline keeps plaintext out of the command arguments. Its output is sensitive Vault text.
@@ -112,7 +122,9 @@ For off mode, omit `--config "$vaultsmith_curl_config"`.
 
 ## Rotate a Vault file
 
-Rotation decrypts with the source profile and encrypts with the destination profile. Plaintext is not returned.
+Rotation decrypts with the source profile and encrypts with the destination profile. Plaintext is not returned. In native mode, it requires an explicit allow for `rotation:<source>:<destination>` with action `rotate` and no effective pair deny. Direct decrypt and encrypt grants are never a fallback; lane-only rights do not grant direct Encrypt, Decrypt, or Generate. Bearer execution requires `vaultsmith.rotate`, independently of profile-read discovery scope.
+
+A destination password holder can decrypt the result. A pair deny does not prevent a caller with independent direct rights from decrypting and then encrypting. See [delegated re-key policy](authentication.md#delegated-re-key-policy).
 
 ```sh
 SOURCE_PROFILE_ID=dev
@@ -181,7 +193,7 @@ policy.
 
 ## MCP over Streamable HTTP
 
-MCP is disabled by default. Operators must set `MCP_ENABLED=true` or Helm `mcp.enabled: true`.
+MCP is disabled by default. Operators must set `MCP_ENABLED=true` or Helm `mcp.enabled: true`. Native MCP accepts Bearer credentials only, not browser sessions.
 
 Vaultsmith implements a stateless JSON response profile on `POST /mcp`:
 
@@ -357,5 +369,7 @@ The `/api/v1` wire contract is additive:
 - new optional request properties can be added only when old clients remain valid;
 - stable paths, methods, semantics, error codes, limits, and security requirements remain compatible for v1;
 - breaking changes require a new API version or a reviewed migration contract.
+
+Explicit-only rotation is a reviewed authorization migration: old policies retain direct rights on new binaries but grant no rotation without explicit rows. New bundled clients require the new exact-pair discovery contract; older clients may ignore the relation and offer pairs that execution denies. Do not retain an implicit direct-right fallback for either case.
 
 OpenAPI and the generated static reference are the canonical REST contract. MCP is versioned separately by its exact protocol header.

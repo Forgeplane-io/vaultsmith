@@ -101,8 +101,10 @@ export default function App() {
   const initialProfileSelectionRef = useRef(true)
   const modeRef = useRef(mode)
   const valueRef = useRef(value)
+  const profileIdRef = useRef(profileId)
   modeRef.current = mode
   valueRef.current = value
+  profileIdRef.current = profileId
   const isVerifyView = activeView === 'verify'
   const isGenerateView = activeView === 'generate'
 
@@ -112,8 +114,11 @@ export default function App() {
       ? previousMode
       : preferredAvailableMode(loadedProfiles)
     const eligibleProfiles = profilesForMode(loadedProfiles, nextMode)
-    const destinationProfiles = profilesForCapability(loadedProfiles, 'rotateDestination')
     const allowInitialSelection = initialProfileSelectionRef.current && valueRef.current.length === 0
+    const nextProfileId = profileIsEligible(eligibleProfiles, profileIdRef.current)
+      ? profileIdRef.current
+      : allowInitialSelection ? eligibleProfiles[0]?.id || '' : ''
+    const destinationProfiles = destinationsForSource(loadedProfiles, nextProfileId)
     initialProfileSelectionRef.current = false
     setProfiles(loadedProfiles)
     if (nextMode !== previousMode) {
@@ -122,12 +127,10 @@ export default function App() {
         setModeNotice(`${operationLabel(previousMode)} is unavailable. Switched to ${operationLabel(nextMode)}.`)
       }
     }
-    setProfileId((current) => profileIsEligible(eligibleProfiles, current)
-      ? current
-      : allowInitialSelection ? eligibleProfiles[0]?.id || '' : '')
+    setProfileId(nextProfileId)
     setDestinationProfileId((current) => profileIsEligible(destinationProfiles, current)
       ? current
-      : allowInitialSelection ? destinationProfiles[1]?.id || destinationProfiles[0]?.id || '' : '')
+      : allowInitialSelection ? destinationProfiles[0]?.id || '' : '')
   }
 
   useEffect(() => {
@@ -235,8 +238,8 @@ export default function App() {
       : activeView === 'operation' && overLimit ? limitMessage(mode) : error || profileLoadError
   const encryptProfiles = useMemo(() => profilesForMode(profiles, 'encrypt'), [profiles])
   const decryptProfiles = useMemo(() => profilesForMode(profiles, 'decrypt'), [profiles])
-  const rotateSourceProfiles = useMemo(() => profilesForCapability(profiles, 'rotateSource'), [profiles])
-  const rotateDestinationProfiles = useMemo(() => profilesForCapability(profiles, 'rotateDestination'), [profiles])
+  const rotateSourceProfiles = useMemo(() => profilesForMode(profiles, 'rotate'), [profiles])
+  const rotateDestinationProfiles = useMemo(() => destinationsForSource(profiles, profileId), [profiles, profileId])
   const eligibleProfiles = mode === 'encrypt'
     ? encryptProfiles
     : mode === 'decrypt'
@@ -245,7 +248,7 @@ export default function App() {
   const profileSnapshotReady = profileSnapshotValid && !loadingProfiles && !profileLoadFailed
   const encryptAvailable = encryptProfiles.length > 0
   const decryptAvailable = decryptProfiles.length > 0
-  const rotateAvailable = rotateSourceProfiles.length > 0 && rotateDestinationProfiles.length > 0
+  const rotateAvailable = rotateSourceProfiles.length > 0
   const modeAvailable = mode === 'encrypt' ? encryptAvailable : mode === 'decrypt' ? decryptAvailable : rotateAvailable
   const selectedProfileEligible = profileIsEligible(eligibleProfiles, profileId)
   const selectedDestinationEligible = mode !== 'rotate' || profileIsEligible(rotateDestinationProfiles, destinationProfileId)
@@ -333,8 +336,9 @@ export default function App() {
     clearVerificationState()
     const retainedInput = Boolean(value) && nextMode !== mode
     const nextProfiles = profilesForMode(profiles, nextMode)
-    setProfileId((current) => profileIsEligible(nextProfiles, current) ? current : '')
-    setDestinationProfileId((current) => profileIsEligible(profilesForCapability(profiles, 'rotateDestination'), current) ? current : '')
+    const nextProfileId = profileIsEligible(nextProfiles, profileId) ? profileId : ''
+    setProfileId(nextProfileId)
+    setDestinationProfileId((current) => profileIsEligible(destinationsForSource(profiles, nextProfileId), current) ? current : '')
     setMode(nextMode)
     invalidateOutput()
     setModeNotice(retainedInput
@@ -395,6 +399,7 @@ export default function App() {
   function changeProfile(nextProfileId: string) {
     if (signingOut) return
     setProfileId(nextProfileId)
+    setDestinationProfileId((current) => profileIsEligible(destinationsForSource(profiles, nextProfileId), current) ? current : '')
     invalidateOutput()
   }
 
@@ -1052,7 +1057,7 @@ export default function App() {
                           <>
                             {!encryptAvailable && <p>No environments are available for encryption.</p>}
                             {!decryptAvailable && <p>No environments are available for decryption.</p>}
-                            {!rotateAvailable && <p>Re-key requires an available decrypt source and encrypt destination.</p>}
+                            {!rotateAvailable && <p>Re-key requires an explicitly allowed source and destination pair.</p>}
                           </>
                         )
                         : <span className="availability-placeholder" aria-hidden="true">&nbsp;</span>}
@@ -1526,9 +1531,6 @@ function operationReadyLabel(mode: OperationMode): string {
 }
 
 function modeIsAvailable(profiles: Profile[], mode: OperationMode): boolean {
-  if (mode === 'rotate') {
-    return profilesForCapability(profiles, 'rotateSource').length > 0 && profilesForCapability(profiles, 'rotateDestination').length > 0
-  }
   return profilesForMode(profiles, mode).length > 0
 }
 
@@ -1540,12 +1542,14 @@ function preferredAvailableMode(profiles: Profile[]): OperationMode {
 }
 
 function profilesForMode(profiles: Profile[], mode: OperationMode): Profile[] {
-  const capability = mode === 'encrypt' ? 'encrypt' : mode === 'decrypt' ? 'decrypt' : 'rotateSource'
-  return profilesForCapability(profiles, capability)
+  return profiles.filter((profile) => mode === 'rotate'
+    ? profile.capabilities.rotateDestinationIds.length > 0
+    : profile.capabilities[mode])
 }
 
-function profilesForCapability(profiles: Profile[], capability: 'encrypt' | 'decrypt' | 'rotateSource' | 'rotateDestination'): Profile[] {
-  return profiles.filter((profile) => profile.capabilities[capability])
+function destinationsForSource(profiles: Profile[], sourceProfileId: string): Profile[] {
+  const source = profiles.find((profile) => profile.id === sourceProfileId)
+  return source ? profiles.filter((profile) => source.capabilities.rotateDestinationIds.includes(profile.id)) : []
 }
 
 function profileIsEligible(profiles: Profile[], profileId: string): boolean {

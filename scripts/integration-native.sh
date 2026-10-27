@@ -7,6 +7,10 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vaultsmith-native-integration.XXXXXX")"
 PROJECT="vaultsmith-native-integration-$$"
 SERVER_PID=""
 INTERACTIVE=0
+compose=(docker compose --project-name "$PROJECT" --env-file "$TMP_DIR/.env" -f "$COMPOSE_FILE")
+if [[ "$(uname -s)" == "Linux" ]]; then
+  compose+=(-f "$ROOT_DIR/integration/docker-compose.linux.yml")
+fi
 
 case "${1:-}" in
   "") ;;
@@ -30,7 +34,7 @@ cleanup() {
     wait "$SERVER_PID" 2>/dev/null || true
   fi
   if command -v docker >/dev/null 2>&1; then
-    docker compose --project-name "$PROJECT" --env-file "$TMP_DIR/.env" -f "$COMPOSE_FILE" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
   fi
   if [[ "${KEEP_INTEGRATION_TMP:-0}" == "1" ]]; then
     printf 'integration: retained temporary state at %s\n' "$TMP_DIR" >&2
@@ -51,9 +55,13 @@ OIDC_CLIENT_SECRET="$(random_secret)"
 MACHINE_CLIENT_SECRET="$(random_secret)"
 TEST_USER_PASSWORD="$(random_secret)"
 DENIED_USER_PASSWORD="$(random_secret)"
+DELEGATE_USER_PASSWORD="$(random_secret)"
+LANE_MACHINE_CLIENT_SECRET="$(random_secret)"
 CSRF_SECRET="$(random_secret)"
 VAULT_PASSWORD_DEV="$(random_secret)"
 VAULT_PASSWORD_PROD="$(random_secret)"
+VAULT_PASSWORD_STAGE="$(random_secret)"
+VAULT_PASSWORD_ARCHIVE="$(random_secret)"
 
 # This keyring is deterministic, disposable test material. It is never used
 # outside this integration stack and is removed by cleanup().
@@ -75,7 +83,6 @@ EDGE_PORT=18443
 EOF
 chmod 600 "$TMP_DIR/.env"
 
-compose=(docker compose --project-name "$PROJECT" --env-file "$TMP_DIR/.env" -f "$COMPOSE_FILE")
 dump_startup_diagnostics() {
   printf 'native integration startup failed; container state follows\n' >&2
   "${compose[@]}" ps >&2 || true
@@ -89,7 +96,7 @@ if ! "${compose[@]}" up -d --wait redis idp-edge >/dev/null; then
   dump_startup_diagnostics
   exit 1
 fi
-docker compose -p "$PROJECT" -f "$COMPOSE_FILE" cp idp-edge:/data/caddy/pki/authorities/local/root.crt "$TMP_DIR/idp-root.crt" >/dev/null
+"${compose[@]}" cp idp-edge:/data/caddy/pki/authorities/local/root.crt "$TMP_DIR/idp-root.crt" >/dev/null
 
 kc() {
   "${compose[@]}" exec -T keycloak /opt/keycloak/bin/kcadm.sh "$@"
@@ -145,6 +152,26 @@ PY
 )"
 MACHINE_CLIENT_ID="$(kc create clients -r vaultsmith -b "$MACHINE_CLIENT_JSON" -i)"
 unset MACHINE_CLIENT_JSON
+
+LANE_MACHINE_CLIENT_JSON="$(LANE_MACHINE_CLIENT_SECRET="$LANE_MACHINE_CLIENT_SECRET" python3 - <<'PY'
+import json
+import os
+
+print(json.dumps({
+    "clientId": "vaultsmith-integration-lane",
+    "enabled": True,
+    "protocol": "openid-connect",
+    "publicClient": False,
+    "secret": os.environ["LANE_MACHINE_CLIENT_SECRET"],
+    "standardFlowEnabled": False,
+    "directAccessGrantsEnabled": False,
+    "serviceAccountsEnabled": True,
+    "attributes": {"access.token.header.type.rfc9068": "true"},
+}))
+PY
+)"
+LANE_MACHINE_CLIENT_ID="$(kc create clients -r vaultsmith -b "$LANE_MACHINE_CLIENT_JSON" -i)"
+unset LANE_MACHINE_CLIENT_JSON
 GROUP_ID="$(kc create groups -r vaultsmith -s name=vaultsmith-operators -i)"
 USER_ID="$(kc create users -r vaultsmith \
   -s username=integration-user \
@@ -166,10 +193,17 @@ kc create users -r vaultsmith \
 kc set-password -r vaultsmith --username integration-denied --new-password "$DENIED_USER_PASSWORD" >/dev/null
 kc update "users/$USER_ID/groups/$GROUP_ID" -r vaultsmith >/dev/null
 
+LANE_GROUP_ID="$(kc create groups -r vaultsmith -s name=vaultsmith-rekey-delegates -i)"
+LANE_USER_ID="$(kc create users -r vaultsmith -s username=integration-delegate -s enabled=true -s email=delegate@example.test -s emailVerified=true -s firstName=Rekey -s lastName=Delegate -s 'requiredActions=[]' -i)"
+kc set-password -r vaultsmith --username integration-delegate --new-password "$DELEGATE_USER_PASSWORD" >/dev/null
+kc update "users/$LANE_USER_ID/groups/$LANE_GROUP_ID" -r vaultsmith >/dev/null
+
+
 for scope in vaultsmith.profile.read vaultsmith.encrypt vaultsmith.decrypt vaultsmith.rotate vaultsmith.attestation.verify; do
   scope_id="$(kc create client-scopes -r vaultsmith -i -b "{\"name\":\"$scope\",\"protocol\":\"openid-connect\",\"attributes\":{\"include.in.token.scope\":\"true\",\"display.on.consent.screen\":\"false\"}}")"
   kc update "clients/$CLIENT_ID/optional-client-scopes/$scope_id" -r vaultsmith >/dev/null
   kc update "clients/$MACHINE_CLIENT_ID/optional-client-scopes/$scope_id" -r vaultsmith >/dev/null
+  kc update "clients/$LANE_MACHINE_CLIENT_ID/optional-client-scopes/$scope_id" -r vaultsmith >/dev/null
 done
 
 configure_token_mappers() {
@@ -184,9 +218,12 @@ configure_token_mappers() {
 }
 configure_token_mappers "$CLIENT_ID" vaultsmith-integration
 configure_token_mappers "$MACHINE_CLIENT_ID" vaultsmith-integration-machine
+configure_token_mappers "$LANE_MACHINE_CLIENT_ID" vaultsmith-integration-lane
 
 SERVICE_ACCOUNT_ID="$(kc get "clients/$MACHINE_CLIENT_ID/service-account-user" -r vaultsmith --fields id --format csv --noquotes)"
 kc update "users/$SERVICE_ACCOUNT_ID/groups/$GROUP_ID" -r vaultsmith >/dev/null
+LANE_SERVICE_ACCOUNT_ID="$(kc get "clients/$LANE_MACHINE_CLIENT_ID/service-account-user" -r vaultsmith --fields id --format csv --noquotes)"
+kc update "users/$LANE_SERVICE_ACCOUNT_ID/groups/$LANE_GROUP_ID" -r vaultsmith >/dev/null
 
 if (( INTERACTIVE )); then
   cat > "$TMP_DIR/policy.csv" <<'POLICY'
@@ -195,9 +232,10 @@ p, role:operator, profiles, profiles:list, allow
 p, role:operator, profile:dev, encrypt, allow
 p, role:operator, profile:dev, decrypt, allow
 p, role:operator, profile:prod, encrypt, allow
+p, role:operator, rotation:dev:prod, rotate, allow
 p, role:operator, profile:prod, decrypt, allow
 POLICY
-  PROFILES_JSON='[{"id":"dev","label":"Development","passwordEnv":"VAULT_PASSWORD_DEV"},{"id":"prod","label":"Production","passwordEnv":"VAULT_PASSWORD_PROD"}]'
+  PROFILES_JSON='[{"id":"dev","label":"Development","passwordEnv":"VAULT_PASSWORD_DEV"},{"id":"prod","label":"Production","passwordEnv":"VAULT_PASSWORD_PROD"},{"id":"stage","label":"Staging","passwordEnv":"VAULT_PASSWORD_STAGE"},{"id":"archive","label":"Archive","passwordEnv":"VAULT_PASSWORD_ARCHIVE"}]'
 else
   cat > "$TMP_DIR/policy.csv" <<'POLICY'
 g, group:vaultsmith-operators, role:operator
@@ -205,9 +243,20 @@ p, role:operator, profiles, profiles:list, allow
 p, role:operator, profile:dev, encrypt, allow
 p, role:operator, profile:dev, decrypt, allow
 p, role:operator, profile:prod, encrypt, allow
+p, role:operator, rotation:dev:prod, rotate, allow
 POLICY
-  PROFILES_JSON='[{"id":"dev","label":"Development","passwordEnv":"VAULT_PASSWORD_DEV"},{"id":"prod","label":"Production","passwordEnv":"VAULT_PASSWORD_PROD"}]'
+  PROFILES_JSON='[{"id":"dev","label":"Development","passwordEnv":"VAULT_PASSWORD_DEV"},{"id":"prod","label":"Production","passwordEnv":"VAULT_PASSWORD_PROD"},{"id":"stage","label":"Staging","passwordEnv":"VAULT_PASSWORD_STAGE"},{"id":"archive","label":"Archive","passwordEnv":"VAULT_PASSWORD_ARCHIVE"}]'
 fi
+
+
+cat >> "$TMP_DIR/policy.csv" <<'DELEGATION_POLICY'
+g, group:vaultsmith-rekey-delegates, role:rekey-delegate
+p, role:rekey-delegate, profiles, profiles:list, allow
+p, role:rekey-delegate, profile:dev, decrypt, deny
+p, role:rekey-delegate, profile:prod, encrypt, deny
+p, role:rekey-delegate, profile:stage, decrypt, deny
+p, role:rekey-delegate, profile:archive, encrypt, deny
+DELEGATION_POLICY
 
 go build -o "$TMP_DIR/vaultsmith" ./backend/cmd/server
 (
@@ -229,8 +278,10 @@ go build -o "$TMP_DIR/vaultsmith" ./backend/cmd/server
   VAULT_PROFILES_JSON="$PROFILES_JSON" \
   VAULT_PASSWORD_DEV="$VAULT_PASSWORD_DEV" \
   VAULT_PASSWORD_PROD="$VAULT_PASSWORD_PROD" \
-  HTTP_ADDR=:18080 \
-  "$TMP_DIR/vaultsmith" >"$TMP_DIR/server.log" 2>&1
+  VAULT_PASSWORD_STAGE="$VAULT_PASSWORD_STAGE" \
+  VAULT_PASSWORD_ARCHIVE="$VAULT_PASSWORD_ARCHIVE" \
+  HTTP_ADDR=127.0.0.1:18080 \
+  exec "$TMP_DIR/vaultsmith" >"$TMP_DIR/server.log" 2>&1
 ) &
 SERVER_PID=$!
 
@@ -240,46 +291,8 @@ if ! "${compose[@]}" up -d --wait edge >/dev/null; then
 fi
 
 BASE_URL='https://localhost:18443'
-if (( INTERACTIVE )); then
-  "${compose[@]}" cp edge:/data/caddy/pki/authorities/local/root.crt "$TMP_DIR/edge-root.crt" >/dev/null
-  cat <<INFO
 
-Interactive Vaultsmith test environment is running.
-
-Open:     $BASE_URL/
-Login:              integration-user
-Password:           $TEST_USER_PASSWORD
-No-permission user:  integration-denied
-No-permission pass:  $DENIED_USER_PASSWORD
-Profiles:           dev, prod
-
-Suggested browser flow:
-  1. Open the URL and accept/trust the disposable local TLS certificates if prompted.
-  2. Sign in with the credentials above.
-  3. Verify both Development and Production are listed.
-  4. Encrypt a harmless value such as: interactive-test
-  5. Switch to Decrypt, paste the result, and verify the plaintext.
-  6. Switch to Rotate, select Development -> Production, and verify the result.
-  7. Sign out, sign in as integration-denied, and verify the session is authenticated but no profiles are available.
-  8. Attempt an operation as integration-denied and verify it is rejected, then sign out.
-  9. Sign back in as integration-user and verify access is restored.
-
-Certificate files (optional trust-installation inputs):
-  IdP edge:       $TMP_DIR/idp-root.crt
-  Vaultsmith edge: $TMP_DIR/edge-root.crt
-
-Server log: $TMP_DIR/server.log
-Press Ctrl-C in this terminal to stop the server and remove the disposable stack.
-
-INFO
-  set +e
-  wait "$SERVER_PID"
-  status=$?
-  set -e
-  exit "$status"
-fi
-
-TEST_USER_PASSWORD="$TEST_USER_PASSWORD" DENIED_USER_PASSWORD="$DENIED_USER_PASSWORD" OIDC_CLIENT_SECRET="$OIDC_CLIENT_SECRET" MACHINE_CLIENT_SECRET="$MACHINE_CLIENT_SECRET" TMP_DIR="$TMP_DIR" python3 - "$BASE_URL" <<'PY'
+ROOT_DIR="$ROOT_DIR" INTERACTIVE="$INTERACTIVE" TEST_USER_PASSWORD="$TEST_USER_PASSWORD" DENIED_USER_PASSWORD="$DENIED_USER_PASSWORD" DELEGATE_USER_PASSWORD="$DELEGATE_USER_PASSWORD" LANE_MACHINE_CLIENT_SECRET="$LANE_MACHINE_CLIENT_SECRET" OIDC_CLIENT_SECRET="$OIDC_CLIENT_SECRET" MACHINE_CLIENT_SECRET="$MACHINE_CLIENT_SECRET" CSRF_SECRET="$CSRF_SECRET" VAULT_PASSWORD_DEV="$VAULT_PASSWORD_DEV" VAULT_PASSWORD_PROD="$VAULT_PASSWORD_PROD" VAULT_PASSWORD_STAGE="$VAULT_PASSWORD_STAGE" VAULT_PASSWORD_ARCHIVE="$VAULT_PASSWORD_ARCHIVE" TMP_DIR="$TMP_DIR" SERVER_PID="$SERVER_PID" python3 - "$BASE_URL" <<'PY'
 import html.parser
 import base64
 import hashlib
@@ -291,6 +304,8 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import subprocess
+from pathlib import Path
 
 base = sys.argv[1]
 user_password = os.environ["TEST_USER_PASSWORD"]
@@ -437,7 +452,8 @@ assert profiles == [
             "encrypt": True,
             "decrypt": True,
             "rotateSource": True,
-            "rotateDestination": True,
+            "rotateDestination": False,
+            "rotateDestinationIds": ["prod"],
         },
     },
     {
@@ -445,9 +461,10 @@ assert profiles == [
         "label": "Production",
         "capabilities": {
             "encrypt": True,
-            "decrypt": False,
+            "decrypt": bool(int(os.environ["INTERACTIVE"])),
             "rotateSource": False,
             "rotateDestination": True,
+            "rotateDestinationIds": [],
         },
     },
 ], profiles
@@ -472,6 +489,7 @@ scoped_profiles = [
             "decrypt": False,
             "rotateSource": False,
             "rotateDestination": False,
+            "rotateDestinationIds": [],
         },
     },
     {
@@ -482,6 +500,7 @@ scoped_profiles = [
             "decrypt": False,
             "rotateSource": False,
             "rotateDestination": False,
+            "rotateDestinationIds": [],
         },
     },
 ]
@@ -708,5 +727,244 @@ else:
 logout(session)
 session = json_response(request("/api/v1/session"))
 assert session["authenticated"] is False, session
+
+# Exact delegated routes: the owner edits only this disposable policy file.
+root = Path(os.environ["ROOT_DIR"])
+private = Path(os.environ["TMP_DIR"])
+policy_file = private / "policy.csv"
+base_policy = policy_file.read_text()
+source_diff = hashlib.sha256(subprocess.check_output(["git", "diff", "--binary", "--"], cwd=root))
+for relative in ("scripts/integration_native_test.py", "integration/docker-compose.linux.yml", "integration/Caddyfile-linux", "integration/delegated-rekey-browser.mjs"):
+    candidate = root / relative
+    if candidate.exists():
+        source_diff.update(relative.encode() + b"\0" + candidate.read_bytes())
+identity = {"source_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root).decode().strip(), "source_diff_sha256": source_diff.hexdigest()}
+receipts = []
+receipt_file = root / ".tmp/delegated-rekey-step6/native.json"
+receipt_file.parent.mkdir(parents=True, exist_ok=True)
+
+def check(scenario, transport, expected, observed):
+    receipts.append({**identity, "scenario": scenario, "transport": transport, "expected": expected, "observed": observed, "pass": expected == observed})
+    receipt_file.write_text(json.dumps(receipts, indent=2) + "\n")
+    if expected != observed:
+        raise AssertionError(f"{scenario}/{transport}: unexpected status or boolean")
+
+def replace_policy(content):
+    previous = policy_file.stat()
+    replacement = policy_file.with_suffix(".replacement")
+    replacement.write_text(content)
+    replacement.chmod(0o600)
+    changed = previous.st_mtime_ns + 1_000_000_000
+    os.utime(replacement, ns=(changed, changed))
+    os.replace(replacement, policy_file)
+
+all_scopes = "vaultsmith.profile.read vaultsmith.encrypt vaultsmith.decrypt vaultsmith.rotate vaultsmith.attestation.verify"
+owner = delegated_access_token("integration-user", user_password, all_scopes)
+delegate_password = os.environ["DELEGATE_USER_PASSWORD"]
+lane_user = delegated_access_token("integration-delegate", delegate_password, all_scopes)
+lane_machine = token_request({"grant_type": "client_credentials", "scope": all_scopes}, "vaultsmith-integration-lane", os.environ["LANE_MACHINE_CLIENT_SECRET"])["access_token"]
+no_rotate = delegated_access_token("integration-delegate", delegate_password, "vaultsmith.profile.read")
+no_read = delegated_access_token("integration-delegate", delegate_password, "vaultsmith.rotate")
+# The existing operator remains the private oracle; these extra rights never
+# belong to the lane-only identities and are confined to this fixture phase.
+grant_policy = base_policy
+for row in ("p, role:operator, profile:prod, decrypt, allow", "p, role:operator, profile:stage, encrypt, allow", "p, role:operator, profile:archive, decrypt, allow"):
+    if row not in grant_policy.splitlines():
+        grant_policy += row + "\n"
+grant_policy += "p, role:rekey-delegate, rotation:dev:prod, rotate, allow\np, role:rekey-delegate, rotation:stage:archive, rotate, allow\n"
+# Independent route expectations are deliberately not inferred from direct rights.
+expected_pairs = {"dev": ["prod"], "prod": [], "stage": ["archive"], "archive": []}
+labels = {"dev": "Development", "prod": "Production", "stage": "Staging", "archive": "Archive"}
+
+def expected_profiles(pairs):
+    incoming = {target for targets in pairs.values() for target in targets}
+    return [{"id": source, "label": labels[source], "capabilities": {"encrypt": False, "decrypt": False, "rotateSource": bool(targets), "rotateDestination": source in incoming, "rotateDestinationIds": targets}} for source, targets in pairs.items() if targets or source in incoming]
+
+opener = new_opener()
+login("integration-delegate", delegate_password)
+lane_session = json_response(request("/api/v1/session"))
+
+mcp_headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "tools/call"}
+
+def lane_call(transport, name, arguments=None, token_override=None):
+    arguments = arguments or {}
+    token = token_override or (lane_machine if transport.endswith("machine") else lane_user)
+    if transport.startswith("MCP"):
+        body = json.dumps({"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": name, "arguments": arguments, "_meta": mcp_meta}}).encode()
+        headers = dict(mcp_headers, **{"Mcp-Name": name})
+        invoke = lambda: bearer_request("/mcp", token, body, headers)
+    else:
+        paths = {"list_profiles": "/api/v1/profiles", "rotate": "/api/v1/rotations", "generate_age_identity": "/api/v1/generate"}
+        path = paths.get(name, "/api/v1/profiles/" + arguments.get("profileId", "dev") + "/" + name)
+        body_arguments = dict(arguments)
+        if name in ("encrypt", "decrypt"):
+            del body_arguments["profileId"]
+        if name == "generate_age_identity":
+            body_arguments = {"profileId": arguments["profileId"], "kind": "age_identity", "parameters": {}}
+        body = None if name == "list_profiles" else json.dumps(body_arguments).encode()
+        headers = {"Content-Type": "application/json"}
+        if transport == "session":
+            headers.update({"Origin": base, "Referer": base + "/", "X-CSRF-Token": lane_session["csrfToken"]})
+            invoke = lambda: request(path, body, headers)
+        else:
+            invoke = lambda: bearer_request(path, token, body, headers)
+    try:
+        response = invoke()
+    except urllib.error.HTTPError as error:
+        response = error
+    with response:
+        status, payload = response.status, json_response(response)
+    if transport.startswith("MCP") and status == 200:
+        result = payload["result"]
+        check("native-mcp-text-structured", transport, True, not result["isError"] and json.loads(result["content"][0]["text"]) == result["structuredContent"])
+        payload = result["structuredContent"]
+    return status, payload
+
+transports = ("session", "Bearer user", "Bearer machine", "MCP user", "MCP machine")
+for transport in transports:
+    status, payload = lane_call(transport, "list_profiles")
+    check("native-before-grant", transport, True, status == 200 and payload == {"profiles": []})
+replace_policy(grant_policy)
+inputs = {}
+for source, destination in (("dev", "prod"), ("stage", "archive")):
+    inputs[source] = json_response(bearer_request("/api/v1/profiles/" + source + "/encrypt", owner, json.dumps({"plaintext": "synthetic delegated acceptance"}).encode(), {"Content-Type": "application/json"}))["vaultText"]
+for transport in transports:
+    status, payload = lane_call(transport, "list_profiles")
+    check("native-owner-grant-discovery", transport, True, status == 200 and payload == {"profiles": expected_profiles(expected_pairs)})
+    for source, destination in (("dev", "prod"), ("stage", "archive")):
+        for attested in (False, True):
+            arguments = {"sourceProfileId": source, "destinationProfileId": destination, "vaultText": inputs[source]}
+            if attested:
+                arguments["attestation"] = {"binding": binding}
+            status, rotation = lane_call(transport, "rotate", arguments)
+            check("native-attested-rotation" if attested else "native-ordinary-rotation", transport, 200, status)
+            plain = json_response(bearer_request("/api/v1/profiles/" + destination + "/decrypt", owner, json.dumps({"vaultText": rotation["vaultText"]}).encode(), {"Content-Type": "application/json"}))["plaintext"]
+            check("native-private-oracle", transport, True, plain == "synthetic delegated acceptance")
+            if attested:
+                verification = json_response(bearer_request("/api/v1/attestations/verify", owner, json.dumps({"attestation": rotation["attestation"], "inputVaultText": inputs[source], "outputVaultText": rotation["vaultText"], "expectedBinding": binding}).encode(), {"Content-Type": "application/json"}))
+                check("native-proof-binding", transport, True, verification["valid"] and verification["attestation"]["sourceProfileId"] == source and verification["attestation"]["destinationProfileId"] == destination)
+    for source, destination in (("dev", "archive"), ("stage", "prod"), ("prod", "dev"), ("dev", "dev"), ("dev", "stage"), ("missing", "prod")):
+        status, payload = lane_call(transport, "rotate", {"sourceProfileId": source, "destinationProfileId": destination, "vaultText": inputs["dev"]})
+        check("native-denied-alternative", transport, True, status == 403 and payload == {"error": {"code": "forbidden", "message": "operation is not permitted"}})
+    for name, arguments in (("encrypt", {"profileId": "prod", "plaintext": "synthetic denied input"}), ("decrypt", {"profileId": "dev", "vaultText": inputs["dev"]}), ("generate_age_identity", {"profileId": "prod"})):
+        status, payload = lane_call(transport, name, arguments)
+        check("native-direct-denial-" + name, transport, True, status == 403 and payload["error"]["code"] == "forbidden")
+for token, name in ((no_rotate, "native-missing-rotate-scope"),):
+    for transport in ("Bearer user", "MCP user"):
+        status, _ = lane_call(transport, "rotate", {"sourceProfileId": "dev", "destinationProfileId": "prod", "vaultText": inputs["dev"]}, token)
+        check(name, transport, 403, status)
+status, payload = lane_call("Bearer user", "list_profiles", token_override=no_rotate)
+check("native-no-rotate-relation", "Bearer user", True, status == 200 and payload == {"profiles": []})
+status, _ = lane_call("Bearer user", "list_profiles", token_override=no_read)
+check("native-missing-profile-read", "Bearer user", 403, status)
+
+for scenario, path, headers, use_session in (
+    ("native-missing-csrf", "/api/v1/rotations", {"Origin": base}, True),
+    ("native-mixed-credentials", "/api/v1/rotations", {"Authorization": "Bearer " + lane_user, "Origin": base}, True),
+    ("native-legacy-bearer", "/api/v1/operations", {"Authorization": "Bearer " + lane_user}, False),
+    ("native-mcp-session", "/mcp", dict(mcp_headers, **{"Mcp-Name": "rotate"}), True),
+):
+    headers = dict(headers, **{"Content-Type": "application/json"})
+    try:
+        if use_session:
+            response = request(path, b"{}", headers)
+        else:
+            response = urllib.request.urlopen(urllib.request.Request(base + path, data=b"{}", headers=headers), context=context)
+    except urllib.error.HTTPError as error:
+        response = error
+    check(scenario, "session" if use_session else "Bearer user", {"native-missing-csrf": 403, "native-mixed-credentials": 400, "native-legacy-bearer": 401, "native-mcp-session": 401}[scenario], response.status)
+    response.close()
+
+removed_policy = grant_policy.replace("p, role:rekey-delegate, rotation:dev:prod, rotate, allow\n", "")
+replace_policy(removed_policy)
+remaining_pairs = {"stage": ["archive"], "archive": []}
+for transport in transports:
+    status, payload = lane_call(transport, "list_profiles")
+    check("native-owner-removal", transport, True, status == 200 and payload == {"profiles": expected_profiles(remaining_pairs)})
+    status, _ = lane_call(transport, "rotate", {"sourceProfileId": "dev", "destinationProfileId": "prod", "vaultText": inputs["dev"]})
+    check("native-fresh-removal-denial", transport, 403, status)
+    status, _ = lane_call(transport, "rotate", {"sourceProfileId": "stage", "destinationProfileId": "archive", "vaultText": inputs["stage"]})
+    check("native-removal-unrelated-lane-preserved", transport, 200, status)
+replace_policy(grant_policy + "p, role:rekey-delegate, rotation:dev:missing, rotate, deny\n")
+for transport in transports:
+    status, _ = lane_call(transport, "list_profiles")
+    check("native-invalid-policy-unavailable", transport, 503, status)
+    status, _ = lane_call(transport, "rotate", {"sourceProfileId": "dev", "destinationProfileId": "prod", "vaultText": inputs["dev"]})
+    check("native-invalid-policy-submission", transport, 503, status)
+policy_file.unlink()
+for transport in transports:
+    status, _ = lane_call(transport, "list_profiles")
+    check("native-missing-policy-unavailable", transport, 503, status)
+    status, _ = lane_call(transport, "rotate", {"sourceProfileId": "dev", "destinationProfileId": "prod", "vaultText": inputs["dev"]})
+    check("native-missing-policy-submission", transport, 503, status)
+policy_file.write_text(grant_policy)
+policy_file.chmod(0o600)
+# A complete old-format policy is valid in the new binary, but has no rotate grant.
+old_policy = "\n".join(row for row in grant_policy.splitlines() if ", rotate," not in row) + "\n"
+replace_policy(old_policy)
+try:
+    bearer_request("/api/v1/rotations", owner, json.dumps({"sourceProfileId": "dev", "destinationProfileId": "prod", "vaultText": inputs["dev"]}).encode(), {"Content-Type": "application/json"})
+except urllib.error.HTTPError as error:
+    check("native-new-binary-old-policy-rotation", "Bearer owner", 403, error.code)
+else:
+    check("native-new-binary-old-policy-rotation", "Bearer owner", 403, 200)
+check("native-new-binary-old-policy-direct", "Bearer owner", True, bool(json_response(bearer_request("/api/v1/profiles/dev/encrypt", owner, json.dumps({"plaintext": "synthetic upgrade input"}).encode(), {"Content-Type": "application/json"}))["vaultText"]))
+replace_policy(grant_policy)
+for transport in transports:
+    status, payload = lane_call(transport, "list_profiles")
+    check("native-valid-policy-recovery", transport, True, status == 200 and payload == {"profiles": expected_profiles(expected_pairs)})
+    status, _ = lane_call(transport, "rotate", {"sourceProfileId": "dev", "destinationProfileId": "prod", "vaultText": inputs["dev"]})
+    check("native-valid-policy-submission", transport, 200, status)
+# Private, disposable context for the concrete Chrome and baseline acceptance probes.
+fixture_context = {"base": base, "username": "integration-delegate", "password": delegate_password, "inputVaultText": inputs["dev"], "ownerToken": owner, "expectedPlaintext": "synthetic delegated acceptance", "grantPolicy": grant_policy, "removedPolicy": removed_policy, "oldPolicy": old_policy, "policyFile": str(policy_file), "serverPID": int(os.environ["SERVER_PID"]), "identity": identity}
+fixture_context["serverOptions"] = {"AUTH_MODE": "native", "CSRF_SECRET": os.environ["CSRF_SECRET"], "OIDC_ISSUER_URL": "https://localhost:18081/realms/vaultsmith", "OIDC_CA_FILE": str(private / "idp-root.crt"), "OIDC_CLIENT_ID": "vaultsmith-integration", "OIDC_CLIENT_SECRET": oidc_client_secret, "OIDC_REDIRECT_URL": base + "/auth/callback", "PUBLIC_BASE_URL": base, "REDIS_ADDR": "127.0.0.1:16379", "REDIS_KEY_PREFIX": "vaultsmith:integration:", "AUTHZ_POLICY_FILE": str(policy_file), "COOKIE_SECURE": "true", "MCP_ENABLED": "true", "PROOFS_ENABLED": "true", "PROOFS_KEYRING_FILE": str(private / "keyring.json"), "VAULT_PROFILES_JSON": json.dumps([{"id": name, "label": labels[name], "passwordEnv": "VAULT_PASSWORD_" + name.upper()} for name in labels])}
+for name in labels:
+    fixture_context["serverOptions"]["VAULT_PASSWORD_" + name.upper()] = os.environ["VAULT_PASSWORD_" + name.upper()]
+(private / "acceptance-context.json").write_text(json.dumps(fixture_context))
+(private / "acceptance-context.json").chmod(0o600)
+with open(server_log, encoding="utf-8") as captured:
+    safe_log = captured.read()
+check("native-delegate-log-safety", "server", True, all(material not in safe_log for material in (lane_user, lane_machine, delegate_password, inputs["dev"], inputs["stage"], "synthetic delegated acceptance")))
+logout(lane_session)
+
 print("native integration: ok (session, delegated-user bearer attestation, client-credentials attestation, scopes, groups, MCP, edge, body/log safety)")
 PY
+
+if (( INTERACTIVE )); then
+  "${compose[@]}" cp edge:/data/caddy/pki/authorities/local/root.crt "$TMP_DIR/edge-root.crt" >/dev/null
+  cat <<INFO
+
+Interactive Vaultsmith test environment is running.
+
+Open:     $BASE_URL/
+Login:              integration-user
+Password:           $TEST_USER_PASSWORD
+No-permission user:  integration-denied
+No-permission pass:  $DENIED_USER_PASSWORD
+Profiles:           dev, prod
+
+Suggested browser flow:
+  1. Open the URL and accept/trust the disposable local TLS certificates if prompted.
+  2. Sign in with the credentials above.
+  3. Verify both Development and Production are listed.
+  4. Encrypt a harmless value such as: interactive-test
+  5. Switch to Decrypt, paste the result, and verify the plaintext.
+  6. Switch to Rotate, select Development -> Production, and verify the result.
+  7. Sign out, sign in as integration-denied, and verify the session is authenticated but no profiles are available.
+  8. Attempt an operation as integration-denied and verify it is rejected, then sign out.
+  9. Sign back in as integration-user and verify access is restored.
+
+Certificate files (optional trust-installation inputs):
+  IdP edge:       $TMP_DIR/idp-root.crt
+  Vaultsmith edge: $TMP_DIR/edge-root.crt
+
+Server log: $TMP_DIR/server.log
+Press Ctrl-C in this terminal to stop the server and remove the disposable stack.
+
+INFO
+  set +e
+  wait "$SERVER_PID"
+  status=$?
+  set -e
+  exit "$status"
+fi

@@ -17,8 +17,17 @@ export interface paths {
          *     Bearer caller without catalog policy access receives a successful empty
          *     list. Bearer callers also need vaultsmith.profile.read, and each returned
          *     capability is the intersection of an operation scope and Casbin policy.
-         *     Off mode returns every configured profile with all capabilities true.
-         *     Response clients must ignore unknown properties.
+         *     rotateDestinationIds lists only effective explicitly allowed directed
+         *     destinations in configured order. Every referenced destination occurs in
+         *     this response. Rotation flags summarize outgoing/incoming allowed pairs;
+         *     they do not authorize every source/destination combination. Direct
+         *     encrypt/decrypt permissions are independent of rotation. Without rotate
+         *     scope, Bearer callers receive empty destination arrays and no lane-only
+         *     profiles. Arrays are always present, including [] rather than null.
+         *     Explicit off mode is loopback-only local development: it returns every
+         *     configured profile with all capabilities true and every destination ID.
+         *     Response clients must ignore unknown properties. The updated bundled
+         *     client requires this exact-pair discovery contract from its server.
          */
         get: operations["listProfiles"];
         put?: never;
@@ -92,9 +101,15 @@ export interface paths {
          * Rotate Vault text between profiles
          * @description Decrypts with the source profile and re-encrypts with the destination
          *     profile. Plaintext is never returned. The decrypted intermediate value
-         *     must be no larger than 1 MiB. Bearer callers need vaultsmith.rotate plus
-         *     decrypt policy on the source and encrypt policy on the destination. The
-         *     server does not retry this randomized operation.
+         *     must be no larger than 1 MiB. Every native caller needs an explicit
+         *     allow for the exact directed `rotation:<source>:<destination>` resource
+         *     and rotate action; an applicable pair deny overrides an allow. Bearer
+         *     callers also need vaultsmith.rotate, not the direct encrypt/decrypt
+         *     scopes. Direct encrypt/decrypt grants and denies are independent: they
+         *     neither grant rotation nor veto an explicitly allowed pair. Old policies
+         *     without rotate rows grant no rotation. Wildcard, reverse, crossed, and
+         *     transitive grants are not inferred; explicit self-pairs are supported.
+         *     The server does not retry this randomized operation.
          */
         post: operations["rotateValue"];
         delete?: never;
@@ -228,7 +243,9 @@ export interface paths {
          *     duplicate JSON keys, malformed raw UTF-8, unsupported Content-Encoding,
          *     oversized decrypted plaintext, and ambiguous credentials. Legacy CORS
          *     and CSRF failures use the stable error-code table. The adapter executes
-         *     through the shared service once.
+         *     through the shared service once. Native rotation requires the same exact
+         *     directed rotate permission as POST /api/v1/rotations; direct
+         *     decrypt/encrypt permissions are not a fallback.
          */
         post: operations["legacyOperation"];
         delete?: never;
@@ -247,8 +264,12 @@ export interface components {
         ProfileCapabilities: {
             encrypt: boolean;
             decrypt: boolean;
+            /** @description Participates as a source in at least one allowed pair after scope filtering. */
             rotateSource: boolean;
+            /** @description Participates as a destination in at least one allowed pair after scope filtering. */
             rotateDestination: boolean;
+            /** @description Exact effective destinations for this source, in configured order. Always present; [] means no allowed pair. Every destination occurs in the same response. Direct permissions do not create pairs. */
+            rotateDestinationIds: components["schemas"]["ProfileId"][];
         };
         /** @description Safe public profile metadata. Clients ignore unknown properties. */
         Profile: {

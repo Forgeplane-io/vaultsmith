@@ -70,7 +70,11 @@ native_integration:
   - 'backend/**'
   - 'integration/Caddyfile*'
   - 'integration/docker-compose.yml'
+  - 'integration/docker-compose.linux.yml'
+  - 'integration/delegated-rekey-browser.mjs'
   - 'scripts/integration-native.sh'
+  - 'scripts/integration_native_test.py'
+  - 'scripts/delegated-rekey-browser-test.mjs'
 
 container:
   - '.dockerignore'

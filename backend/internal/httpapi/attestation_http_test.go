@@ -268,6 +268,59 @@ func TestAttestedRotationHTTPReturnsVaultTextAndProof(t *testing.T) {
 	}
 }
 
+func TestDelegatedNativeRESTAndMCPRotationsPreserveVerifiableProofs(t *testing.T) {
+	handler, _, cfg, issuer, executor, _ := delegatedHTTPFixture(t)
+	input := httpSyntheticVaultText(t, "synthetic input", "synthetic source password", "a")
+	output := httpSyntheticVaultText(t, "synthetic output", "synthetic destination password", "x")
+	executor.value = output
+	binding := &attestation.Binding{Repository: "synthetic/repository", Revision: strings.Repeat("a", 40), Path: "synthetic/path"}
+	arguments := `{"sourceProfileId":"a","destinationProfileId":"x","vaultText":` + mustJSON(t, input) + `,"attestation":{"binding":` + mustJSON(t, binding) + `}}`
+	rotateToken := issuer.tokenWithGroups(t, cfg.OIDC.PublicBaseURL, vaultservice.ScopeRotate, []string{"delegates"})
+	verifyToken := issuer.tokenWithGroups(t, cfg.OIDC.PublicBaseURL, vaultservice.ScopeAttestationVerify, []string{"delegates"})
+	for _, transport := range []string{"REST", "MCP"} {
+		t.Run(transport, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, cfg.OIDC.PublicBaseURL+"/api/v1/rotations", strings.NewReader(arguments))
+			request.Header.Set("Content-Type", "application/json")
+			if transport == "MCP" {
+				request = newMCPRequest("tools/call", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rotate","arguments":`+arguments+`,`+mcpMeta+`}}`)
+				request.Header.Set("Mcp-Name", "rotate")
+			}
+			request.Header.Set("Authorization", "Bearer "+rotateToken)
+			executor.calls = nil
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK || len(executor.calls) != 2 {
+				t.Fatalf("attested delegated rotation status = %d, want completed server outcome", response.Code)
+			}
+			var result rotationResponseWithAttestation
+			payload := response.Body.Bytes()
+			if transport == "MCP" {
+				var envelope struct {
+					Result struct {
+						StructuredContent json.RawMessage `json:"structuredContent"`
+					} `json:"result"`
+				}
+				if json.Unmarshal(payload, &envelope) != nil {
+					t.Fatal("decode attested MCP result failed")
+				}
+				payload = envelope.Result.StructuredContent
+			}
+			if json.Unmarshal(payload, &result) != nil || result.Attestation == nil || result.VaultText != output {
+				t.Fatal("delegated result did not preserve the output and proof")
+			}
+			verifyBody := mustJSON(t, httpVerifyRequest{Attestation: *result.Attestation, InputVaultText: input, OutputVaultText: output, ExpectedBinding: binding})
+			request = httptest.NewRequest(http.MethodPost, cfg.OIDC.PublicBaseURL+"/api/v1/attestations/verify", strings.NewReader(verifyBody))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer "+verifyToken)
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK || !decodeJSONBody[verifyAttestationResponse](t, response).Valid {
+				t.Fatalf("delegated proof verification status = %d, want authenticated valid binding", response.Code)
+			}
+		})
+	}
+}
+
 func TestAttestationVerifyHTTPReturnsSemanticResult(t *testing.T) {
 	manager := newHTTPSyntheticAttestationManager("https://vaultsmith.synthetic.test")
 	service, executor := newHTTPAttestationService(t, manager, true, 1)

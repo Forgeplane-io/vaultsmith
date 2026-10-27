@@ -7,7 +7,7 @@ import { formatAnsibleVaultSnippet } from './ansibleSnippet'
 import { normalizeVaultPaste } from './pasteHandling'
 
 const profiles: Profile[] = [
-  { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: true, rotateDestination: true } },
+  { id: 'dev', label: 'Development', capabilities: { encrypt: true, decrypt: true, rotateSource: false, rotateDestination: false, rotateDestinationIds: [] } },
 ]
 
 const vaultPayload = `${'a'.repeat(64)}\n${'b'.repeat(64)}\n${'c'.repeat(32)}`

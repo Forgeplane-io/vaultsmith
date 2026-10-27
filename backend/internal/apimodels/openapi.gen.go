@@ -1230,10 +1230,17 @@ type Profile struct {
 
 // ProfileCapabilities Effective caller capabilities. Clients ignore unknown properties.
 type ProfileCapabilities struct {
-	Decrypt           bool `json:"decrypt"`
-	Encrypt           bool `json:"encrypt"`
+	Decrypt bool `json:"decrypt"`
+	Encrypt bool `json:"encrypt"`
+
+	// RotateDestination Participates as a destination in at least one allowed pair after scope filtering.
 	RotateDestination bool `json:"rotateDestination"`
-	RotateSource      bool `json:"rotateSource"`
+
+	// RotateDestinationIds Exact effective destinations for this source, in configured order. Always present; [] means no allowed pair. Every destination occurs in the same response. Direct permissions do not create pairs.
+	RotateDestinationIds []ProfileId `json:"rotateDestinationIds"`
+
+	// RotateSource Participates as a source in at least one allowed pair after scope filtering.
+	RotateSource bool `json:"rotateSource"`
 }
 
 // ProfileId Examples: production
