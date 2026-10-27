@@ -3,6 +3,7 @@ package authn
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -199,10 +200,10 @@ func (a *Authenticator) BeginLogin(ctx context.Context, returnTo string) (string
 		return "", fmt.Errorf("create pre-authentication session")
 	}
 	transaction := LoginTransaction{
-		Nonce:          nonce,
-		PKCEVerifier:   verifier,
-		PreAuthSession: preAuthSession,
-		ReturnTo:       returnTo,
+		Nonce:              nonce,
+		PKCEVerifier:       verifier,
+		PreAuthSessionHash: hashSessionToken(preAuthSession),
+		ReturnTo:           returnTo,
 	}
 	if err := a.Redis.SaveLoginTransaction(ctx, state, transaction); err != nil {
 		_ = a.Logout(ctx)
@@ -226,7 +227,11 @@ func (a *Authenticator) CompleteLogin(ctx context.Context, state, code string) (
 	if err != nil {
 		return "", ErrTemporaryUnavailable
 	}
-	if !found || a.Sessions.Token(ctx) == "" || a.Sessions.Token(ctx) != transaction.PreAuthSession {
+	preAuthSession := a.Sessions.Token(ctx)
+	if !found || preAuthSession == "" || subtle.ConstantTimeCompare(
+		[]byte(hashSessionToken(preAuthSession)),
+		[]byte(transaction.PreAuthSessionHash),
+	) != 1 {
 		return "", ErrInvalidCallback
 	}
 

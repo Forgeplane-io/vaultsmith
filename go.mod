@@ -14,7 +14,7 @@ require (
 	github.com/gomodule/redigo v1.9.3
 	github.com/gowebpki/jcs v1.0.2 // Apache-2.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/oapi-codegen/runtime v1.7.0
+	github.com/oapi-codegen/runtime v1.8.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.24.0
