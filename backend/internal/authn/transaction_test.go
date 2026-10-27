@@ -11,10 +11,10 @@ func TestLoginTransactionIsAtomicAndSingleUse(t *testing.T) {
 	_, runtime, _ := newTestRedisRuntime(t)
 	const state = "state-1"
 	transaction := LoginTransaction{
-		Nonce:          "nonce-1",
-		PKCEVerifier:   "verifier-1",
-		PreAuthSession: "session-1",
-		ReturnTo:       "/",
+		Nonce:              "nonce-1",
+		PKCEVerifier:       "verifier-1",
+		PreAuthSessionHash: "session-hash-1",
+		ReturnTo:           "/",
 	}
 	if err := runtime.SaveLoginTransaction(context.Background(), state, transaction); err != nil {
 		t.Fatalf("SaveLoginTransaction() error = %v", err)
@@ -53,7 +53,7 @@ func TestLoginTransactionIsAtomicAndSingleUse(t *testing.T) {
 	if foundCount != 1 {
 		t.Fatalf("successful transaction consumers = %d, want 1", foundCount)
 	}
-	if got.Nonce != transaction.Nonce || got.PKCEVerifier != transaction.PKCEVerifier || got.PreAuthSession != transaction.PreAuthSession || got.ReturnTo != transaction.ReturnTo {
+	if got.Nonce != transaction.Nonce || got.PKCEVerifier != transaction.PKCEVerifier || got.PreAuthSessionHash != transaction.PreAuthSessionHash || got.ReturnTo != transaction.ReturnTo {
 		t.Fatalf("consumed transaction payload = %#v, want %#v", got, transaction)
 	}
 }
