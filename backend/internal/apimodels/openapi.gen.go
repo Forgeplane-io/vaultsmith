@@ -1281,7 +1281,7 @@ type RotationAttestation struct {
 
 // RotationAttestationClaims defines model for RotationAttestationClaims.
 type RotationAttestationClaims struct {
-	// Binding Partial exact-match binding. At least one field is required.
+	// Binding Partial exact-match binding. At least one field is required. Each field is limited to 1,024 UTF-8 encoded bytes; submitted values over this limit return HTTP 400.
 	Binding *RotationBinding `json:"binding,omitempty"`
 
 	// DestinationProfileId Examples: production
@@ -1300,11 +1300,11 @@ type RotationAttestationClaimsOperation string
 
 // RotationAttestationRequest Optional request to bind the rotation result to caller context.
 type RotationAttestationRequest struct {
-	// Binding Partial exact-match binding. At least one field is required.
+	// Binding Partial exact-match binding. At least one field is required. Each field is limited to 1,024 UTF-8 encoded bytes; submitted values over this limit return HTTP 400.
 	Binding *RotationBinding `json:"binding,omitempty"`
 }
 
-// RotationBinding Partial exact-match binding. At least one field is required.
+// RotationBinding Partial exact-match binding. At least one field is required. Each field is limited to 1,024 UTF-8 encoded bytes; submitted values over this limit return HTTP 400.
 type RotationBinding struct {
 	Path       *string `json:"path,omitempty"`
 	Repository *string `json:"repository,omitempty"`
@@ -1325,7 +1325,7 @@ type SessionResponse struct {
 type VerifyAttestationRequest struct {
 	Attestation RotationAttestation `json:"attestation"`
 
-	// ExpectedBinding Partial exact-match binding. At least one field is required.
+	// ExpectedBinding Partial exact-match binding. At least one field is required. Each field is limited to 1,024 UTF-8 encoded bytes; submitted values over this limit return HTTP 400.
 	ExpectedBinding *RotationBinding `json:"expectedBinding,omitempty"`
 	InputVaultText  string           `json:"inputVaultText"`
 	OutputVaultText string           `json:"outputVaultText"`
