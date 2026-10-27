@@ -13,6 +13,15 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: helm
+    directory: /deploy/helm/vaultsmith
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+
   - package-ecosystem: gomod
     directory: /
     schedule:
