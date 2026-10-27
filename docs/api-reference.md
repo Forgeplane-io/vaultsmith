@@ -56,7 +56,7 @@ This is the static reference for the released REST contract. The canonical sourc
 
 **Operation ID:** `verifyAttestation`
 
-Verifies a flattened JWS rotation attestation against the local issuer, immutable keyring, and supplied Vault envelopes. Verification never decrypts either envelope or resolves configured profiles. A syntactically valid attestation with a semantic mismatch returns HTTP 200 with valid false and a closed verification reason.
+Verifies a flattened JWS rotation attestation against the local issuer, immutable keyring, and supplied Vault envelopes. Verification never decrypts either envelope or resolves configured profiles. A syntactically valid attestation with a semantic mismatch returns HTTP 200 with valid false and a closed verification reason. Oversized attestation members, Vault text, or binding fields return HTTP 400. HTTP 413 is reserved for JSON bodies larger than 12 MiB.
 
 **Authentication:** `CsrfHeader` + `SessionCookie` or `BearerAuth`
 
@@ -83,7 +83,7 @@ Verifies a flattened JWS rotation attestation against the local issuer, immutabl
 | `401` | Native-mode credentials are missing or invalid. | [Unauthorized](#response-unauthorized) |
 | `403` | CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request. | [Forbidden](#response-forbidden) |
 | `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |
-| `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
+| `413` | The JSON body or an operation value exceeds a documented byte limit that the endpoint reports as HTTP 413. | [RequestTooLarge](#response-requesttoolarge) |
 | `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
 | `503` | Startup state, an authentication dependency, operation admission, or the application request deadline prevented completion, or the rotation-attestation subsystem is disabled, unavailable, or saturated. Retry-After is present only for immediate admission saturation. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
 
@@ -121,7 +121,7 @@ Generates one password, token, SSH keypair, age X25519 identity, or X.509 privat
 | `403` | CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request. | [Forbidden](#response-forbidden) |
 | `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
 | `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |
-| `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
+| `413` | The JSON body or an operation value exceeds a documented byte limit that the endpoint reports as HTTP 413. | [RequestTooLarge](#response-requesttoolarge) |
 | `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
 | `422` | Generation, native serialization, consistency validation, or Vault encryption failed. Underlying random, key-library, serialization, profile-password, and Vault errors are intentionally indistinguishable. | [GenerateOperationFailed](#response-generateoperationfailed) |
 | `503` | Startup state, CSRF setup, a runtime authentication dependency, operation admission, cancellation, or the 30-second application deadline prevented completion. Retry-After is never emitted for this randomized, non-idempotent operation. | [GenerateServiceUnavailable](#response-generateserviceunavailable) |
@@ -189,7 +189,7 @@ Decrypts Vault 1.1 or 1.2/AES256 text with the selected server-owned profile. Th
 | `403` | CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request. | [Forbidden](#response-forbidden) |
 | `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
 | `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |
-| `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
+| `413` | The JSON body or an operation value exceeds a documented byte limit that the endpoint reports as HTTP 413. | [RequestTooLarge](#response-requesttoolarge) |
 | `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
 | `422` | The Vault operation failed. Wrong passwords, malformed Vault text, MAC failures, invalid or oversized decrypted plaintext, and other Vault failures are intentionally indistinguishable. | [OperationFailed](#response-operationfailed) |
 | `503` | Startup state, a runtime authentication dependency, operation admission, or the 30-second application request deadline prevented completion. Retry-After is present only for immediate admission saturation. | [ServiceUnavailable](#response-serviceunavailable) |
@@ -234,7 +234,7 @@ Encrypts plaintext with the selected server-owned profile and emits Ansible Vaul
 | `403` | CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request. | [Forbidden](#response-forbidden) |
 | `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
 | `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |
-| `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
+| `413` | The JSON body or an operation value exceeds a documented byte limit that the endpoint reports as HTTP 413. | [RequestTooLarge](#response-requesttoolarge) |
 | `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
 | `422` | The Vault operation failed. Wrong passwords, malformed Vault text, MAC failures, invalid or oversized decrypted plaintext, and other Vault failures are intentionally indistinguishable. | [OperationFailed](#response-operationfailed) |
 | `503` | Startup state, a runtime authentication dependency, operation admission, or the 30-second application request deadline prevented completion. Retry-After is present only for immediate admission saturation. | [ServiceUnavailable](#response-serviceunavailable) |
@@ -273,7 +273,7 @@ Decrypts with the source profile and re-encrypts with the destination profile. P
 | `403` | CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request. | [Forbidden](#response-forbidden) |
 | `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
 | `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |
-| `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
+| `413` | The JSON body or an operation value exceeds a documented byte limit that the endpoint reports as HTTP 413. | [RequestTooLarge](#response-requesttoolarge) |
 | `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
 | `422` | The Vault operation failed. Wrong passwords, malformed Vault text, MAC failures, invalid or oversized decrypted plaintext, and other Vault failures are intentionally indistinguishable. | [OperationFailed](#response-operationfailed) |
 | `503` | Startup state, an authentication dependency, operation admission, or the application request deadline prevented completion, or the rotation-attestation subsystem is disabled, unavailable, or saturated. Retry-After is present only for immediate admission saturation. | [AttestationServiceUnavailable](#response-attestationserviceunavailable) |
@@ -331,7 +331,7 @@ Compatibility-only adapter retained for existing v1 callers. New clients and the
 | `403` | CORS, CSRF, required OAuth scope, or effective Casbin policy denied the request. | [Forbidden](#response-forbidden) |
 | `404` | The route or an off-mode profile was not found. | [NotFound](#response-notfound) |
 | `405` | The resource accepts POST only. | [MethodNotAllowedPost](#response-methodnotallowedpost) |
-| `413` | The JSON body or submitted value exceeds its documented byte limit. | [RequestTooLarge](#response-requesttoolarge) |
+| `413` | The JSON body or an operation value exceeds a documented byte limit that the endpoint reports as HTTP 413. | [RequestTooLarge](#response-requesttoolarge) |
 | `415` | Content-Type is not application/json or Content-Encoding is unsupported. | [UnsupportedMediaType](#response-unsupportedmediatype) |
 | `422` | The Vault operation failed. Wrong passwords, malformed Vault text, MAC failures, invalid or oversized decrypted plaintext, and other Vault failures are intentionally indistinguishable. | [OperationFailed](#response-operationfailed) |
 | `503` | Startup state, a runtime authentication dependency, operation admission, or the 30-second application request deadline prevented completion. Retry-After is present only for immediate admission saturation. | [ServiceUnavailable](#response-serviceunavailable) |
@@ -990,7 +990,7 @@ Optional request to bind the rotation result to caller context.
 
 ## Schema `RotationBinding`
 
-Partial exact-match binding. At least one field is required.
+Partial exact-match binding. At least one field is required. Each field is limited to 1,024 UTF-8 encoded bytes; submitted values over this limit return HTTP 400.
 
 **Type:** object
 
@@ -1092,7 +1092,7 @@ The Vault operation failed. Wrong passwords, malformed Vault text, MAC failures,
 
 ## Response `RequestTooLarge`
 
-The JSON body or submitted value exceeds its documented byte limit.
+The JSON body or an operation value exceeds a documented byte limit that the endpoint reports as HTTP 413.
 
 - `application/json`: [ErrorResponse](#schema-errorresponse)
 

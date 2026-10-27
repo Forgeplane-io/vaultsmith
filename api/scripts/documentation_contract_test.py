@@ -77,6 +77,44 @@ class DocumentationContractTest(unittest.TestCase):
             match.group(0),
         )
 
+    def test_attestation_byte_limits_and_oversized_field_statuses_match_runtime(self) -> None:
+        contract = (ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8")
+        binding_match = re.search(r"(?ms)^    RotationBinding:\n.*?(?=^    [A-Za-z])", contract)
+        if binding_match is None:
+            self.fail("OpenAPI contract is missing RotationBinding")
+        binding = binding_match.group(0)
+        self.assertIn("Each field is limited to 1,024 UTF-8 encoded bytes", binding)
+        self.assertIn("submitted values over this limit return HTTP 400", binding)
+        for field in ("repository", "revision", "path", "selector"):
+            with self.subTest(field=field):
+                field_match = re.search(
+                    rf"(?ms)^        {field}:\n.*?(?=^        [A-Za-z]|^    [A-Za-z]|\Z)",
+                    binding,
+                )
+                if field_match is None:
+                    self.fail(f"RotationBinding is missing {field}")
+                self.assertIn("maxLength: 1024", field_match.group(0))
+                self.assertIn("x-max-bytes: 1024", field_match.group(0))
+
+        verify_match = re.search(r"(?ms)^  /api/v1/attestations/verify:\n.*?(?=^  /|^components:)", contract)
+        if verify_match is None:
+            self.fail("OpenAPI contract is missing attestation verification")
+        verification = verify_match.group(0)
+        self.assertIn("Oversized attestation members, Vault text, or binding fields return HTTP 400", verification)
+        self.assertIn("HTTP 413 is reserved for JSON bodies larger than 12 MiB", verification)
+
+        too_large_match = re.search(r"(?ms)^    RequestTooLarge:\n.*?(?=^    [A-Za-z])", contract)
+        if too_large_match is None:
+            self.fail("OpenAPI contract is missing RequestTooLarge")
+        too_large = too_large_match.group(0)
+        self.assertNotIn("or submitted value", too_large)
+        self.assertIn("the endpoint reports as HTTP 413", too_large)
+
+        reference = (ROOT / "docs" / "api-reference.md").read_text(encoding="utf-8")
+        self.assertIn("Each field is limited to 1,024 UTF-8 encoded bytes", reference)
+        self.assertIn("Oversized attestation members, Vault text, or binding fields return HTTP 400", reference)
+        self.assertIn("the endpoint reports as HTTP 413", reference)
+
     def test_generated_reference_separates_compatibility_operations(self) -> None:
         reference = (ROOT / "docs" / "api-reference.md").read_text(encoding="utf-8")
         self.assertIn("# Operations", reference)

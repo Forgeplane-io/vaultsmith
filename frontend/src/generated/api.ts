@@ -146,6 +146,8 @@ export interface paths {
          *     decrypts either envelope or resolves configured profiles. A syntactically
          *     valid attestation with a semantic mismatch returns HTTP 200 with valid
          *     false and a closed verification reason.
+         *     Oversized attestation members, Vault text, or binding fields return HTTP 400.
+         *     HTTP 413 is reserved for JSON bodies larger than 12 MiB.
          */
         post: operations["verifyAttestation"];
         delete?: never;
@@ -581,7 +583,7 @@ export interface components {
         RotationAttestationRequest: {
             binding?: components["schemas"]["RotationBinding"];
         };
-        /** @description Partial exact-match binding. At least one field is required. */
+        /** @description Partial exact-match binding. At least one field is required. Each field is limited to 1,024 UTF-8 encoded bytes; submitted values over this limit return HTTP 400. */
         RotationBinding: {
             repository?: string;
             revision?: string;
@@ -860,7 +862,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /** @description The JSON body or submitted value exceeds its documented byte limit. */
+        /** @description The JSON body or an operation value exceeds a documented byte limit that the endpoint reports as HTTP 413. */
         RequestTooLarge: {
             headers: {
                 "Cache-Control": components["headers"]["NoStore"];

@@ -363,6 +363,8 @@ paths:
         decrypts either envelope or resolves configured profiles. A syntactically
         valid attestation with a semantic mismatch returns HTTP 200 with valid
         false and a closed verification reason.
+        Oversized attestation members, Vault text, or binding fields return HTTP 400.
+        HTTP 413 is reserved for JSON bodies larger than 12 MiB.
       security:
         - SessionCookie: []
           CsrfHeader: []
@@ -736,7 +738,7 @@ components:
               code: method_not_allowed
               message: method is not allowed
     RequestTooLarge:
-      description: The JSON body or submitted value exceeds its documented byte limit.
+      description: The JSON body or an operation value exceeds a documented byte limit that the endpoint reports as HTTP 413.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
@@ -1652,20 +1654,24 @@ components:
       type: object
       additionalProperties: false
       minProperties: 1
-      description: Partial exact-match binding. At least one field is required.
+      description: Partial exact-match binding. At least one field is required. Each field is limited to 1,024 UTF-8 encoded bytes; submitted values over this limit return HTTP 400.
       properties:
         repository:
           type: string
           maxLength: 1024
+          x-max-bytes: 1024
         revision:
           type: string
           maxLength: 1024
+          x-max-bytes: 1024
         path:
           type: string
           maxLength: 1024
+          x-max-bytes: 1024
         selector:
           type: string
           maxLength: 1024
+          x-max-bytes: 1024
     RotationAttestation:
       type: object
       additionalProperties: false
