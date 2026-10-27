@@ -2,6 +2,7 @@ package authn
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,7 +179,14 @@ func TestRedisRuntimeProbeRejectsConnectionErrors(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
-	if err := runtime.Probe(ctx); err == nil {
+	err := runtime.Probe(ctx)
+	if err == nil {
 		t.Fatal("Probe() error = nil, want connection failure")
+	}
+	if !strings.Contains(err.Error(), "redis probe connection failed") {
+		t.Fatal("Probe() error did not identify the failed operation")
+	}
+	if strings.Contains(err.Error(), address) {
+		t.Fatal("Probe() error exposed the configured Redis address")
 	}
 }
