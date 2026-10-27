@@ -23,11 +23,11 @@ Native mode requires:
 - `AUTH_MODE=native`.
 - `CSRF_SECRET` with at least 32 bytes.
 - `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URL`, and `PUBLIC_BASE_URL`.
-- `REDIS_ADDR` and a non-empty `REDIS_KEY_PREFIX` that ends with `:`.
+- `REDIS_ADDR` as a credential-free TCP `host:port`, and a non-empty `REDIS_KEY_PREFIX` that ends with `:`.
 - `AUTHZ_POLICY_FILE` pointing to a valid Casbin CSV policy.
 - `COOKIE_SECURE=true` and `COOKIE_SAME_SITE=lax` or `none`.
 
-`OIDC_REDIRECT_URL` must use the `PUBLIC_BASE_URL` origin. The issuer URL and redirect URL must be HTTPS and must not contain a query or fragment. Native mode does not fall back to unauthenticated operation when OIDC, Redis, or policy loading fails.
+`REDIS_ADDR` requires a numeric port from 1 through 65535; bracket IPv6 literals. URI syntax and embedded credentials are rejected. `OIDC_REDIRECT_URL` must use the `PUBLIC_BASE_URL` origin. The issuer URL and redirect URL must be HTTPS and must not contain a query or fragment. Native mode does not fall back to unauthenticated operation when OIDC, Redis, or policy loading fails.
 
 Vaultsmith uses the verified OIDC `(iss, sub)` pair as identity. The default groups claim is `groups`; set `OIDC_GROUPS_CLAIM` only when the provider uses another valid claim path. Sessions are opaque and stored in Redis. Mutating requests use the CSRF token returned by `GET /api/v1/session`.
 

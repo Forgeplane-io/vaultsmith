@@ -3,7 +3,9 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"slices"
@@ -326,7 +328,10 @@ func RejectMCPGoDebug(lookup EnvLookup) error {
 
 func parseRedisOptions(cfg *RedisConfig, lookup EnvLookup, required bool) error {
 	if address, ok := lookup("REDIS_ADDR"); ok && strings.TrimSpace(address) != "" {
-		cfg.Address = strings.TrimSpace(address)
+		if !validRedisAddress(address) {
+			return errors.New("REDIS_ADDR must be a credential-free TCP host:port")
+		}
+		cfg.Address = address
 	} else if required {
 		return errors.New("REDIS_ADDR is required in native mode")
 	}
@@ -399,6 +404,54 @@ func parseRedisOptions(cfg *RedisConfig, lookup EnvLookup, required bool) error 
 		}
 	}
 	return nil
+}
+
+func validRedisAddress(address string) bool {
+	if address != strings.TrimSpace(address) || strings.ContainsAny(address, "@/\\?#") {
+		return false
+	}
+	for _, r := range address {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || host == "" || port == "" || !validRedisHost(address, host) {
+		return false
+	}
+	for _, digit := range port {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	parsedPort, err := strconv.ParseUint(port, 10, 16)
+	return err == nil && parsedPort > 0
+}
+
+func validRedisHost(address, host string) bool {
+	if strings.HasPrefix(address, "[") {
+		parsed, err := netip.ParseAddr(host)
+		return err == nil && parsed.Is6()
+	}
+	// RFC 1035 allows 63 bytes per label and 253 textual bytes before the
+	// optional root dot. Update these limits and their boundary tests together.
+	const maxLabelLength, maxHostnameLength = 63, 253
+	host = strings.TrimSuffix(host, ".")
+	if host == "" || len(host) > maxHostnameLength {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > maxLabelLength || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for index := 0; index < len(label); index++ {
+			character := label[index]
+			if character != '-' && (character < '0' || character > '9') && (character < 'A' || character > 'Z') && (character < 'a' || character > 'z') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func requiredValue(lookup EnvLookup, key string) (string, error) {

@@ -299,12 +299,12 @@ func (r *RedisRuntime) Probe(ctx context.Context) error {
 	}
 	conn, err := r.pool.GetContext(ctx)
 	if err != nil {
-		return fmt.Errorf("redis probe connection failed: %w", err)
+		return fmt.Errorf("redis probe connection failed")
 	}
 	defer conn.Close()
 	pong, err := redis.String(conn.Do("PING"))
 	if err != nil {
-		return fmt.Errorf("redis probe failed: %w", err)
+		return fmt.Errorf("redis probe failed")
 	}
 	if pong != "PONG" {
 		return fmt.Errorf("redis probe returned unexpected response")
