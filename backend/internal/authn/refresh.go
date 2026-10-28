@@ -36,10 +36,10 @@ func (a *Authenticator) AuthenticatedPrincipal(ctx context.Context) (Principal, 
 		}
 		return Principal{}, false, ErrNotAuthenticated
 	}
-	if principal.ExpiresAt.After(now.Add(refreshSkew)) {
+	refreshToken := RefreshTokenFromSession(ctx, a.Sessions)
+	if principal.ExpiresAt.After(now.Add(refreshSkew)) || (refreshToken == "" && principal.ExpiresAt.After(now)) {
 		return principal, true, nil
 	}
-	refreshToken := RefreshTokenFromSession(ctx, a.Sessions)
 	if refreshToken == "" {
 		return Principal{}, false, ErrRefreshRequired
 	}
@@ -84,7 +84,7 @@ func (a *Authenticator) refreshSession(ctx context.Context) (Principal, bool, er
 	}
 	freshRefreshToken := RefreshTokenFromSession(freshCtx, a.Sessions)
 	now := time.Now()
-	if freshPrincipal.ExpiresAt.After(now.Add(refreshSkew)) {
+	if freshPrincipal.ExpiresAt.After(now.Add(refreshSkew)) || (freshRefreshToken == "" && freshPrincipal.ExpiresAt.After(now)) {
 		if err := a.syncSession(ctx, freshPrincipal, freshRefreshToken, false); err != nil {
 			return Principal{}, false, err
 		}

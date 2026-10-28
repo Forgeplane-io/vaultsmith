@@ -271,25 +271,95 @@ func TestAuthenticatedPrincipalRefreshedIDTokenCannotOutliveSession(t *testing.T
 	}
 }
 
-func TestAuthenticatedPrincipalRejectsExpiredPrincipalWithoutRefreshToken(t *testing.T) {
-	service, token := newRefreshService(t, func(context.Context, string) (*oauth2.Token, error) {
-		t.Fatal("refresh exchange called without a refresh token")
-		return nil, nil
-	})
-
-	ctx := mustLoadSession(t, service.Sessions, token)
-	StorePrincipal(ctx, service.Sessions, Principal{
-		Issuer:    "https://issuer.example",
-		Subject:   "user-123",
-		ExpiresAt: time.Now().Add(-time.Minute),
-	}, "", service.Config.OIDC)
-	if _, _, err := service.Sessions.Commit(ctx); err != nil {
-		t.Fatalf("Sessions.Commit() error = %v", err)
+func TestAuthenticatedPrincipalWithoutRefreshToken(t *testing.T) {
+	for _, scenario := range []struct {
+		name           string
+		claimLifetime  time.Duration
+		expiredSession bool
+		wantErr        error
+	}{
+		{name: "outside-refresh-window", claimLifetime: time.Hour},
+		{name: "inside-refresh-window", claimLifetime: 30 * time.Second},
+		{name: "at-claim-deadline", wantErr: ErrRefreshRequired},
+		{name: "expired-claims", claimLifetime: -time.Minute, wantErr: ErrRefreshRequired},
+		{name: "expired-session", claimLifetime: 30 * time.Second, expiredSession: true, wantErr: ErrNotAuthenticated},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			service, token := newRefreshService(t, func(context.Context, string) (*oauth2.Token, error) {
+				t.Fatal("refresh exchange called without a refresh token")
+				return nil, nil
+			})
+			ctx := mustLoadSession(t, service.Sessions, token)
+			before := Principal{
+				Issuer:    service.Config.OIDC.IssuerURL,
+				Subject:   "user-123",
+				Groups:    []string{"vault-readers"},
+				ExpiresAt: time.Now().Add(scenario.claimLifetime),
+			}
+			StorePrincipal(ctx, service.Sessions, before, "", service.Config.OIDC)
+			if scenario.expiredSession {
+				service.Sessions.SetDeadline(ctx, time.Now())
+			}
+			if _, _, err := service.Sessions.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			deadline := service.Sessions.Deadline(ctx)
+			principal, found, err := service.AuthenticatedPrincipal(ctx)
+			if !errors.Is(err, scenario.wantErr) || found != (scenario.wantErr == nil) {
+				t.Fatalf("AuthenticatedPrincipal(): found=%t error=%v, want error=%v", found, err, scenario.wantErr)
+			}
+			if scenario.wantErr != nil {
+				if principal.Subject != "" || len(principal.Groups) != 0 {
+					t.Fatal("expired authority returned an identity")
+				}
+				return
+			}
+			if principal.Subject != before.Subject || !principal.ExpiresAt.Equal(before.ExpiresAt) || len(principal.Groups) != 1 || principal.Groups[0] != before.Groups[0] {
+				t.Fatal("no-refresh reuse changed verified identity or claim expiry")
+			}
+			if !service.Sessions.Deadline(ctx).Equal(deadline) || RefreshTokenFromSession(ctx, service.Sessions) != "" {
+				t.Fatal("no-refresh reuse extended the session or added refresh credentials")
+			}
+		})
 	}
+}
 
-	_, _, err := service.AuthenticatedPrincipal(ctx)
-	if err != ErrRefreshRequired {
-		t.Fatalf("AuthenticatedPrincipal() error = %v, want ErrRefreshRequired", err)
+func TestAuthenticatedPrincipalReloadsSessionWithoutRefreshToken(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		name := "valid"
+		if expired {
+			name = "expired"
+		}
+		t.Run(name, func(t *testing.T) {
+			service, token := newRefreshService(t, func(context.Context, string) (*oauth2.Token, error) {
+				t.Fatal("refresh exchange called after reloading a session without refresh credentials")
+				return nil, nil
+			})
+			stale := mustLoadSession(t, service.Sessions, token)
+			updated := mustLoadSession(t, service.Sessions, token)
+			principal := Principal{Issuer: service.Config.OIDC.IssuerURL, Subject: "user-123", Groups: []string{"updated-group"}, ExpiresAt: time.Now().Add(30 * time.Second)}
+			if expired {
+				principal.ExpiresAt = time.Now().Add(-time.Minute)
+			}
+			StorePrincipal(updated, service.Sessions, principal, "", service.Config.OIDC)
+			if _, _, err := service.Sessions.Commit(updated); err != nil {
+				t.Fatal(err)
+			}
+			deadline := service.Sessions.Deadline(updated)
+			got, found, err := service.AuthenticatedPrincipal(stale)
+			if expired {
+				if !errors.Is(err, ErrRefreshRequired) || found || got.Subject != "" {
+					t.Fatalf("expired reload: found=%t error=%v", found, err)
+				}
+				return
+			}
+			if err != nil || !found || got.Subject != principal.Subject || !got.ExpiresAt.Equal(principal.ExpiresAt) || len(got.Groups) != 1 || got.Groups[0] != "updated-group" {
+				t.Fatalf("valid reload: found=%t error=%v", found, err)
+			}
+			if RefreshTokenFromSession(stale, service.Sessions) != "" || !service.Sessions.Deadline(stale).Equal(deadline) {
+				t.Fatal("reload retained stale refresh credentials or extended the session")
+			}
+		})
 	}
 }
 
