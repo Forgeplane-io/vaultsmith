@@ -81,6 +81,7 @@ describe('Generate API client', () => {
   beforeEach(async () => {
     vi.restoreAllMocks()
     vi.resetModules()
+    document.cookie = '__Host-vaultsmith_csrf=; Path=/; Secure; Max-Age=0'
     api = await import('./api')
   })
 
@@ -104,6 +105,7 @@ describe('Generate API client', () => {
     } satisfies SSHRequestWithAdditions
 
     await api.fetchSession()
+    document.cookie = '__Host-vaultsmith_csrf=current-cookie; Path=/; Secure'
     const result = await api.generateMaterial(request)
     expect(result).toEqual({
       kind: 'ssh_keypair',
@@ -116,7 +118,7 @@ describe('Generate API client', () => {
     expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/generate', expect.objectContaining({
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'csrf-fixture' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'current-cookie' },
     }))
     const init = fetchMock.mock.lastCall?.[1]
     expect(JSON.parse(String(init?.body))).toEqual({ kind: 'ssh_keypair', profileId: 'dev', parameters: { algorithm: 'ed25519' } })

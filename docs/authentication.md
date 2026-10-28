@@ -16,7 +16,15 @@ Use a session for the bundled browser UI:
 1. `GET /auth/login` starts OIDC Authorization Code with PKCE.
 2. Vaultsmith stores the verified identity and refresh state in its Redis-backed session.
 3. `GET /api/v1/session` returns the CSRF token.
-4. Browser mutations send the session cookie and `X-CSRF-Token`.
+4. Browser mutations send the session cookie and `X-CSRF-Token` from the current
+   readable `__Host-vaultsmith_csrf` cookie.
+
+The bundled client reads that CSRF cookie for each mutation rather than caching a
+session-response token, so another tab can replace the cookie without leaving an
+older tab permanently out of sync. It does not fall back to a cached token when
+the cookie is missing or automatically replay failed mutations. A cookie change
+after dispatch can still reject an in-flight request; the next explicit attempt
+uses the current cookie.
 
 Authenticated browser sessions carry a versioned binding to the configured
 `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, and canonical `PUBLIC_BASE_URL` origin.

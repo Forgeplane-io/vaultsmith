@@ -1,0 +1,122 @@
+{
+  "implementationPaths": [
+    "backend/web/dist/index.html",
+    "docs/authentication.md",
+    "frontend/src/api.test.ts",
+    "frontend/src/api.ts",
+    "frontend/src/generateApi.test.ts",
+    "integration/README.md",
+    "integration/delegated-rekey-browser.mjs"
+  ],
+  "implementationDiffSHA256": "abcd443fe43ad60d52895db664a669612fa1c0ae899e1bd3fa19f0315187a686",
+  "sourceIdentityNote": "Capture identity hashes include the then-uncommitted implementation/test diff and named native fixture files. The PR adds publication evidence only after these captures.",
+  "captures": {
+    "before": {
+      "phase": "before",
+      "source_revision": "0854d99289ce1857c37a680f186be45e333b3b69",
+      "source_diff_sha256": "a49d9cf8b7d5bd84aa2f7c4793d435759c09174be96753fb3d71d1d2216b8106",
+      "browser": "Google Chrome 156.0.8078.48",
+      "route": "https://localhost:18443/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000,
+        "deviceScaleFactor": 1
+      },
+      "role": "synthetic lane-only delegate",
+      "fixture_reset": "fresh owned scripts/integration-native.sh --interactive stack; ordinary/attested re-key, owner removal, Clear, second-tab CSRF replacement, original-tab logout",
+      "source_changes": "regression tests/browser journey only; production api.ts unchanged",
+      "screenshots": [
+        {
+          "name": "before-logout-desktop.png",
+          "width": 1440,
+          "height": 1226,
+          "sha256": "2cdfab6dc9bc7f30547789c009ec0b6a4769901b8cc938423f5aa9df2c7ffdd0"
+        }
+      ],
+      "checks": [
+        {
+          "source_revision": "0854d99289ce1857c37a680f186be45e333b3b69",
+          "source_diff_sha256": "a49d9cf8b7d5bd84aa2f7c4793d435759c09174be96753fb3d71d1d2216b8106",
+          "scenario": "browser-second-tab-replaces-csrf-cookie",
+          "transport": "Chrome-session",
+          "expected": true,
+          "observed": true,
+          "pass": true
+        },
+        {
+          "source_revision": "0854d99289ce1857c37a680f186be45e333b3b69",
+          "source_diff_sha256": "a49d9cf8b7d5bd84aa2f7c4793d435759c09174be96753fb3d71d1d2216b8106",
+          "scenario": "browser-server-logout",
+          "transport": "Chrome-session",
+          "expected": true,
+          "observed": false,
+          "pass": false
+        }
+      ],
+      "nativeChecksPassed": 181
+    },
+    "after": {
+      "phase": "after",
+      "source_revision": "0854d99289ce1857c37a680f186be45e333b3b69",
+      "source_diff_sha256": "d6509f281f4c79f2d26446185140f4c7e981e16b50b6192d84e2231a181e2ba9",
+      "browser": "Google Chrome 156.0.8078.48",
+      "route": "https://localhost:18443/",
+      "viewport": {
+        "width": 1440,
+        "height": 1000,
+        "deviceScaleFactor": 1
+      },
+      "role": "synthetic lane-only delegate",
+      "fixture_reset": "fresh owned scripts/integration-native.sh --interactive stack; ordinary/attested re-key, owner removal, Clear, second-tab CSRF replacement, original-tab logout",
+      "source_changes": "client cookie synchronization, regressions, generated index and owning documentation",
+      "screenshots": [
+        {
+          "name": "after-logout-desktop.png",
+          "width": 1440,
+          "height": 1000,
+          "sha256": "f922e81f2e302153470ae6d2ce053b3d056a2002996e9ec525325b71dc8cda6d"
+        }
+      ],
+      "checks": [
+        {
+          "source_revision": "0854d99289ce1857c37a680f186be45e333b3b69",
+          "source_diff_sha256": "d6509f281f4c79f2d26446185140f4c7e981e16b50b6192d84e2231a181e2ba9",
+          "scenario": "browser-second-tab-replaces-csrf-cookie",
+          "transport": "Chrome-session",
+          "expected": true,
+          "observed": true,
+          "pass": true
+        },
+        {
+          "source_revision": "0854d99289ce1857c37a680f186be45e333b3b69",
+          "source_diff_sha256": "d6509f281f4c79f2d26446185140f4c7e981e16b50b6192d84e2231a181e2ba9",
+          "scenario": "browser-server-logout",
+          "transport": "Chrome-session",
+          "expected": true,
+          "observed": true,
+          "pass": true
+        },
+        {
+          "source_revision": "0854d99289ce1857c37a680f186be45e333b3b69",
+          "source_diff_sha256": "d6509f281f4c79f2d26446185140f4c7e981e16b50b6192d84e2231a181e2ba9",
+          "scenario": "browser-signed-out-view",
+          "transport": "Chrome-session",
+          "expected": true,
+          "observed": true,
+          "pass": true
+        }
+      ],
+      "nativeChecksPassed": 181
+    }
+  },
+  "lostResponseNegativeControl": {
+    "scenario": "lost logout response",
+    "expected": "reject retry UI even after backend session ended",
+    "observed": [
+      "browser-signed-out-view",
+      "browser-logout"
+    ],
+    "backendSessionEnded": true,
+    "passed": true
+  }
+}

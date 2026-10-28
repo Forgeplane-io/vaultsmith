@@ -251,8 +251,6 @@ export class ApiError extends Error {
   }
 }
 
-let csrfToken = ''
-
 type JSONRequestInit = Omit<RequestInit, 'headers'> & {
   headers?: Readonly<Record<string, string>>
 }
@@ -260,8 +258,10 @@ type JSONRequestInit = Omit<RequestInit, 'headers'> & {
 async function fetchSameOrigin(path: string, init?: JSONRequestInit): Promise<Response> {
   const headers = { ...init?.headers }
   const method = (init?.method || 'GET').toUpperCase()
-  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && csrfToken && !Object.prototype.hasOwnProperty.call(headers, 'X-CSRF-Token')) {
-    headers['X-CSRF-Token'] = csrfToken
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && !Object.prototype.hasOwnProperty.call(headers, 'X-CSRF-Token')) {
+    const csrfCookie = document.cookie.split('; ').find((cookie) => cookie.startsWith('__Host-vaultsmith_csrf='))
+    const csrfToken = csrfCookie?.slice('__Host-vaultsmith_csrf='.length)
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken
   }
   let response: Response
   try {
@@ -393,7 +393,6 @@ export async function fetchSession(signal?: AbortSignal): Promise<Session> {
     'Session loading timed out',
     requestSession,
   )
-  csrfToken = session.csrfToken
   return session
 }
 export async function fetchProfiles(signal?: AbortSignal): Promise<Profile[]> {
@@ -441,7 +440,6 @@ export async function logout(signal?: AbortSignal): Promise<void> {
       }
     },
   )
-  csrfToken = ''
 }
 
 export async function runOperation(request: OperationRequest, signal?: AbortSignal): Promise<OperationResult> {

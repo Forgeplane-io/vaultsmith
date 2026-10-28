@@ -36,6 +36,8 @@ describe('API client', () => {
   beforeEach(async () => {
     vi.restoreAllMocks()
     vi.resetModules()
+    document.cookie = '__Host-vaultsmith_csrf=; Path=/; Secure; Max-Age=0'
+    document.cookie = 'other__Host-vaultsmith_csrf=; Path=/; Max-Age=0'
     api = await import('./api')
   })
 
@@ -336,12 +338,95 @@ describe('API client', () => {
     })).mockImplementationOnce(async () => emptyResponse())
 
     await api.fetchSession()
+    document.cookie = '__Host-vaultsmith_csrf=csrf-fixture; Path=/; Secure'
     await api.logout()
 
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/auth/logout', expect.objectContaining({
       method: 'POST',
       credentials: 'same-origin',
       headers: { Accept: 'application/json', 'X-CSRF-Token': 'csrf-fixture' },
+    }))
+  })
+
+  it('uses the current shared CSRF cookie across independent tabs', async () => {
+    vi.resetModules()
+    const secondTab = await import('./api')
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ authenticated: true, authRequired: true, csrfToken: 'first-tab' }))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: true, authRequired: true, csrfToken: 'second-tab' }))
+      .mockResolvedValueOnce(jsonResponse({ vaultText: 'vault-output' }))
+      .mockResolvedValueOnce(emptyResponse())
+
+    const firstBootstrap = api.fetchSession()
+    const secondBootstrap = secondTab.fetchSession()
+    document.cookie = '__Host-vaultsmith_csrf=first-tab; Path=/; Secure'
+    await firstBootstrap
+    document.cookie = '__Host-vaultsmith_csrf=second-tab; Path=/; Secure'
+    await secondBootstrap
+
+    await api.runOperation({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/v1/profiles/dev/encrypt', expect.objectContaining({
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'second-tab' },
+    }))
+
+    document.cookie = '__Host-vaultsmith_csrf=another-current-cookie; Path=/; Secure'
+    await api.logout()
+    expect(fetchMock).toHaveBeenNthCalledWith(4, '/auth/logout', expect.objectContaining({
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json', 'X-CSRF-Token': 'another-current-cookie' },
+    }))
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it.each(['missing', 'empty', 'lookalike'])('does not use cached CSRF authority with a %s cookie', async (cookie) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ authenticated: true, authRequired: true, csrfToken: 'stale-session-token' }))
+      .mockResolvedValueOnce(jsonResponse({ vaultText: 'vault-output' }))
+    await api.fetchSession()
+    if (cookie === 'empty') document.cookie = '__Host-vaultsmith_csrf=; Path=/; Secure'
+    if (cookie === 'lookalike') document.cookie = 'other__Host-vaultsmith_csrf=not-the-csrf-cookie; Path=/'
+
+    await api.runOperation({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/profiles/dev/encrypt', expect.objectContaining({
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+    }))
+  })
+
+  it('does not replay a CSRF failure and uses the replacement cookie on the next explicit attempt', async () => {
+    document.cookie = '__Host-vaultsmith_csrf=before-dispatch; Path=/; Secure'
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockImplementationOnce(async () => {
+        document.cookie = '__Host-vaultsmith_csrf=after-dispatch; Path=/; Secure'
+        return jsonResponse({ error: { code: 'csrf_failed', message: 'request could not be verified' } }, { status: 403 })
+      })
+      .mockResolvedValueOnce(jsonResponse({ vaultText: 'vault-output' }))
+
+    await expect(api.runOperation({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })).rejects.toMatchObject({
+      code: 'csrf_failed', status: 403,
+    })
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/profiles/dev/encrypt', expect.objectContaining({
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'before-dispatch' },
+    }))
+
+    await expect(api.runOperation({ profileId: 'dev', mode: 'encrypt', value: 'fixture-value' })).resolves.toMatchObject({ output: 'vault-output' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/v1/profiles/dev/encrypt', expect.objectContaining({
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': 'after-dispatch' },
+    }))
+  })
+
+  it('does not send a CSRF header on safe session reads even when the cookie exists', async () => {
+    document.cookie = '__Host-vaultsmith_csrf=current-cookie; Path=/; Secure'
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse({ authenticated: true, authRequired: true, csrfToken: 'current-cookie' }),
+    )
+
+    await api.fetchSession()
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/session', expect.objectContaining({
+      headers: { Accept: 'application/json' },
     }))
   })
 

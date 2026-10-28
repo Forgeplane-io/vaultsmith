@@ -145,9 +145,9 @@ try {
   const set = (selector, value) => evaluate(`(() => { const element=document.querySelector(${JSON.stringify(selector)}); if(!element) return false; const prototype=element.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:element.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(prototype,'value').set.call(element,${JSON.stringify(value)}); element.dispatchEvent(new Event(element.tagName==='SELECT'?'change':'input',{bubbles:true})); return true })()`)
   const click = (selector) => evaluate(`(() => { const element=document.querySelector(${JSON.stringify(selector)}); if(!element || element.disabled) return false; element.click(); return true })()`)
   const options = (selector) => evaluate(`Array.from(document.querySelector(${JSON.stringify(selector)}).options).map(option=>option.value).filter(Boolean)`)
-  const screenshot = async (name) => {
+  const screenshot = async (name, selector = 'section.workbench-card') => {
     if (!(await evaluate(`!document.querySelector('#value-input')?.value && !document.querySelector('#result-output')?.value && !document.querySelector('[aria-label="Attestation JSON"]')`))) throw new Error('refusing material-bearing screenshot')
-    const clip = await evaluate(`(() => { const rect=document.querySelector('section.workbench-card').getBoundingClientRect();return {x:rect.x+scrollX,y:rect.y+scrollY,width:rect.width,height:rect.height,scale:1} })()`)
+    const clip = await evaluate(`(() => { const rect=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:rect.x+scrollX,y:rect.y+scrollY,width:rect.width,height:rect.height,scale:1} })()`)
     const capture = await send('Page.captureScreenshot', { format: 'png', clip, captureBeyondViewport: true })
     await writeFile(join(artifactDirectory, name), Buffer.from(capture.data, 'base64'))
   }
@@ -202,10 +202,22 @@ try {
   await check('browser-clear-after-denial', true, await click('.input-actions .quiet-button'))
   await check('browser-cleared-state', true, await evaluate(`document.querySelector('#value-input').value==='' && document.querySelector('#result-output').value==='' && !document.querySelector('[aria-label="Attestation JSON"]')`))
   await screenshot('native-browser-cleared.png')
+  await progress('browser-csrf-cookie-replacement')
+  await evaluate('window.__csrfBeforeReplacement=document.cookie')
+  await send('Network.deleteCookies', { name: '__Host-vaultsmith_csrf', url: fixture.base })
+  const { targetId: csrfTab } = await send('Target.createTarget', { url: fixture.base + '/' })
+  try {
+    await waitFor(() => evaluate(`document.cookie.includes('__Host-vaultsmith_csrf=') && document.cookie!==window.__csrfBeforeReplacement`))
+  } finally {
+    await send('Target.closeTarget', { targetId: csrfTab })
+  }
+  await check('browser-second-tab-replaces-csrf-cookie', true, await evaluate('document.cookie!==window.__csrfBeforeReplacement'))
   await progress('browser-logout')
   await click('.session-controls button')
-  await waitFor(() => evaluate(`!!document.querySelector('#signed-out-heading')`))
+  await waitFor(() => evaluate(`!!document.querySelector('#signed-out-heading') || document.querySelector('.session-controls button')?.textContent==='Retry sign out'`))
+  await screenshot('native-browser-csrf-logout.png', '.console-app')
   await check('browser-server-logout', true, await evaluate(`fetch('/api/v1/session').then(response=>response.json()).then(session=>session.authenticated===false)`))
+  await check('browser-signed-out-view', true, await evaluate(`!!document.querySelector('#signed-out-heading')`))
   await check('browser-approved-origins-only', false, navigationViolation)
   console.log('Rendered native delegated re-key acceptance: pass')
 } catch {
