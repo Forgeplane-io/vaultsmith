@@ -1,0 +1,109 @@
+{
+  "before": {
+    "phase": "before",
+    "source": "2d8e912b064d10e1d6b3e277feeb9b1f93a19727",
+    "diff_sha256": "a1d7b137b3110f815203cf060bb5bcd93f81c4ffcf17752a2eb33b57acf5e82a",
+    "changed_files": [
+      "backend/internal/httpapi/attestation_http_test.go",
+      "backend/internal/vaultservice/attestation_test.go"
+    ],
+    "browser": "Chrome/156.0.8078.48",
+    "route": "http://127.0.0.1:18090/",
+    "role": "loopback auth-off synthetic fixture",
+    "fixture": "Same generated disposable synthetic input envelope and signing keyring across phases; runtime material is not committed.",
+    "state": "dev → prod re-key, Issue attestation enabled, selector = 700 synthetic ampersands, submitted",
+    "field_bytes": 700,
+    "canonical_bytes": 715,
+    "escaped_marshal_bytes": 4215,
+    "field_limit_bytes": 1024,
+    "canonical_limit_bytes": 4096,
+    "limits": "Existing runtime guards; overflow returns invalid_request before Vault work; protocol changes require separate review.",
+    "output_present": false,
+    "proof_present": false,
+    "error": "The request was not accepted. Check the selected environments and input.",
+    "rotation_http_status": 400,
+    "screenshots": [
+      {
+        "path": "before-desktop.png",
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        },
+        "interaction": "completed submission",
+        "sha256": "383b32614da0c6fe0bbf4528b5a87d111ac4bf246826bc0a8d444ebf50558b40",
+        "image_dimensions": {
+          "width": 1440,
+          "height": 1481
+        }
+      },
+      {
+        "path": "before-mobile.png",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "interaction": "completed submission",
+        "sha256": "5554f408d2cf229b43368bdf3fc043a47fc5ed36eb87c9750ba54efe13e2989b",
+        "image_dimensions": {
+          "width": 390,
+          "height": 2498
+        }
+      }
+    ]
+  },
+  "after": {
+    "phase": "after",
+    "source": "2d8e912b064d10e1d6b3e277feeb9b1f93a19727",
+    "diff_sha256": "1fc53550bf5f3e6465b619e9258858eebba1a39d1977aa9cc8482d8d2a777dc4",
+    "changed_files": [
+      "backend/internal/httpapi/attestation_http_test.go",
+      "backend/internal/vaultservice/attestation_service.go",
+      "backend/internal/vaultservice/attestation_test.go"
+    ],
+    "browser": "Chrome/156.0.8078.48",
+    "route": "http://127.0.0.1:18090/",
+    "role": "loopback auth-off synthetic fixture",
+    "fixture": "Same generated disposable synthetic input envelope and signing keyring across phases; runtime material is not committed.",
+    "state": "dev → prod re-key, Issue attestation enabled, selector = 700 synthetic ampersands, submitted",
+    "field_bytes": 700,
+    "canonical_bytes": 715,
+    "escaped_marshal_bytes": 4215,
+    "field_limit_bytes": 1024,
+    "canonical_limit_bytes": 4096,
+    "limits": "Existing runtime guards; overflow returns invalid_request before Vault work; protocol changes require separate review.",
+    "output_present": true,
+    "proof_present": true,
+    "error": "",
+    "rotation_http_status": 200,
+    "decrypted_output_matches": true,
+    "proof_verified": true,
+    "screenshots": [
+      {
+        "path": "after-desktop.png",
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        },
+        "interaction": "completed submission",
+        "sha256": "a1a6cac3c7a6f37db309f992eb2e80564acc865bc2bad1b12b3a14ec52380613",
+        "image_dimensions": {
+          "width": 1440,
+          "height": 1696
+        }
+      },
+      {
+        "path": "after-mobile.png",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "interaction": "completed submission",
+        "sha256": "c9503a7a018451d8a139ec19c6baa417d581353ad9641ca876d1d0ea23de7c5a",
+        "image_dimensions": {
+          "width": 390,
+          "height": 2943
+        }
+      }
+    ]
+  }
+}
