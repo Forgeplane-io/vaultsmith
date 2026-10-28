@@ -98,6 +98,12 @@ that commit equals the validated release source. A draft recovery run from a
 different workflow commit still publishes and signs the release, but does not emit
 that additional attestation.
 
+The GitHub release stays draft while GoReleaser uploads archives and the workflow
+publishes and signs the remaining artifacts. The explicit `--draft` override also
+applies to historical tagged configurations. Only the final success-only step
+undrafts the release, after output verification. Earlier failures leave the draft
+available for recovery; image and chart registry uploads are not rolled back.
+
 Checksum signing retains the SHA-256 of GoReleaser's local `dist/checksums.txt`
 immediately after production and records it in the workflow run summary. Before
 signing, both the retained local bytes and the downloaded release readback must
