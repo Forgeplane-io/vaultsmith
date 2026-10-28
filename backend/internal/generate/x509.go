@@ -601,7 +601,30 @@ func validEmailAddress(value string) bool {
 		return false
 	}
 	address, err := mail.ParseAddress(value)
-	return err == nil && address.Name == "" && address.Address == value
+	if err != nil || address.Name != "" {
+		return false
+	}
+	if address.Address == value {
+		return true
+	}
+	if value[0] != '"' {
+		return false
+	}
+	// net/mail unquotes local parts; compare without rewriting the SAN.
+	var local strings.Builder
+	for index := 1; index < len(value); index++ {
+		if value[index] == '"' {
+			return index+1 < len(value) && value[index+1] == '@' && local.String()+value[index+1:] == address.Address
+		}
+		if value[index] == '\\' {
+			index++
+			if index == len(value) {
+				return false
+			}
+		}
+		local.WriteByte(value[index])
+	}
+	return false
 }
 
 func parseAbsoluteURI(value string) (*url.URL, bool) {
