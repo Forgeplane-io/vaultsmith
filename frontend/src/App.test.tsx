@@ -912,6 +912,102 @@ describe('Vaultsmith operator experience', () => {
     expect(operationCalls(fetchMock)).toHaveLength(2)
   })
 
+  it.each([
+    { name: 'kept proof requirement', optOut: false },
+    { name: 'explicit opt-out', optOut: true },
+  ])('preserves proof intent and binding across capability recovery with $name', async ({ optOut }) => {
+    const refreshed = laneOnlyProfiles.map((profile) => profile.id === 'a' || profile.id === 'b'
+      ? { ...profile, capabilities: { ...profile.capabilities, rotateDestinationIds: [profile.id === 'a' ? 'y' : 'x'] } }
+      : profile)
+    const binding = { repository: 'synthetic/repository', revision: 'synthetic-revision', path: 'group_vars/app.yml', selector: 'app_secret' }
+    const fetchMock = mockAttestedProfileLoad(laneOnlyProfiles)
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'forbidden' } }, { status: 403 }))
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'not_ready' } }, { status: 503 }))
+      .mockResolvedValueOnce(authenticatedSessionResponse())
+      .mockResolvedValueOnce(profilesResponse(refreshed))
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'feature_unavailable' } }, { status: 503 }))
+    if (optOut) fetchMock.mockResolvedValueOnce(rotateResultResponse('$ANSIBLE_VAULT;1.2;AES256;y\nsynthetic'))
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'forbidden' } }, { status: 403 }))
+      .mockResolvedValueOnce(jsonResponse({ error: { code: 'not_ready' } }, { status: 503 }))
+      .mockResolvedValueOnce(attestedSessionResponse())
+      .mockResolvedValueOnce(profilesResponse(refreshed))
+    const user = userEvent.setup()
+    render(<App />)
+    const input = await screen.findByRole('textbox', { name: 'Protected value to re-key' })
+    fireEvent.change(input, { target: { value: pastedVault } })
+    await user.click(screen.getByRole('checkbox', { name: 'Issue attestation' }))
+    for (const [field, value] of Object.entries(binding)) {
+      fireEvent.change(screen.getByRole('textbox', { name: field[0].toUpperCase() + field.slice(1) }), { target: { value } })
+    }
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('environments could not be refreshed')
+    expect(operationCalls(fetchMock)).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Retry loading environments' }))
+    const destination = screen.getByRole('combobox', { name: 'To environment' })
+    await waitFor(() => expect(within(destination).queryByRole('option', { name: 'Destination X' })).not.toBeInTheDocument())
+    expect(destination).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeDisabled()
+    expect(input).toHaveValue(pastedVault)
+    const requirement = screen.getByRole('checkbox', { name: 'Issue attestation' })
+    expect(requirement).toBeChecked()
+    expect(requirement).toBeEnabled()
+    expect(requirement).toHaveAccessibleDescription(/last capability check/)
+    for (const [field, value] of Object.entries(binding)) {
+      const control = screen.getByRole('textbox', { name: field[0].toUpperCase() + field.slice(1) })
+      expect(control).toHaveValue(value)
+      expect(control).toBeEnabled()
+    }
+    fireEvent.change(screen.getByRole('textbox', { name: 'Repository' }), { target: { value: 'synthetic/updated' } })
+    await user.selectOptions(destination, 'y')
+    expect(screen.getByRole('button', { name: 'Re-key' })).toBeEnabled()
+    expect(operationCalls(fetchMock)).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    await screen.findByRole('alert')
+    expect(operationCalls(fetchMock)).toHaveLength(2)
+    expect(JSON.parse(String(operationCalls(fetchMock).at(-1)?.[1]?.body))).toEqual({
+      sourceProfileId: 'a', destinationProfileId: 'y', vaultText: pastedVault,
+      attestation: { binding: { ...binding, repository: 'synthetic/updated' } },
+    })
+    expect(requirement).toBeChecked()
+    expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue('')
+    if (optOut) {
+      await user.click(requirement)
+      expect(screen.queryByRole('group', { name: 'Rotation attestation' })).not.toBeInTheDocument()
+      expect(input).toHaveValue(pastedVault)
+      expect(operationCalls(fetchMock)).toHaveLength(2)
+      await user.click(screen.getByRole('button', { name: 'Re-key' }))
+      await waitFor(() => expect(screen.getByRole('textbox', { name: 'Re-keyed value' })).toHaveValue('$ANSIBLE_VAULT;1.2;AES256;y\nsynthetic'))
+      expect(JSON.parse(String(operationCalls(fetchMock).at(-1)?.[1]?.body))).toEqual({
+        sourceProfileId: 'a', destinationProfileId: 'y', vaultText: pastedVault,
+      })
+      expect(screen.queryByRole('textbox', { name: 'Attestation JSON' })).not.toBeInTheDocument()
+    }
+    const callsBeforeRecovery = operationCalls(fetchMock).length
+    await user.click(screen.getByRole('button', { name: 'Re-key' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('environments could not be refreshed')
+    await user.click(screen.getByRole('button', { name: 'Retry loading environments' }))
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Issue attestation' })).not.toHaveAccessibleDescription(/last capability check/))
+    const recoveredRequirement = screen.getByRole('checkbox', { name: 'Issue attestation' })
+    expect(recoveredRequirement).toHaveProperty('checked', !optOut)
+    if (optOut) await user.click(recoveredRequirement)
+    expect(screen.getByRole('textbox', { name: 'Repository' })).toHaveValue('synthetic/updated')
+    expect(screen.getByRole('textbox', { name: 'Revision' })).toHaveValue(binding.revision)
+    expect(screen.getByRole('textbox', { name: 'Path' })).toHaveValue(binding.path)
+    expect(screen.getByRole('textbox', { name: 'Selector' })).toHaveValue(binding.selector)
+    expect(screen.queryByText(/last capability check/)).not.toBeInTheDocument()
+    expect(input).toHaveValue(pastedVault)
+    expect(operationCalls(fetchMock)).toHaveLength(callsBeforeRecovery + 1)
+  })
+
+  it('does not offer a new proof requirement when the initial session disables proofs', async () => {
+    mockAuthenticatedProfileLoad(laneOnlyProfiles)
+    render(<App />)
+    await screen.findByRole('textbox', { name: 'Protected value to re-key' })
+    expect(screen.queryByRole('checkbox', { name: 'Issue attestation' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Rotation attestation' })).not.toBeInTheDocument()
+  })
+
   it.each(['unavailable', 'malformed'])('locks a %s refresh and recovers only by explicit retry', async (failure) => {
     const fetchMock = mockProfileLoad(laneOnlyProfiles)
       .mockResolvedValueOnce(jsonResponse({ error: { code: 'forbidden' } }, { status: 403 }))

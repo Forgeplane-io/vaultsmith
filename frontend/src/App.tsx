@@ -1067,7 +1067,7 @@ export default function App() {
               )}
             </div>
 
-            {!isVerifyView && mode === 'rotate' && proofAvailable && (
+            {!isVerifyView && mode === 'rotate' && (proofAvailable || issueAttestation) && (
               <div className="attestation-options" role="group" aria-labelledby="rotation-attestation-heading">
                 <div className="attestation-options-header">
                   <h2 id="rotation-attestation-heading">Rotation attestation</h2>
@@ -1082,9 +1082,13 @@ export default function App() {
                         invalidateAttestation()
                       }}
                       disabled={workbenchLocked}
+                      aria-describedby={!proofAvailable ? 'rotation-attestation-unavailable' : undefined}
                     />
                     <span>Issue attestation</span>
                   </label>
+                  {!proofAvailable && (
+                    <p id="rotation-attestation-unavailable" className="field-help">Attestations were unavailable at the last capability check. Keep this selected to request one, or uncheck to re-key without one.</p>
+                  )}
                   {issueAttestation && (
                     <div className="binding-fields">
                       {(['repository', 'revision', 'path', 'selector'] as const).map((field) => (

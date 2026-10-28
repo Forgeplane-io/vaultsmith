@@ -1,0 +1,234 @@
+{
+  "phase": "after",
+  "source": "fa6ceac57c1782be60360d298c76d0a4e7b9c77c",
+  "changed_files": [
+    "frontend/src/App.test.tsx",
+    "frontend/src/App.tsx"
+  ],
+  "source_diff_sha256": "4230022fee383ad70ce533ce7ee7f4e8c26e7c2052a1b74f46ea99848b26a51a",
+  "generated_asset_changes": [
+    "backend/web/dist/index.html"
+  ],
+  "generated_assets": [
+    {
+      "path": "backend/web/dist/index.html",
+      "sha256": "038a537e591194629a2d71cb65021923165c0fda6dd9398788c17a5f0daa19c0"
+    },
+    {
+      "path": "backend/web/dist/assets/index-Be568i1p.css",
+      "sha256": "a3119a42a955298a0abaa6223c2d1fc461d4c7a3a23cfbf01a7dfcc6eceaf4ef"
+    },
+    {
+      "path": "backend/web/dist/assets/index-Bjg9w7R4.js",
+      "sha256": "3a32abb634b1300e33742cbec71ffd9822b79d0c57054f75fe901414d899b330"
+    }
+  ],
+  "fixture_sha256": "3ef413ce5e25b244a608e49ac474c135ef7c96a8f13339b1a7d596e1b30c192f",
+  "browser_driver_sha256": "ec6dbe6dd8c850c0bae7905bca40c99952ba12e838bd64eea7f8ca50da6cec03",
+  "fixture": "Same synthetic input envelope, profiles and policies; isolated native session/miniredis/TLS app/Chrome per run. Native principal is seeded, not an OIDC login.",
+  "role": "synthetic admins with exact rotation grants, no direct profile operations",
+  "route": "https://127.0.0.1:54789/",
+  "screenshots": [
+    {
+      "path": "after-unavailable-desktop.png",
+      "state": "unavailable",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "crop": "workbench card; unchanged navigation omitted",
+      "sha256": "aac0a270ec8e2c45c72f47720062bd84540ba6e493752c853c0dfa3f3330419b",
+      "image_size": {
+        "width": 1120,
+        "height": 1258
+      }
+    },
+    {
+      "path": "after-unavailable-mobile.png",
+      "state": "unavailable",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "crop": "workbench card; unchanged navigation omitted",
+      "sha256": "dbb082b4ae65ab5166c811045bab4f595a22fc758281eec1a2eb9f5eb735d599",
+      "image_size": {
+        "width": 366,
+        "height": 2271
+      }
+    },
+    {
+      "path": "after-opt-out-result-desktop.png",
+      "state": "opt-out-result",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "crop": "workbench card; unchanged navigation omitted",
+      "sha256": "3560886da9bf577a605adafe681d9fbdf88b609cd3911b53c644fa7b80d52db6",
+      "image_size": {
+        "width": 1120,
+        "height": 936
+      }
+    },
+    {
+      "path": "after-opt-out-result-mobile.png",
+      "state": "opt-out-result",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "crop": "workbench card; unchanged navigation omitted",
+      "sha256": "fa2dde26a771121c7ee3cba771100b5a7eb4bf17fa87766420d4fe665c996fac",
+      "image_size": {
+        "width": 366,
+        "height": 1877
+      }
+    },
+    {
+      "path": "after-restored-desktop.png",
+      "state": "restored",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "crop": "workbench card; unchanged navigation omitted",
+      "sha256": "84722b3863ff6e41bf66bbca5d25707cc48deac424b8114b5197e3b1e96a01e5",
+      "image_size": {
+        "width": 1120,
+        "height": 1197
+      }
+    }
+  ],
+  "unavailable_requirement_visible": true,
+  "required_attempt_rejected_without_vault_work": true,
+  "explicit_opt_out_completed_rotation": true,
+  "destination_decrypt_matches": true,
+  "binding_draft_retained_after_opt_out_and_recovery": true,
+  "warning_removed_after_capability_restored": true,
+  "browser": "Chrome/156.0.8078.74",
+  "server": {
+    "observations": [
+      {
+        "phase": 0,
+        "method": "GET",
+        "path": "/api/v1/session",
+        "status": 200,
+        "vault_calls": 0,
+        "has_proof": false,
+        "authenticated": true,
+        "proof_enabled": true
+      },
+      {
+        "phase": 0,
+        "method": "GET",
+        "path": "/api/v1/profiles",
+        "status": 200,
+        "vault_calls": 0,
+        "has_proof": false
+      },
+      {
+        "phase": 1,
+        "method": "POST",
+        "path": "/api/v1/rotations",
+        "status": 403,
+        "code": "forbidden",
+        "vault_calls": 0,
+        "has_proof": false
+      },
+      {
+        "phase": 1,
+        "method": "GET",
+        "path": "/api/v1/profiles",
+        "status": 503,
+        "code": "not_ready",
+        "vault_calls": 0,
+        "has_proof": false
+      },
+      {
+        "phase": 2,
+        "method": "GET",
+        "path": "/api/v1/session",
+        "status": 200,
+        "vault_calls": 0,
+        "has_proof": false,
+        "authenticated": true,
+        "proof_enabled": false
+      },
+      {
+        "phase": 2,
+        "method": "GET",
+        "path": "/api/v1/profiles",
+        "status": 200,
+        "vault_calls": 0,
+        "has_proof": false
+      },
+      {
+        "phase": 2,
+        "method": "POST",
+        "path": "/api/v1/rotations",
+        "status": 503,
+        "code": "feature_unavailable",
+        "vault_calls": 0,
+        "has_proof": false
+      },
+      {
+        "phase": 2,
+        "method": "POST",
+        "path": "/api/v1/rotations",
+        "status": 503,
+        "code": "feature_unavailable",
+        "vault_calls": 0,
+        "has_proof": false
+      },
+      {
+        "phase": 2,
+        "method": "POST",
+        "path": "/api/v1/rotations",
+        "status": 200,
+        "vault_calls": 2,
+        "has_proof": false
+      },
+      {
+        "phase": 1,
+        "method": "POST",
+        "path": "/api/v1/rotations",
+        "status": 403,
+        "code": "forbidden",
+        "vault_calls": 2,
+        "has_proof": false
+      },
+      {
+        "phase": 1,
+        "method": "GET",
+        "path": "/api/v1/profiles",
+        "status": 503,
+        "code": "not_ready",
+        "vault_calls": 2,
+        "has_proof": false
+      },
+      {
+        "phase": 3,
+        "method": "GET",
+        "path": "/api/v1/session",
+        "status": 200,
+        "vault_calls": 2,
+        "has_proof": false,
+        "authenticated": true,
+        "proof_enabled": true
+      },
+      {
+        "phase": 3,
+        "method": "GET",
+        "path": "/api/v1/profiles",
+        "status": 200,
+        "vault_calls": 2,
+        "has_proof": false
+      }
+    ],
+    "phase": 3,
+    "vault_calls": 2
+  },
+  "no_automatic_replay": true,
+  "native_fixture_passed": true
+}
