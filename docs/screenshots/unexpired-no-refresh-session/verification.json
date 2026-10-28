@@ -1,0 +1,128 @@
+{
+  "before": {
+    "source": {
+      "base": "aa1c5e6c0646cc080274ae96bac2a289e96470c2",
+      "tracked_diff_sha256": "29e1cc45918b35eacac05d599ebf89b481e0a86913937851d723cd83809f8c55",
+      "visual_fixture_sha256": "02886cc84c390cdbf14d7a9e8dffaf2d1883f8ee3027cd27b58d4413c420d0ed"
+    },
+    "receipts": [
+      {
+        "phase": "before",
+        "browser": "Chrome/156.0.8078.48",
+        "viewport": {
+          "label": "desktop",
+          "width": 1440,
+          "height": 1000
+        },
+        "role": "synthetic admins",
+        "route": "synthetic issuer /authorize (premature re-login)",
+        "state": "after first verified no-refresh login; inputs empty",
+        "fixture": "fresh cookie jar; signed TLS code/PKCE issuer; five-second claims; miniredis",
+        "login_to_capture_ms": 168,
+        "callback_status": 303,
+        "session_status": 200,
+        "authenticated": false,
+        "profiles_status": 401,
+        "screenshot": "before-desktop.png"
+      },
+      {
+        "phase": "before",
+        "browser": "Chrome/156.0.8078.48",
+        "viewport": {
+          "label": "mobile",
+          "width": 390,
+          "height": 844
+        },
+        "role": "synthetic admins",
+        "route": "synthetic issuer /authorize (premature re-login)",
+        "state": "after first verified no-refresh login; inputs empty",
+        "fixture": "fresh cookie jar; signed TLS code/PKCE issuer; five-second claims; miniredis",
+        "login_to_capture_ms": 108,
+        "callback_status": 303,
+        "session_status": 200,
+        "authenticated": false,
+        "profiles_status": 401,
+        "screenshot": "before-mobile.png"
+      }
+    ]
+  },
+  "after": {
+    "source": {
+      "base": "aa1c5e6c0646cc080274ae96bac2a289e96470c2",
+      "tracked_diff_sha256": "5d03a3931f7cdc2dc0d673828a3cfbbb97056963cb935307d7b9b2519aaf6cfa",
+      "visual_fixture_sha256": "02886cc84c390cdbf14d7a9e8dffaf2d1883f8ee3027cd27b58d4413c420d0ed"
+    },
+    "receipts": [
+      {
+        "phase": "after",
+        "browser": "Chrome/156.0.8078.48",
+        "viewport": {
+          "label": "desktop",
+          "width": 1440,
+          "height": 1000
+        },
+        "role": "synthetic admins",
+        "route": "app /",
+        "state": "after first verified no-refresh login; inputs empty",
+        "fixture": "fresh cookie jar; signed TLS code/PKCE issuer; five-second claims; miniredis",
+        "login_to_capture_ms": 1035,
+        "callback_status": 303,
+        "session_status": 200,
+        "authenticated": true,
+        "profiles_status": 200,
+        "screenshot": "after-desktop.png",
+        "authorized_decrypt_status": 200,
+        "completed_server_outcome": true,
+        "expired_decrypt_status": 401
+      },
+      {
+        "phase": "after",
+        "browser": "Chrome/156.0.8078.48",
+        "viewport": {
+          "label": "mobile",
+          "width": 390,
+          "height": 844
+        },
+        "role": "synthetic admins",
+        "route": "app /",
+        "state": "after first verified no-refresh login; inputs empty",
+        "fixture": "fresh cookie jar; signed TLS code/PKCE issuer; five-second claims; miniredis",
+        "login_to_capture_ms": 99,
+        "callback_status": 303,
+        "session_status": 200,
+        "authenticated": true,
+        "profiles_status": 200,
+        "screenshot": "after-mobile.png",
+        "authorized_decrypt_status": 200,
+        "completed_server_outcome": true,
+        "expired_decrypt_status": 401
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "file": "before-desktop.png",
+      "sha256": "bf0a29601ce8e67aaab96b7b41c6866c484c9f8e66a167a02777112b389d5893",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "file": "before-mobile.png",
+      "sha256": "e3935419c10d93f8be9ebc8ec150c3b5525e5f67679cd85e5c58dfdb504fca60",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "file": "after-desktop.png",
+      "sha256": "3787f192ac2ef9b0e87eed7581d8f18b7c8f0825b2f96bb06b0e562fba239321",
+      "width": 1440,
+      "height": 1000
+    },
+    {
+      "file": "after-mobile.png",
+      "sha256": "6633a674da75cf69aaa6b1c654345f3586ca3979945cd073c68808089dc21e06",
+      "width": 390,
+      "height": 844
+    }
+  ]
+}

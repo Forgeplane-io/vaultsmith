@@ -97,6 +97,9 @@ func newNativeRefreshIssuer(t *testing.T, mode string) *nativeRefreshIssuer {
 			f.expiry = time.Now().Add(5 * time.Second).Truncate(time.Second)
 			claims["exp"], claims["nonce"] = f.expiry.Unix(), f.nonce
 			response["refresh_token"] = "login-refresh"
+			if f.mode == "no-refresh" {
+				delete(response, "refresh_token")
+			}
 		case "refresh_token":
 			f.used = append(f.used, r.Form.Get("refresh_token"))
 			switch f.mode {
@@ -366,6 +369,65 @@ func TestNativeHTTPReloginStoresOnlySessionHash(t *testing.T) {
 	callbackStatus, _, _ = f.request(t, http.MethodGet, callback.RequestURI())
 	if callbackStatus != http.StatusSeeOther {
 		t.Fatalf("authenticated re-login callback status=%d", callbackStatus)
+	}
+}
+
+func TestNativeHTTPWithoutRefreshToken(t *testing.T) {
+	f := newNativeRefreshFlow(t, "no-refresh", false)
+	statuses := []int{}
+	deniedExecutor := false
+	t.Cleanup(func() {
+		f.issuer.mu.Lock()
+		refreshCalls := len(f.issuer.used)
+		f.issuer.mu.Unlock()
+		receipt := map[string]any{"fixture": "synthetic-tls-code-pkce-native-http", "scenario": "unexpired-session-without-refresh", "statuses": statuses, "refresh_calls": refreshCalls, "denied_executor_called": deniedExecutor, "passed": !t.Failed()}
+		data, err := json.MarshalIndent(receipt, "", "  ")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.WriteFile(filepath.Join(t.ArtifactDir(), "receipt.json"), data, 0o600); err != nil {
+			t.Error(err)
+		}
+	})
+	f.login(t)
+	status, body, _ := f.request(t, http.MethodGet, "/api/v1/session")
+	statuses = append(statuses, status)
+	var session sessionResponse
+	if status != http.StatusOK || json.Unmarshal(body, &session) != nil || !session.Authenticated {
+		t.Fatal("unexpired no-refresh login did not bootstrap as authenticated")
+	}
+	status, _, _ = f.request(t, http.MethodGet, "/api/v1/profiles")
+	statuses = append(statuses, status)
+	if status != http.StatusOK {
+		t.Fatalf("unexpired no-refresh profiles status=%d", status)
+	}
+	status, _, _ = f.request(t, http.MethodPost, "/api/v1/profiles/dev/decrypt")
+	statuses = append(statuses, status)
+	if status != http.StatusOK || !f.exec.called {
+		t.Fatalf("unexpired no-refresh decrypt status=%d executor_called=%t", status, f.exec.called)
+	}
+	f.issuer.mu.Lock()
+	expiry := f.issuer.expiry
+	f.issuer.mu.Unlock()
+	time.Sleep(time.Until(expiry))
+	f.exec.called = false
+	status, body, _ = f.request(t, http.MethodPost, "/api/v1/profiles/dev/decrypt")
+	statuses = append(statuses, status)
+	deniedExecutor = f.exec.called
+	if status != http.StatusUnauthorized || deniedExecutor || strings.Contains(string(body), "plaintext") {
+		t.Fatalf("expired no-refresh decrypt status=%d executor_called=%t", status, deniedExecutor)
+	}
+	status, body, _ = f.request(t, http.MethodGet, "/api/v1/session")
+	statuses = append(statuses, status)
+	if status != http.StatusOK || json.Unmarshal(body, &session) != nil || session.Authenticated {
+		t.Fatal("expired no-refresh session did not require login")
+	}
+	f.issuer.mu.Lock()
+	refreshCalls := len(f.issuer.used)
+	f.issuer.mu.Unlock()
+	if refreshCalls != 0 {
+		t.Fatal("no-refresh session attempted a provider refresh")
 	}
 }
 

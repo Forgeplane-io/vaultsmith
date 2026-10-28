@@ -13,7 +13,7 @@ import (
 // Persisted data is a trust boundary: no legacy adoption, foreign identity,
 // early-return bypass, or refresh-before-validation is permitted.
 func TestAuthenticatedPrincipalSessionBoundary(t *testing.T) {
-	for _, path := range []string{"fresh", "retry", "refresh"} {
+	for _, path := range []string{"fresh", "retry", "refresh", "no-refresh"} {
 		for _, change := range []string{"unchanged", "issuer", "client", "resource", "legacy", "previous-version", "malformed", "unknown-version", "principal-issuer"} {
 			t.Run(path+"/"+change, func(t *testing.T) {
 				calls := 0
@@ -27,6 +27,8 @@ func TestAuthenticatedPrincipalSessionBoundary(t *testing.T) {
 					service.Sessions.Put(ctx, sessionExpiresAtKey, time.Now().Add(time.Hour))
 				case "retry":
 					service.Sessions.Put(ctx, sessionRefreshCheckedKey, time.Now())
+				case "no-refresh":
+					service.Sessions.Remove(ctx, sessionRefreshTokenKey)
 				}
 				switch change {
 				case "issuer":
@@ -82,7 +84,7 @@ func TestAuthenticatedPrincipalSessionBoundary(t *testing.T) {
 }
 
 func TestAuthenticatedPrincipalValidatesSerializedReload(t *testing.T) {
-	for _, path := range []string{"fresh", "retry", "refresh"} {
+	for _, path := range []string{"fresh", "retry", "refresh", "no-refresh"} {
 		for _, binding := range []string{"v999:unsupported", "previous-version"} {
 			t.Run(path+"/"+binding, func(t *testing.T) {
 				service, token := newRefreshService(t, func(context.Context, string) (*oauth2.Token, error) {
@@ -101,6 +103,9 @@ func TestAuthenticatedPrincipalValidatesSerializedReload(t *testing.T) {
 				}
 				if path == "retry" {
 					service.Sessions.Put(updated, sessionRefreshCheckedKey, time.Now())
+				}
+				if path == "no-refresh" {
+					service.Sessions.Remove(updated, sessionRefreshTokenKey)
 				}
 				if _, _, err := service.Sessions.Commit(updated); err != nil {
 					t.Fatal(err)

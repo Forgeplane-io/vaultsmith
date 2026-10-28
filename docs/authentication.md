@@ -63,6 +63,10 @@ grants no permissions, and malformed claims are rejected. Providers that omit
 refreshed ID tokens remain usable but require login at the original claim
 deadline, even if OAuth credentials are still valid.
 
+Sessions without a refresh token remain usable until verified claim expiry or
+an earlier session deadline. The early-refresh window does not shorten that
+lifetime; interactive login is required when it ends.
+
 This is not immediate membership revocation: existing verified groups may be
 used until their claim deadline. Absolute and idle session lifetimes still bound
 the session, including when refresh supplies a new ID token. Confirm your
