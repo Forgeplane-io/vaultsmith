@@ -107,6 +107,9 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if not (has $mode (list "off" "native")) }}{{ fail (printf "auth.mode must be off or native, got %q" $mode) }}{{ end }}
 {{- if and .Values.auth.policy.data .Values.auth.policy.existingConfigMap }}{{ fail "auth.policy.data and auth.policy.existingConfigMap are mutually exclusive" }}{{ end }}
 {{- if .Values.valkey.enabled }}
+{{- if eq (include "vaultsmith.fullname" .) (include "vaultsmith.valkeyFullname" .) }}
+{{- fail (printf "Vaultsmith and bundled Valkey resolve to the same fullname %q; set fullnameOverride to a distinct name" (include "vaultsmith.fullname" .)) }}
+{{- end }}
 {{- if not .Values.valkey.auth.enabled }}{{ fail "valkey.auth.enabled must remain true when the bundled Valkey chart is enabled" }}{{ end }}
 {{- if ne .Values.valkey.deploymentStrategy "Recreate" }}{{ fail "valkey.deploymentStrategy must be Recreate for the bundled standalone Valkey chart" }}{{ end }}
 {{- if ne .Values.valkey.auth.usersExistingSecret `{{ include "valkey.fullname" . }}-auth` }}{{ fail "valkey.auth.usersExistingSecret is managed by the parent chart" }}{{ end }}

@@ -50,6 +50,12 @@ This process-local cache change needs no persisted-session migration.
 
 The chart creates `ClusterIP` Services for Vaultsmith and the bundled official Valkey chart. Valkey is enabled by default, uses a generated password Secret, and does not require a separately provisioned Redis service. The bundled chart requests a 1 GiB PVC by default; set `valkey.dataStorage.className` for a specific storage class or disable it for ephemeral test deployments. The bundled standalone Valkey uses a `Recreate` rollout to avoid concurrent pods sharing a `ReadWriteOnce` claim; the strategy remains fixed for every standalone backing mode. The chart does not create the OIDC, CSRF, or profile-password Secrets. Ingress and NetworkPolicy are disabled by default.
 
+With bundled Valkey enabled, Vaultsmith and Valkey must resolve to different
+fullnames. Release names such as `vaultsmith-valkey`, custom overrides, or
+truncation can make them equal; rendering then fails with an instruction to set
+a distinct parent `fullnameOverride`, such as `vaultsmith-app`. The chart does
+not automatically rename resources. Keep existing resource names stable on upgrades.
+
 The only MCP chart value is `mcp.enabled`, which defaults to `false` and maps to `MCP_ENABLED`. Proofs expose only `proofs.enabled` and `proofs.existingSecret`; both default to disabled/empty. When enabled, the chart requires a Secret containing the fixed `keyring.json` key and mounts it read-only at `/etc/vaultsmith/attestation/keyring.json`. The chart does not parse keyring internals or expose signing, issuer, reload, KMS, policy, or verification values. `MCPGODEBUG` must be unset or empty; any non-empty value fails startup.
 
 ### Published chart
