@@ -1,0 +1,132 @@
+{
+  "phase": "before",
+  "source": "fa6ceac57c1782be60360d298c76d0a4e7b9c77c",
+  "changed_files": [
+    "frontend/src/App.test.tsx"
+  ],
+  "source_diff_sha256": "69688e2d4d257df26cfb51252bd89ad1b6d06ec48ea0945f1414c62f6b7813e6",
+  "generated_asset_changes": [],
+  "generated_assets": [
+    {
+      "path": "backend/web/dist/index.html",
+      "sha256": "ec9b66e42c9005dfa4db88adfadb394a8c84c05892faf5472eda3d42661dfc94"
+    },
+    {
+      "path": "backend/web/dist/assets/index-Be568i1p.css",
+      "sha256": "a3119a42a955298a0abaa6223c2d1fc461d4c7a3a23cfbf01a7dfcc6eceaf4ef"
+    },
+    {
+      "path": "backend/web/dist/assets/index-CxYOFkCP.js",
+      "sha256": "d0ea6d9c8bbf5e9bafd2f7f5e2c8c2b8c84dcade177b8b014d006ae95eb8e698"
+    }
+  ],
+  "fixture_sha256": "3ef413ce5e25b244a608e49ac474c135ef7c96a8f13339b1a7d596e1b30c192f",
+  "browser_driver_sha256": "ec6dbe6dd8c850c0bae7905bca40c99952ba12e838bd64eea7f8ca50da6cec03",
+  "fixture": "Same synthetic input envelope, profiles and policies; isolated native session/miniredis/TLS app/Chrome per run. Native principal is seeded, not an OIDC login.",
+  "role": "synthetic admins with exact rotation grants, no direct profile operations",
+  "route": "https://127.0.0.1:54527/",
+  "screenshots": [
+    {
+      "path": "before-unavailable-desktop.png",
+      "state": "unavailable",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "crop": "workbench card; unchanged navigation omitted",
+      "sha256": "6fb3f14462b49bd1da1558ce478a950b6176879020d0a74629067e3ecf3ed26e",
+      "image_size": {
+        "width": 1120,
+        "height": 939
+      }
+    },
+    {
+      "path": "before-unavailable-mobile.png",
+      "state": "unavailable",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "crop": "workbench card; unchanged navigation omitted",
+      "sha256": "dcae114e0522e68173e7040a65e9ff496f1a135191f2e42f86b2c33f8bf8c68e",
+      "image_size": {
+        "width": 366,
+        "height": 1642
+      }
+    }
+  ],
+  "unavailable_requirement_visible": false,
+  "required_attempt_rejected_without_vault_work": true,
+  "browser": "Chrome/156.0.8078.74",
+  "server": {
+    "observations": [
+      {
+        "phase": 0,
+        "method": "GET",
+        "path": "/api/v1/session",
+        "status": 200,
+        "vault_calls": 0,
+        "has_proof": false,
+        "authenticated": true,
+        "proof_enabled": true
+      },
+      {
+        "phase": 0,
+        "method": "GET",
+        "path": "/api/v1/profiles",
+        "status": 200,
+        "vault_calls": 0,
+        "has_proof": false
+      },
+      {
+        "phase": 1,
+        "method": "POST",
+        "path": "/api/v1/rotations",
+        "status": 403,
+        "code": "forbidden",
+        "vault_calls": 0,
+        "has_proof": false
+      },
+      {
+        "phase": 1,
+        "method": "GET",
+        "path": "/api/v1/profiles",
+        "status": 503,
+        "code": "not_ready",
+        "vault_calls": 0,
+        "has_proof": false
+      },
+      {
+        "phase": 2,
+        "method": "GET",
+        "path": "/api/v1/session",
+        "status": 200,
+        "vault_calls": 0,
+        "has_proof": false,
+        "authenticated": true,
+        "proof_enabled": false
+      },
+      {
+        "phase": 2,
+        "method": "GET",
+        "path": "/api/v1/profiles",
+        "status": 200,
+        "vault_calls": 0,
+        "has_proof": false
+      },
+      {
+        "phase": 2,
+        "method": "POST",
+        "path": "/api/v1/rotations",
+        "status": 503,
+        "code": "feature_unavailable",
+        "vault_calls": 0,
+        "has_proof": false
+      }
+    ],
+    "phase": 2,
+    "vault_calls": 0
+  },
+  "no_automatic_replay": true,
+  "native_fixture_passed": true
+}
