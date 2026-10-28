@@ -10,6 +10,17 @@ All notable changes to Vaultsmith are documented here. Release Please maintains 
 - Proofs use `PUBLIC_BASE_URL` as the issuer and reload a valid changed keyring without restart. A malformed replacement keeps the previous valid keyring active.
 - When proofs are disabled, normal encrypt, decrypt, and rotate behavior remains available and no signing Secret is required.
 
+## [1.0.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.9.5...v1.0.0) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **authz:** Protected/native rotation now requires reviewed directed rotation:<source>:<destination> rotate grants. Direct decrypt/encrypt rights no longer authorize rotation. Migrate policies before enabling these flows; rolling back to old binaries can restore implicit rotation authority.
+
+### Features
+
+* **authz:** require explicit rotation grants ([621ab7b](https://github.com/Forgeplane-io/vaultsmith/commit/621ab7b06cf63e2634b6f3d4d8ca24d81a45f9e6))
+
 ## [0.9.5](https://github.com/Forgeplane-io/vaultsmith/compare/v0.9.4...v0.9.5) (2026-10-27)
 
 
