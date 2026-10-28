@@ -250,7 +250,7 @@ jobs:
 
       - name: Run GoReleaser
         if: needs.validate.outputs.release_draft == 'true'
-        run: goreleaser release --clean
+        run: goreleaser release --clean --draft
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -421,3 +421,6 @@ jobs:
             "- Image digest: ${IMAGE}@${{ steps.image.outputs.digest }}" \
             "- Helm chart: oci://${CHART_REFERENCE}" \
             >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish GitHub release
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

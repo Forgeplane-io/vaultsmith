@@ -433,6 +433,88 @@ exit 1
     assert.equal(checksumRecordStep['continue-on-error'], undefined, 'producer recording failure must stop publication');
   });
 
+  // Model external Actions results, but execute the actual GoReleaser and
+  // terminal publication shell against local release-state captures.
+  const releaseStep = publish.steps[firstPublication];
+  const finalizationStep = publish.steps.find((step) => step.name === 'Publish GitHub release');
+  check('GitHub release publication is terminal and success-only', () => {
+    assert.ok(finalizationStep, 'publish the draft only after the workflow finishes');
+    assert.equal(publish.steps.at(-1), finalizationStep, 'undrafting must be the last step');
+    assert.equal(finalizationStep.if, undefined, 'publication must use the default success condition');
+    assert.equal(finalizationStep['continue-on-error'], undefined, 'publication failure must fail the job');
+    for (const step of publish.steps.slice(firstPublication)) {
+      assert.equal(step['continue-on-error'], undefined, 'required release failures must stop publication');
+    }
+  });
+  const lifecycleBin = join(fixture, 'lifecycle-bin');
+  mkdirSync(lifecycleBin);
+  writeFileSync(join(lifecycleBin, 'goreleaser'), `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$FAILED_RELEASE_STEP" == 'Run GoReleaser' ]]; then exit 1; fi
+draft=false
+for argument in "$@"; do
+  if [[ "$argument" == --draft ]]; then draft=true; fi
+done
+printf '%s\\n' "$draft" > "$RELEASE_DRAFT_STATE"
+`, { mode: 0o755 });
+  writeFileSync(join(lifecycleBin, 'gh'), `#!/usr/bin/env bash
+set -euo pipefail
+test "$1" = release && test "$2" = edit
+printf '%s\\n' "$@" > "$RELEASE_EDIT_ARGS"
+if [[ "$FAILED_RELEASE_STEP" == 'Publish GitHub release' ]]; then exit 1; fi
+printf 'false\\n' > "$RELEASE_DRAFT_STATE"
+`, { mode: 0o755 });
+
+  const lifecycleSteps = publish.steps.slice(firstPublication);
+  const failurePoints = lifecycleSteps.map((step) => step.name);
+  if (!finalizationStep) failurePoints.push('Publish GitHub release');
+  for (const failedStep of [null, ...failurePoints]) {
+    check('release draft lifecycle ' + (failedStep || 'success'), (entry) => {
+      const directory = mkdtempSync(join(fixture, 'release-lifecycle-'));
+      const draftState = join(directory, 'draft');
+      const editArgs = join(directory, 'edit-args');
+      const summary = join(directory, 'summary');
+      writeFileSync(draftState, 'true\n');
+      writeFileSync(summary, '');
+      const lifecycleEnv = {
+        ...jobEnv(publish, join(directory, 'unused-marker')),
+        PATH: lifecycleBin + ':' + env.PATH,
+        GITHUB_REPOSITORY: 'synthetic/vaultsmith', GITHUB_STEP_SUMMARY: summary,
+        RELEASE_DRAFT_STATE: draftState, RELEASE_EDIT_ARGS: editArgs,
+        FAILED_RELEASE_STEP: failedStep || '',
+      };
+      let status = 0;
+      entry.completedSteps = [];
+      for (const step of lifecycleSteps) {
+        if (step === releaseStep || step === finalizationStep) {
+          const result = command('bash', ['-e', '-c', step.run], directory, lifecycleEnv);
+          status = result.status;
+        } else {
+          // Packaging/signing shell behavior is covered separately below;
+          // here each external stage supplies its success/failure result.
+          status = step.name === failedStep ? 1 : 0;
+        }
+        if (status !== 0) break;
+        entry.completedSteps.push(step.name);
+      }
+      entry.exitCode = status;
+      entry.draft = readFileSync(draftState, 'utf8').trim() === 'true';
+      entry.editArgs = existsSync(editArgs) ? readFileSync(editArgs, 'utf8').trim().split('\n') : [];
+      if (failedStep) {
+        assert.notEqual(status, 0, 'the failing release stage must fail the job');
+        assert.equal(entry.draft, true, 'a failed release must remain a draft');
+        if (failedStep !== 'Publish GitHub release') {
+          assert.deepEqual(entry.editArgs, [], 'failed work must not reach final publication');
+        }
+      } else {
+        assert.equal(status, 0, 'the complete release must succeed');
+        assert.equal(entry.draft, false, 'only complete success must publish the draft');
+        assert.deepEqual(entry.editArgs, ['release', 'edit', tag, '--repo', 'synthetic/vaultsmith', '--draft=false'],
+          'publish the intended existing release, not another tag or repository');
+      }
+    });
+  }
+
   // Execute the actual packaging, signing, and output steps. Registry operations
   // and signing are simulated; packaging and rendering use native Helm.
   const chartStep = publish.steps.find((step) => step.run?.includes('helm push '));
