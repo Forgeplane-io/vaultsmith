@@ -13,6 +13,7 @@ import (
 	"github.com/forgeplane-io/vaultsmith/backend/internal/caller"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/generate"
+	"github.com/gowebpki/jcs"
 )
 
 const ScopeAttestationVerify = "vaultsmith.attestation.verify"
@@ -161,7 +162,11 @@ func validateAttestationRequest(request *AttestationRequest) error {
 	if !hasValue {
 		return invalidRequest("attestation binding is invalid")
 	}
-	canonical, err := json.Marshal(binding)
+	raw, err := json.Marshal(binding)
+	if err != nil {
+		return invalidRequest("attestation binding is invalid")
+	}
+	canonical, err := jcs.Transform(raw)
 	if err != nil || len(canonical) > 4<<10 {
 		return invalidRequest("attestation binding is invalid")
 	}

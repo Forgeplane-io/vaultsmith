@@ -273,16 +273,25 @@ func TestDelegatedNativeRESTAndMCPRotationsPreserveVerifiableProofs(t *testing.T
 	input := httpSyntheticVaultText(t, "synthetic input", "synthetic source password", "a")
 	output := httpSyntheticVaultText(t, "synthetic output", "synthetic destination password", "x")
 	executor.value = output
-	binding := &attestation.Binding{Repository: "synthetic/repository", Revision: strings.Repeat("a", 40), Path: "synthetic/path"}
+	binding := &attestation.Binding{
+		Repository: "synthetic/repository",
+		Revision:   strings.Repeat("a", 40),
+		Path:       "synthetic/path",
+		Selector:   strings.Repeat("&", 700),
+	}
 	arguments := `{"sourceProfileId":"a","destinationProfileId":"x","vaultText":` + mustJSON(t, input) + `,"attestation":{"binding":` + mustJSON(t, binding) + `}}`
 	rotateToken := issuer.tokenWithGroups(t, cfg.OIDC.PublicBaseURL, vaultservice.ScopeRotate, []string{"delegates"})
 	verifyToken := issuer.tokenWithGroups(t, cfg.OIDC.PublicBaseURL, vaultservice.ScopeAttestationVerify, []string{"delegates"})
-	for _, transport := range []string{"REST", "MCP"} {
+	for _, transport := range []string{"REST escaped", "REST literal", "MCP escaped", "MCP literal"} {
 		t.Run(transport, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, cfg.OIDC.PublicBaseURL+"/api/v1/rotations", strings.NewReader(arguments))
+			body := arguments
+			if strings.HasSuffix(transport, "literal") {
+				body = strings.ReplaceAll(body, `\u0026`, "&")
+			}
+			request := httptest.NewRequest(http.MethodPost, cfg.OIDC.PublicBaseURL+"/api/v1/rotations", strings.NewReader(body))
 			request.Header.Set("Content-Type", "application/json")
-			if transport == "MCP" {
-				request = newMCPRequest("tools/call", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rotate","arguments":`+arguments+`,`+mcpMeta+`}}`)
+			if strings.HasPrefix(transport, "MCP") {
+				request = newMCPRequest("tools/call", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rotate","arguments":`+body+`,`+mcpMeta+`}}`)
 				request.Header.Set("Mcp-Name", "rotate")
 			}
 			request.Header.Set("Authorization", "Bearer "+rotateToken)
@@ -294,7 +303,7 @@ func TestDelegatedNativeRESTAndMCPRotationsPreserveVerifiableProofs(t *testing.T
 			}
 			var result rotationResponseWithAttestation
 			payload := response.Body.Bytes()
-			if transport == "MCP" {
+			if strings.HasPrefix(transport, "MCP") {
 				var envelope struct {
 					Result struct {
 						StructuredContent json.RawMessage `json:"structuredContent"`

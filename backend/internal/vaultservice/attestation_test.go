@@ -268,6 +268,74 @@ func TestAttestedRotationIssuesCanonicalProofAndLegacyRunRemainsString(t *testin
 	}
 }
 
+func TestAttestedRotationBindingCanonicalSize(t *testing.T) {
+	input := syntheticVaultText(t, "synthetic input", "synthetic source password", "dev")
+	output := syntheticVaultText(t, "synthetic output", "synthetic destination password", "prod")
+	// The four JSON member names and punctuation add 55 bytes to these values.
+	boundary := attestation.Binding{
+		Repository: strings.Repeat("&", 1024),
+		Revision:   strings.Repeat("r", 1024),
+		Path:       strings.Repeat("p", 1024),
+		Selector:   strings.Repeat("s", 969),
+	}
+	overBoundary := boundary
+	overBoundary.Selector += "s"
+	tests := []struct {
+		name    string
+		binding attestation.Binding
+		invalid bool
+	}{
+		{name: "ampersands", binding: attestation.Binding{Selector: strings.Repeat("&", 700)}},
+		{name: "less than", binding: attestation.Binding{Repository: strings.Repeat("<", 700)}},
+		{name: "greater than", binding: attestation.Binding{Path: strings.Repeat(">", 700)}},
+		{name: "line separator", binding: attestation.Binding{Revision: strings.Repeat("\u2028", 341)}},
+		{name: "paragraph separator", binding: attestation.Binding{Revision: strings.Repeat("\u2029", 341)}},
+		{name: "exact canonical limit", binding: boundary},
+		{name: "over canonical limit", binding: overBoundary, invalid: true},
+		{name: "empty", invalid: true},
+		{name: "oversized field", binding: attestation.Binding{Selector: strings.Repeat("s", 1025)}, invalid: true},
+		{name: "oversized UTF-8 field", binding: attestation.Binding{Path: strings.Repeat("é", 513)}, invalid: true},
+		{name: "control character", binding: attestation.Binding{Repository: "synthetic\nrepository"}, invalid: true},
+		{name: "invalid UTF-8", binding: attestation.Binding{Revision: string([]byte{0xff})}, invalid: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager := newSyntheticAttestationManager("https://vaultsmith.synthetic.test")
+			executor := &fakeExecutor{
+				decrypt: func(context.Context, string, string) (string, error) { return "synthetic plaintext", nil },
+				encrypt: func(context.Context, string, string) (string, error) { return output, nil },
+			}
+			service := NewWithOptions(testProfiles(), executor, nil, testAdmission(t), ServiceOptions{
+				AttestationEnabled: true,
+				AttestationManager: manager,
+			})
+			lease := acquireLease(t, service.Admission())
+			bound := lease.Context(t.Context())
+			result, err := service.RotateResult(bound, caller.Anonymous(), "dev", "prod", input,
+				&AttestationRequest{Binding: &test.binding})
+			if test.invalid {
+				if !HasCode(err, CodeInvalidRequest) || result.VaultText != "" || result.Attestation != nil {
+					t.Fatalf("invalid binding returned output/proof or wrong error: %v", err)
+				}
+				if len(executor.calls) != 0 || manager.signCalls != 0 {
+					t.Fatal("invalid binding performed Vault work or signed a proof")
+				}
+				return
+			}
+			if err != nil || result.VaultText != output || result.Attestation == nil {
+				t.Fatalf("valid binding did not return rotated output and proof: %v", err)
+			}
+			if len(executor.calls) != 2 || manager.signCalls != 1 {
+				t.Fatal("valid binding did not complete one attested rotation")
+			}
+			claims, err := service.VerifyAttestation(bound, *result.Attestation, input, output, &test.binding)
+			if err != nil || claims.Binding == nil || *claims.Binding != test.binding {
+				t.Fatalf("proof did not verify with the original binding and envelopes: %v", err)
+			}
+		})
+	}
+}
+
 func TestDelegatedRotationPreservesProofBindingAndDenial(t *testing.T) {
 	policy, _ := loadedServicePolicy(t, testProfiles(), "g, group:operators, role:operator\np, role:operator, rotation:dev:prod, rotate, allow\np, role:operator, profile:dev, decrypt, deny\np, role:operator, profile:prod, encrypt, deny\n")
 	input := syntheticVaultText(t, "synthetic input", "synthetic source password", "dev")
