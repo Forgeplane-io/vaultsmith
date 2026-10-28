@@ -1,0 +1,15 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice
+cpu: Apple M1 Pro
+BenchmarkVerifyGenuinelyIssuedProof-8   	       5	  40923233 ns/op	   4247091 input-bytes	   4247092 output-bytes	78292561 B/op	     580 allocs/op
+BenchmarkVerifyGenuinelyIssuedProof-8   	       6	  37656104 ns/op	   4247091 input-bytes	   4247092 output-bytes	78292429 B/op	     578 allocs/op
+BenchmarkVerifyGenuinelyIssuedProof-8   	       7	  34341702 ns/op	   4247091 input-bytes	   4247092 output-bytes	78292344 B/op	     577 allocs/op
+BenchmarkVerifyGenuinelyIssuedProof-8   	       6	  35976771 ns/op	   4247091 input-bytes	   4247092 output-bytes	78292504 B/op	     579 allocs/op
+BenchmarkVerifyGenuinelyIssuedProof-8   	       7	  35823542 ns/op	   4247091 input-bytes	   4247092 output-bytes	78292330 B/op	     577 allocs/op
+BenchmarkVerifyGenuinelyIssuedProof-8   	       7	  32463589 ns/op	   4247091 input-bytes	   4247092 output-bytes	78292440 B/op	     578 allocs/op
+BenchmarkVerifyGenuinelyIssuedProof-8   	       7	  33499804 ns/op	   4247091 input-bytes	   4247092 output-bytes	78292440 B/op	     578 allocs/op
+BenchmarkVerifyGenuinelyIssuedProof-8   	       4	  57700260 ns/op	   4247091 input-bytes	   4247092 output-bytes	78292560 B/op	     579 allocs/op
+BenchmarkVerifyGenuinelyIssuedProof-8   	       4	  54007927 ns/op	   4247091 input-bytes	   4247092 output-bytes	78292448 B/op	     578 allocs/op
+BenchmarkVerifyGenuinelyIssuedProof-8   	       5	  40871725 ns/op	   4247091 input-bytes	   4247092 output-bytes	78292459 B/op	     578 allocs/op
+PASS

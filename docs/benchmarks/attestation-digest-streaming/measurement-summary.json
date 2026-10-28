@@ -1,0 +1,74 @@
+{
+  "digest": {
+    "before": {
+      "BenchmarkDigestBytes/1024-8": {
+        "sample_count": 10,
+        "median_bytes_per_op": 2560.0,
+        "median_ns_per_op": 2947.5,
+        "median_allocations_per_op": 6.0
+      },
+      "BenchmarkDigestBytes/65536-8": {
+        "sample_count": 10,
+        "median_bytes_per_op": 147712.0,
+        "median_ns_per_op": 93998.5,
+        "median_allocations_per_op": 6.0
+      },
+      "BenchmarkDigestBytes/1048576-8": {
+        "sample_count": 10,
+        "median_bytes_per_op": 2113813.5,
+        "median_ns_per_op": 2068894.0,
+        "median_allocations_per_op": 6.0
+      },
+      "BenchmarkDigestBytes/5242880-8": {
+        "sample_count": 10,
+        "median_bytes_per_op": 10502414.5,
+        "median_ns_per_op": 6822731.5,
+        "median_allocations_per_op": 6.0
+      }
+    },
+    "after": {
+      "BenchmarkDigestBytes/1024-8": {
+        "sample_count": 10,
+        "median_bytes_per_op": 320.0,
+        "median_ns_per_op": 1933.5,
+        "median_allocations_per_op": 6.0
+      },
+      "BenchmarkDigestBytes/65536-8": {
+        "sample_count": 10,
+        "median_bytes_per_op": 320.0,
+        "median_ns_per_op": 61463.5,
+        "median_allocations_per_op": 6.0
+      },
+      "BenchmarkDigestBytes/1048576-8": {
+        "sample_count": 10,
+        "median_bytes_per_op": 320.0,
+        "median_ns_per_op": 1144578.5,
+        "median_allocations_per_op": 6.0
+      },
+      "BenchmarkDigestBytes/5242880-8": {
+        "sample_count": 10,
+        "median_bytes_per_op": 320.0,
+        "median_ns_per_op": 5961091.5,
+        "median_allocations_per_op": 6.0
+      }
+    }
+  },
+  "service": {
+    "before": {
+      "BenchmarkVerifyGenuinelyIssuedProof-8": {
+        "sample_count": 10,
+        "median_bytes_per_op": 78292444.0,
+        "median_ns_per_op": 36816437.5,
+        "median_allocations_per_op": 578.0
+      }
+    },
+    "after": {
+      "BenchmarkVerifyGenuinelyIssuedProof-8": {
+        "sample_count": 10,
+        "median_bytes_per_op": 69789248.0,
+        "median_ns_per_op": 40623027.5,
+        "median_allocations_per_op": 578.5
+      }
+    }
+  }
+}

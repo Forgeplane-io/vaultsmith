@@ -1,0 +1,25 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/forgeplane-io/vaultsmith/backend/internal/vaultservice
+cpu: Apple M1 Pro
+                             │ .tmp/evidence/service-before.txt │ .tmp/evidence/service-after.txt │
+                             │              sec/op              │    sec/op      vs base          │
+VerifyGenuinelyIssuedProof-8                       36.82m ± 47%    40.62m ± 91%  ~ (p=0.190 n=10)
+
+                             │ .tmp/evidence/service-before.txt │ .tmp/evidence/service-after.txt  │
+                             │           input-bytes            │ input-bytes   vs base            │
+VerifyGenuinelyIssuedProof-8                       4.050Mi ± 0%   4.050Mi ± 0%  ~ (p=1.000 n=10) ¹
+¹ all samples are equal
+
+                             │ .tmp/evidence/service-before.txt │ .tmp/evidence/service-after.txt  │
+                             │           output-bytes           │ output-bytes  vs base            │
+VerifyGenuinelyIssuedProof-8                       4.050Mi ± 0%   4.050Mi ± 0%  ~ (p=1.000 n=10) ¹
+¹ all samples are equal
+
+                             │ .tmp/evidence/service-before.txt │   .tmp/evidence/service-after.txt    │
+                             │               B/op               │     B/op      vs base                │
+VerifyGenuinelyIssuedProof-8                       74.67Mi ± 0%   66.56Mi ± 0%  -10.86% (p=0.000 n=10)
+
+                             │ .tmp/evidence/service-before.txt │ .tmp/evidence/service-after.txt │
+                             │            allocs/op             │   allocs/op    vs base          │
+VerifyGenuinelyIssuedProof-8                         578.0 ± 0%      578.5 ± 0%  ~ (p=0.605 n=10)

@@ -10,6 +10,7 @@ import (
 	"github.com/forgeplane-io/vaultsmith/backend/internal/ansiblevault"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/attestation"
 	"github.com/forgeplane-io/vaultsmith/backend/internal/caller"
+	"github.com/forgeplane-io/vaultsmith/backend/internal/config"
 )
 
 type syntheticAttestationManager struct {
@@ -266,6 +267,83 @@ func TestAttestedRotationIssuesCanonicalProofAndLegacyRunRemainsString(t *testin
 	if err != nil || legacyOutput != output {
 		t.Fatalf("legacy Run() = %q, %v", legacyOutput, err)
 	}
+}
+
+type attestationProfileResolver struct{ configured config.Executor }
+
+func (r attestationProfileResolver) ForProfile(id string) (ProfileExecutor, error) {
+	return r.configured.ForProfile(id)
+}
+
+type realAttestationFixture struct {
+	service *Service
+	input   string
+	result  RotationResult
+	binding *attestation.Binding
+}
+
+func newRealAttestationFixture(t testing.TB) realAttestationFixture {
+	t.Helper()
+	configured, err := config.LoadJSON(`[{"id":"dev","label":"Synthetic source","passwordEnv":"TEST_SOURCE_PASSWORD"},{"id":"prod","label":"Synthetic destination","passwordEnv":"TEST_DESTINATION_PASSWORD"}]`, func(name string) (string, bool) {
+		switch name {
+		case "TEST_SOURCE_PASSWORD":
+			return "synthetic source password", true
+		case "TEST_DESTINATION_PASSWORD":
+			return "synthetic destination password", true
+		default:
+			return "", false
+		}
+	})
+	if err != nil {
+		t.Fatal("load synthetic profiles failed")
+	}
+	source, err := configured.Executor().ForProfile("dev")
+	if err != nil {
+		t.Fatal("resolve synthetic source failed")
+	}
+	plaintext := strings.Repeat("s", MaxPlaintextBytes)
+	input, err := source.Encrypt(t.Context(), plaintext)
+	if err != nil {
+		t.Fatal("encrypt synthetic maximum plaintext failed")
+	}
+	manager := newSyntheticAttestationManager("https://vaultsmith.synthetic.test")
+	service := NewWithOptions(testProfiles(), attestationProfileResolver{configured.Executor()}, nil, nil, ServiceOptions{
+		AttestationManager: manager,
+		AttestationEnabled: true,
+	})
+	lease, err := service.Admission().TryAcquire(t.Context())
+	if err != nil {
+		t.Fatal("acquire synthetic rotation lease failed")
+	}
+	defer lease.Release()
+	bound := lease.Context(t.Context())
+	binding := syntheticBinding()
+	prepared, err := service.Prepare(bound, caller.Anonymous(), attestedRotationCommand(input, binding), lease)
+	if err != nil {
+		t.Fatal("prepare real synthetic rotation failed")
+	}
+	result, err := prepared.RunResult(bound)
+	if err != nil || result.Attestation == nil {
+		t.Fatal("real synthetic rotation did not issue an attestation")
+	}
+	destination, err := configured.Executor().ForProfile("prod")
+	if err != nil {
+		t.Fatal("resolve synthetic destination failed")
+	}
+	decrypted, err := destination.Decrypt(t.Context(), result.VaultText)
+	if err != nil || decrypted != plaintext {
+		t.Fatal("real rotation did not preserve the maximum synthetic plaintext")
+	}
+	return realAttestationFixture{service: service, input: input, result: result, binding: binding}
+}
+
+func TestAttestedRotationRealExecutorRoundTrip(t *testing.T) {
+	fixture := newRealAttestationFixture(t)
+	claims, err := fixture.service.VerifyAttestation(t.Context(), *fixture.result.Attestation, fixture.input, fixture.result.VaultText, fixture.binding)
+	if err != nil || claims.Operation != "rotate" || claims.SourceProfileID != "dev" || claims.DestinationProfileID != "prod" {
+		t.Fatal("genuinely service-issued proof did not verify for the real rotation")
+	}
+	t.Logf("plaintext_bytes=%d input_envelope_bytes=%d output_envelope_bytes=%d destination_decrypt_matches=true issued_proof_verified=true", MaxPlaintextBytes, len(fixture.input), len(fixture.result.VaultText))
 }
 
 func TestAttestedRotationBindingCanonicalSize(t *testing.T) {

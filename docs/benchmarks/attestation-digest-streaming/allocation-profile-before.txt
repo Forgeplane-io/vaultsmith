@@ -1,0 +1,18 @@
+File: digest-before.test
+Type: alloc_space
+Time: 2026-10-28 20:42:25 CET
+Showing nodes accounting for 15376.34kB, 98.98% of 15535.42kB total
+Dropped 151 nodes (cum <= 77.68kB)
+      flat  flat%   sum%        cum   cum%
+   10256kB 66.02% 66.02% 10256.25kB 66.02%  github.com/forgeplane-io/vaultsmith/backend/internal/attestation.digestCanonical
+    5120kB 32.96% 98.97%     5120kB 32.96%  internal/bytealg.MakeNoZero
+    0.34kB 0.0022% 98.98% 15452.86kB 99.47%  testing.(*B).runN
+         0     0% 98.98%     5120kB 32.96%  bytes.Repeat
+         0     0% 98.98% 15376.25kB 98.98%  github.com/forgeplane-io/vaultsmith/backend/internal/attestation.BenchmarkDigestBytes.func1
+         0     0% 98.98%  5128.12kB 33.01%  github.com/forgeplane-io/vaultsmith/backend/internal/attestation.InputDigestBytes (inline)
+         0     0% 98.98%  5128.12kB 33.01%  github.com/forgeplane-io/vaultsmith/backend/internal/attestation.OutputDigestBytes (inline)
+         0     0% 98.98%    78.21kB   0.5%  regexp.(*Regexp).MatchString (inline)
+         0     0% 98.98%    78.21kB   0.5%  regexp.(*Regexp).doMatch (inline)
+         0     0% 98.98%    78.21kB   0.5%  regexp.(*Regexp).find
+         0     0% 98.98% 15448.91kB 99.44%  testing.(*B).run1.func1
+         0     0% 98.98%   123.07kB  0.79%  testing/internal/testdeps.TestDeps.MatchString

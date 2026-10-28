@@ -1,0 +1,45 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/forgeplane-io/vaultsmith/backend/internal/attestation
+cpu: Apple M1 Pro
+BenchmarkDigestBytes/1024-8         	   80990	      2885 ns/op	 354.96 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1024-8         	  101019	      4044 ns/op	 253.21 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1024-8         	  114568	      1860 ns/op	 550.39 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1024-8         	  124978	      2007 ns/op	 510.11 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1024-8         	  119248	      2405 ns/op	 425.70 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1024-8         	  129860	      2555 ns/op	 400.75 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1024-8         	  139039	      1515 ns/op	 675.76 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1024-8         	  207207	      1323 ns/op	 773.79 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1024-8         	  211119	      1457 ns/op	 702.69 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1024-8         	  215200	      1256 ns/op	 815.11 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/65536-8        	    4072	     58408 ns/op	1122.05 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/65536-8        	    3978	     65652 ns/op	 998.24 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/65536-8        	    3956	     60228 ns/op	1088.14 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/65536-8        	    4174	     86468 ns/op	 757.92 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/65536-8        	    3708	     62699 ns/op	1045.25 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/65536-8        	    4100	     59050 ns/op	1109.84 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/65536-8        	    4068	     59694 ns/op	1097.87 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/65536-8        	    4195	     59622 ns/op	1099.20 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/65536-8        	    3715	     66301 ns/op	 988.47 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/65536-8        	    4100	     62738 ns/op	1044.60 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1048576-8      	     249	   1090308 ns/op	 961.72 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1048576-8      	     138	   1822650 ns/op	 575.30 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1048576-8      	     200	   1616891 ns/op	 648.51 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1048576-8      	     147	   1619716 ns/op	 647.38 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1048576-8      	     184	   1198849 ns/op	 874.65 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1048576-8      	     248	    970068 ns/op	1080.93 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1048576-8      	     256	    953983 ns/op	1099.16 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1048576-8      	     250	    985832 ns/op	1063.65 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1048576-8      	     240	   1063175 ns/op	 986.27 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/1048576-8      	     249	   1213735 ns/op	 863.93 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/5242880-8      	      44	   5949570 ns/op	 881.22 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/5242880-8      	      46	   6027330 ns/op	 869.85 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/5242880-8      	      40	   8584408 ns/op	 610.74 MB/s	     322 B/op	       6 allocs/op
+BenchmarkDigestBytes/5242880-8      	      50	   6873159 ns/op	 762.80 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/5242880-8      	      48	   4923708 ns/op	1064.82 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/5242880-8      	      51	   5161987 ns/op	1015.67 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/5242880-8      	      46	   5972613 ns/op	 877.82 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/5242880-8      	      43	   5887369 ns/op	 890.53 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/5242880-8      	      50	   6011044 ns/op	 872.21 MB/s	     320 B/op	       6 allocs/op
+BenchmarkDigestBytes/5242880-8      	      39	   5490335 ns/op	 954.93 MB/s	     320 B/op	       6 allocs/op
+PASS

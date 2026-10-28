@@ -1,0 +1,11 @@
+base=fa6ceac57c1782be60360d298c76d0a4e7b9c77c
+go version go1.27.3 darwin/arm64
+darwin
+arm64
+Darwin arm64
+27.0.1
+Apple M1 Pro
+10
+GOMAXPROCS=8; count=10; benchtime=200ms
+Sampling matches issue #190. B/op is the primary metric, not RSS or production latency.
+Other sessions may test concurrently; no shared-slot exclusivity.

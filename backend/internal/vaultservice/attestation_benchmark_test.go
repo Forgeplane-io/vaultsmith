@@ -160,3 +160,16 @@ func BenchmarkRotateAttestationOverhead(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkVerifyGenuinelyIssuedProof(b *testing.B) {
+	fixture := newRealAttestationFixture(b)
+	ctx := b.Context()
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := fixture.service.VerifyAttestation(ctx, *fixture.result.Attestation, fixture.input, fixture.result.VaultText, fixture.binding); err != nil {
+			b.Fatal("genuinely service-issued proof verification failed")
+		}
+	}
+	b.ReportMetric(float64(len(fixture.input)), "input-bytes")
+	b.ReportMetric(float64(len(fixture.result.VaultText)), "output-bytes")
+}
