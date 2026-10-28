@@ -1,0 +1,50 @@
+[
+  {
+    "path": "environment.txt",
+    "sha256": "b8ce1c7490bb8f5652a4dfb5576d3609673d733e9bc06f31b634f5b346cd82ff"
+  },
+  {
+    "path": "digest-before.txt",
+    "sha256": "6c4384c366c6899fa5131d343596e6d045bc5a812b14d6c998149e464e8da496"
+  },
+  {
+    "path": "digest-after.txt",
+    "sha256": "f07ea26a2c6c17dafbef1bfc4b32aca83c07b07e5ca31981fe209a0424a54fe9"
+  },
+  {
+    "path": "service-before.txt",
+    "sha256": "e54197551d66698566e5347306529aafab027ad92033908c3953af9dbc42b027"
+  },
+  {
+    "path": "service-after.txt",
+    "sha256": "fa568497ac277e45b70560a0a0f5d613e5abfcccf9ac94065434c6645aab7c7e"
+  },
+  {
+    "path": "digest-comparison.txt",
+    "sha256": "c9594d26940b816bea8f4255c4008035f5b8c1c7dbe32e9eb2ed62bf63e32d0d"
+  },
+  {
+    "path": "service-comparison.txt",
+    "sha256": "95788e4a8c85a708ea4f2526cc29f47e7a5aca7752ce71cc3c3949e67bc5d872"
+  },
+  {
+    "path": "allocation-profile-before.txt",
+    "sha256": "409005dc85db514282584b156e971c92aae52bd5f0b66ea6360f0cb005f7b08a"
+  },
+  {
+    "path": "allocation-profile-after.txt",
+    "sha256": "e047a8b1147e230f23bcf759ea99478326290fdda306f8862faf3ffe16909dde"
+  },
+  {
+    "path": "measurement-summary.json",
+    "sha256": "b01e74474cfe839e220d4bf6b8a28288b6bd77dff5a4ba4baa227aa6c0e8135a"
+  },
+  {
+    "path": "source-before.sha256",
+    "sha256": "0b1efd6a13ebdb2cac711cbf0037bb021be7188e5ff8d567309cd90138c172c7"
+  },
+  {
+    "path": "source-after.sha256",
+    "sha256": "dcbb8c14d59bc0056b988c75432713a2933f71f158a5d9973aebba7ed587e4a6"
+  }
+]

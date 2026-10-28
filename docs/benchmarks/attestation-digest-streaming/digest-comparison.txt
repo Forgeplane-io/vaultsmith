@@ -1,0 +1,36 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/forgeplane-io/vaultsmith/backend/internal/attestation
+cpu: Apple M1 Pro
+                      │ .tmp/evidence/digest-before.txt │    .tmp/evidence/digest-after.txt    │
+                      │             sec/op              │    sec/op     vs base                │
+DigestBytes/1024-8                         2.948µ ± 20%   1.934µ ± 49%  -34.40% (p=0.029 n=10)
+DigestBytes/65536-8                        94.00µ ± 32%   61.46µ ±  8%  -34.61% (p=0.000 n=10)
+DigestBytes/1048576-8                      2.069m ± 14%   1.145m ± 42%  -44.68% (p=0.000 n=10)
+DigestBytes/5242880-8                      6.823m ± 31%   5.961m ± 15%        ~ (p=0.123 n=10)
+geomean                                    250.1µ         168.7µ        -32.52%
+
+                      │ .tmp/evidence/digest-before.txt │     .tmp/evidence/digest-after.txt     │
+                      │               B/s               │      B/s        vs base                │
+DigestBytes/1024-8                        331.6Mi ± 26%    505.7Mi ± 46%  +52.50% (p=0.029 n=10)
+DigestBytes/65536-8                       664.9Mi ± 25%   1017.3Mi ±  7%  +52.99% (p=0.000 n=10)
+DigestBytes/1048576-8                     483.4Mi ± 12%    875.6Mi ± 29%  +81.16% (p=0.000 n=10)
+DigestBytes/5242880-8                     732.9Mi ± 25%    838.8Mi ± 15%        ~ (p=0.123 n=10)
+geomean                                   528.7Mi          784.0Mi        +48.30%
+
+                      │ .tmp/evidence/digest-before.txt │   .tmp/evidence/digest-after.txt    │
+                      │              B/op               │    B/op     vs base                 │
+DigestBytes/1024-8                          2560.0 ± 0%   320.0 ± 0%   -87.50% (p=0.000 n=10)
+DigestBytes/65536-8                       147712.0 ± 0%   320.0 ± 0%   -99.78% (p=0.000 n=10)
+DigestBytes/1048576-8                    2113813.5 ± 0%   320.0 ± 0%   -99.98% (p=0.000 n=10)
+DigestBytes/5242880-8                   10502414.5 ± 0%   320.0 ± 0%  -100.00% (p=0.000 n=10)
+geomean                                    295.6Ki        320.0        -99.89%
+
+                      │ .tmp/evidence/digest-before.txt │   .tmp/evidence/digest-after.txt    │
+                      │            allocs/op            │ allocs/op   vs base                 │
+DigestBytes/1024-8                           6.000 ± 0%   6.000 ± 0%       ~ (p=1.000 n=10) ¹
+DigestBytes/65536-8                          6.000 ± 0%   6.000 ± 0%       ~ (p=1.000 n=10) ¹
+DigestBytes/1048576-8                        6.000 ± 0%   6.000 ± 0%       ~ (p=1.000 n=10) ¹
+DigestBytes/5242880-8                        6.000 ± 0%   6.000 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                      6.000        6.000       +0.00%
+¹ all samples are equal

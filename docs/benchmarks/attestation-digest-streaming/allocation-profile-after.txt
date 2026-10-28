@@ -1,0 +1,29 @@
+File: digest-after.test
+Type: alloc_space
+Time: 2026-10-28 20:43:51 CET
+Showing nodes accounting for 5198.16kB, 98.46% of 5279.70kB total
+Dropped 145 nodes (cum <= 26.40kB)
+      flat  flat%   sum%        cum   cum%
+    5120kB 96.98% 96.98%     5120kB 96.98%  internal/bytealg.MakeNoZero
+      72kB  1.36% 98.34%       72kB  1.36%  regexp.(*bitState).reset
+    2.53kB 0.048% 98.39%    73.02kB  1.38%  testing.(*B).Run
+    1.90kB 0.036% 98.42%    44.86kB  0.85%  regexp.compile
+    0.83kB 0.016% 98.44%    59.16kB  1.12%  testing.runBenchmarks
+    0.53kB  0.01% 98.45%    49.48kB  0.94%  testing.newMatcher
+    0.23kB 0.0044% 98.45%  5196.92kB 98.43%  testing.(*B).runN
+    0.07kB 0.0013% 98.45%    65.05kB  1.23%  testing.(*M).Run
+    0.06kB 0.0012% 98.46%    70.44kB  1.33%  github.com/forgeplane-io/vaultsmith/backend/internal/attestation.BenchmarkDigestBytes
+         0     0% 98.46%     5120kB 96.98%  bytes.Repeat
+         0     0% 98.46%  5120.42kB 96.98%  github.com/forgeplane-io/vaultsmith/backend/internal/attestation.BenchmarkDigestBytes.func1
+         0     0% 98.46%    65.05kB  1.23%  main.main
+         0     0% 98.46%    78.21kB  1.48%  regexp.(*Regexp).MatchString (inline)
+         0     0% 98.46%    74.62kB  1.41%  regexp.(*Regexp).backtrack
+         0     0% 98.46%    78.21kB  1.48%  regexp.(*Regexp).doMatch (inline)
+         0     0% 98.46%    78.21kB  1.48%  regexp.(*Regexp).find
+         0     0% 98.46%    44.86kB  0.85%  regexp.Compile (inline)
+         0     0% 98.46%    65.05kB  1.23%  runtime.main
+         0     0% 98.46%  5192.97kB 98.36%  testing.(*B).run1.func1
+         0     0% 98.46%    75.30kB  1.43%  testing.(*matcher).fullName
+         0     0% 98.46%    74.45kB  1.41%  testing.simpleMatch.matches
+         0     0% 98.46%    48.77kB  0.92%  testing.simpleMatch.verify
+         0     0% 98.46%   123.07kB  2.33%  testing/internal/testdeps.TestDeps.MatchString

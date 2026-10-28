@@ -46,9 +46,9 @@ func OutputDigestBytes(canonical []byte) string {
 }
 
 func digestCanonical(domain, canonical []byte) string {
-	input := make([]byte, 0, len(domain)+len(canonical))
-	input = append(input, domain...)
-	input = append(input, canonical...)
-	digest := sha256.Sum256(input)
-	return hex.EncodeToString(digest[:])
+	// Avoid a second full-envelope buffer just to prepend the domain.
+	digest := sha256.New()
+	digest.Write(domain)
+	digest.Write(canonical)
+	return hex.EncodeToString(digest.Sum(nil))
 }
