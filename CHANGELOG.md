@@ -10,6 +10,24 @@ All notable changes to Vaultsmith are documented here. Release Please maintains 
 - Proofs use `PUBLIC_BASE_URL` as the issuer and reload a valid changed keyring without restart. A malformed replacement keeps the previous valid keyring active.
 - When proofs are disabled, normal encrypt, decrypt, and rotate behavior remains available and no signing Secret is required.
 
+## [1.0.1](https://github.com/Forgeplane-io/vaultsmith/compare/v1.0.0...v1.0.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **attestation:** measure canonical binding bytes ([962e965](https://github.com/Forgeplane-io/vaultsmith/commit/962e965f9bb603c775c0c36d1690f0c41963356c)), closes [#187](https://github.com/Forgeplane-io/vaultsmith/issues/187)
+* **auth:** preserve valid no-refresh sessions ([7e73642](https://github.com/Forgeplane-io/vaultsmith/commit/7e736424731c5b5ab003f7f315cdb6782ad79c0f))
+* **auth:** use the current CSRF cookie ([aa1c5e6](https://github.com/Forgeplane-io/vaultsmith/commit/aa1c5e6c0646cc080274ae96bac2a289e96470c2))
+* **frontend:** keep selected proof requirements visible ([d9dc248](https://github.com/Forgeplane-io/vaultsmith/commit/d9dc24801f3c946c3b3f2a5880fdd313ef48788e)), closes [#189](https://github.com/Forgeplane-io/vaultsmith/issues/189)
+* **generate:** accept quoted email SANs ([fa6ceac](https://github.com/Forgeplane-io/vaultsmith/commit/fa6ceac57c1782be60360d298c76d0a4e7b9c77c)), closes [#188](https://github.com/Forgeplane-io/vaultsmith/issues/188)
+* **helm:** reject Valkey fullname collisions ([2d8e912](https://github.com/Forgeplane-io/vaultsmith/commit/2d8e912b064d10e1d6b3e277feeb9b1f93a19727))
+* **release:** keep releases draft until verification ([0854d99](https://github.com/Forgeplane-io/vaultsmith/commit/0854d99289ce1857c37a680f186be45e333b3b69))
+
+
+### Performance
+
+* **attestation:** avoid full-envelope digest copies ([37a0a97](https://github.com/Forgeplane-io/vaultsmith/commit/37a0a9703b8db177f0b11d448a901955237ef8dc)), closes [#190](https://github.com/Forgeplane-io/vaultsmith/issues/190)
+
 ## [1.0.0](https://github.com/Forgeplane-io/vaultsmith/compare/v0.9.5...v1.0.0) (2026-10-28)
 
 
