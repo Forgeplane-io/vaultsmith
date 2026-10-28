@@ -27,7 +27,7 @@ assert_contains_block() {
 }
 
 render() {
-  helm template vaultsmith "$CHART_DIR" "$@"
+  helm template "${release_name:-vaultsmith}" "$CHART_DIR" "$@"
 }
 
 assert_render_fails() {
@@ -299,6 +299,35 @@ assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'- name: REDIS_USER
 assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'- name: REDIS_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  name: "vaultsmith-valkey-auth"\n                  key: "default"\n                  optional: false' 'bundled Valkey password Secret was not wired into Vaultsmith'
 assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'strategy:\n    type: Recreate' 'persistent bundled Valkey does not use Recreate strategy'
 assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'app.kubernetes.io/name: "valkey"\n              app.kubernetes.io/instance: "vaultsmith"\n      ports:\n        - protocol: TCP\n          port: 6379' 'bundled Valkey NetworkPolicy egress is missing'
+
+fullname_collision_error='set fullnameOverride to a distinct name'
+release_name=vaultsmith-valkey assert_render_fails_with "$fullname_collision_error" -f "$TMP_DIR/bundled-native.yaml"
+release_name=vaultsmith-valkey assert_render_fails_with "$fullname_collision_error" -f "$TMP_DIR/off-default.yaml"
+assert_render_fails_with "$fullname_collision_error" -f "$TMP_DIR/bundled-native.yaml" --set valkey.fullnameOverride=vaultsmith
+assert_render_fails_with "$fullname_collision_error" -f "$TMP_DIR/bundled-native.yaml" --set nameOverride=valkey
+# Distinct override inputs still collide after the fullname helpers' DNS-label truncation.
+long_fullname="$(printf 'x%.0s' {1..63})"
+assert_render_fails_with "$fullname_collision_error" -f "$TMP_DIR/bundled-native.yaml" --set fullnameOverride="${long_fullname}-app" --set valkey.fullnameOverride="${long_fullname}-cache"
+
+release_name=vaultsmith-valkey render -f "$TMP_DIR/bundled-native.yaml" --set fullnameOverride=vaultsmith-app > "$TMP_DIR/distinct-fullname-render.yaml"
+for kind in Deployment Service ServiceAccount; do
+  for rendered in bundled-native distinct-fullname; do
+    [[ "$(grep -c "^kind: $kind$" "$TMP_DIR/$rendered-render.yaml")" == 2 ]] || fail "$rendered render must contain two distinct $kind resources"
+    assert_contains_block "$TMP_DIR/$rendered-render.yaml" "$(printf 'kind: %s\nmetadata:\n  name: vaultsmith-valkey\n  labels:' "$kind")" "$rendered render has the wrong Valkey $kind name"
+  done
+  assert_contains_block "$TMP_DIR/bundled-native-render.yaml" "$(printf 'kind: %s\nmetadata:\n  name: vaultsmith\n  labels:' "$kind")" "normal render has the wrong Vaultsmith $kind name"
+  assert_contains_block "$TMP_DIR/distinct-fullname-render.yaml" "$(printf 'kind: %s\nmetadata:\n  name: vaultsmith-app\n  labels:' "$kind")" "distinct-fullname render has the wrong Vaultsmith $kind name"
+done
+assert_contains_block "$TMP_DIR/distinct-fullname-render.yaml" $'- name: REDIS_ADDR\n              value: "vaultsmith-valkey:6379"' 'distinct parent fullname changed the bundled Valkey address'
+assert_contains_block "$TMP_DIR/distinct-fullname-render.yaml" $'kind: Secret\nmetadata:\n  name: vaultsmith-valkey-auth' 'distinct parent fullname changed the bundled Valkey auth Secret name'
+assert_contains_block "$TMP_DIR/distinct-fullname-render.yaml" $'- name: REDIS_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  name: "vaultsmith-valkey-auth"\n                  key: "default"\n                  optional: false' 'distinct parent fullname changed the Vaultsmith password Secret reference'
+assert_contains_block "$TMP_DIR/distinct-fullname-render.yaml" $'- name: valkey-users-secret\n          secret:\n            secretName: vaultsmith-valkey-auth' 'distinct parent fullname changed the Valkey password Secret reference'
+
+release_name=vaultsmith-valkey render -f "$TMP_DIR/native.yaml" > "$TMP_DIR/colliding-name-external-render.yaml"
+assert_contains_block "$TMP_DIR/colliding-name-external-render.yaml" $'kind: Deployment\nmetadata:\n  name: vaultsmith-valkey' 'Valkey-disabled render rejected the otherwise colliding release name'
+if grep -Fq '# Source: vaultsmith/charts/valkey/' "$TMP_DIR/colliding-name-external-render.yaml"; then
+  fail 'Valkey-disabled render unexpectedly contains bundled Valkey resources'
+fi
 
 external_valkey_error='auth.redis.address must be empty when the bundled Valkey chart is enabled'
 assert_render_fails_with "$external_valkey_error" -f "$TMP_DIR/bundled-native.yaml" --set auth.redis.address=redis.example.test:6379
