@@ -1,0 +1,106 @@
+{
+  "before": {
+    "phase": "before",
+    "source": "962e965f9bb603c775c0c36d1690f0c41963356c",
+    "diff_sha256": "aa1bd2d06dc1e54aeb5428eeed1c8faa0dc38f9d38df0cf4f4393362df54c5ce",
+    "changed_files": [
+      "backend/internal/generate/x509_test.go",
+      "backend/internal/httpapi/generate_http_test.go"
+    ],
+    "browser": "Chrome/156.0.8078.74",
+    "route": "http://127.0.0.1:18090/",
+    "role": "loopback auth-off synthetic fixture",
+    "fixture": "Same synthetic profile/password, email SAN and algorithm; isolated Chrome profile per phase.",
+    "state": "Generate X.509 CSR, dev profile, Ed25519, only email SAN: \"ops team\"@example.test, submitted",
+    "generation_http_status": 400,
+    "vault_output_present": false,
+    "public_csr_present": false,
+    "error": "The request was not accepted. Review the generation settings.",
+    "screenshots": [
+      {
+        "path": "before-desktop.png",
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        },
+        "crop": "SAN settings through submission error or sealed result; unchanged subject/navigation omitted.",
+        "sha256": "97de75ddc3f6b449d9ca6a9b2a5de404a3f722552b417a732cc2b83bf3ad6546",
+        "image_dimensions": {
+          "width": 1440,
+          "height": 531
+        }
+      },
+      {
+        "path": "before-mobile.png",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "crop": "SAN settings through submission error or sealed result; unchanged subject/navigation omitted.",
+        "sha256": "78b1c24fb54cab2cadb0bfbbc01345097c11e73c85eb717edb71fb3978ea3507",
+        "image_dimensions": {
+          "width": 390,
+          "height": 909
+        }
+      }
+    ]
+  },
+  "after": {
+    "phase": "after",
+    "source": "962e965f9bb603c775c0c36d1690f0c41963356c",
+    "diff_sha256": "8d47cf98c05a7196cb649b9e20c5cb7339d81cdbd58e24be936b746d84d0835b",
+    "changed_files": [
+      "backend/internal/generate/x509.go",
+      "backend/internal/generate/x509_test.go",
+      "backend/internal/httpapi/generate_http_test.go"
+    ],
+    "browser": "Chrome/156.0.8078.74",
+    "route": "http://127.0.0.1:18090/",
+    "role": "loopback auth-off synthetic fixture",
+    "fixture": "Same synthetic profile/password, email SAN and algorithm; isolated Chrome profile per phase.",
+    "state": "Generate X.509 CSR, dev profile, Ed25519, only email SAN: \"ops team\"@example.test, submitted",
+    "generation_http_status": 200,
+    "vault_output_present": true,
+    "public_csr_present": true,
+    "error": "",
+    "csr_signature_valid": true,
+    "email_san_exact": true,
+    "fingerprint_matches": true,
+    "sealed_private_matches_csr": true,
+    "no_private_pem_rendered": true,
+    "screenshots": [
+      {
+        "path": "after-desktop.png",
+        "viewport": {
+          "width": 1440,
+          "height": 1000
+        },
+        "crop": "SAN settings through submission error or sealed result; unchanged subject/navigation omitted.",
+        "sha256": "dc4b171d37012468b589b52e59ffbe5503149eeba4889c2a0a4e73c74574aa19",
+        "image_dimensions": {
+          "width": 1440,
+          "height": 1149
+        }
+      },
+      {
+        "path": "after-mobile.png",
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "crop": "SAN settings through submission error or sealed result; unchanged subject/navigation omitted.",
+        "sha256": "a4c7b1fc19b58631a8aa8cb7de85cb36c93b6d2d942cc3bd62d4bfac7cba37ad",
+        "image_dimensions": {
+          "width": 390,
+          "height": 2098
+        }
+      }
+    ],
+    "public_csr": {
+      "path": "after-public.csr.pem",
+      "sha256": "67699afd2cbf51a839c0169ab84a4e7a146920344d22d73c54ee1b3f61e38e33",
+      "openssl_signature_verified": true,
+      "tool": "OpenSSL 4.1.0 23 Oct 2026 (Library: OpenSSL 4.1.0 23 Oct 2026)"
+    }
+  }
+}

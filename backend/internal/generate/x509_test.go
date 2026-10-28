@@ -180,6 +180,42 @@ func TestGenerateX509CSRPreservesURISpellings(t *testing.T) {
 	}
 }
 
+func TestGenerateX509CSRPreservesEmailSpellings(t *testing.T) {
+	want := []string{
+		`ops@example.test`, `"ops"@example.test`, `"ops team"@example.test`,
+		`"ops\"team"@example.test`, `"ops\\team"@example.test`, `"ops@team"@example.test`,
+		`"o\ps"@example.test`, `"ops(team)"@example.test`,
+	}
+	result, err := New().GenerateX509CSR(X509CSRParameters{
+		Algorithm: X509AlgorithmEd25519,
+		SANs:      &X509SANs{EmailAddresses: want},
+	})
+	if err != nil {
+		t.Fatalf("GenerateX509CSR() error = %v", err)
+	}
+	csr, _ := parseX509CSRResult(t, result.CSRPEM())
+	if err := csr.CheckSignature(); err != nil {
+		t.Fatal(err)
+	}
+	if !equalStrings(csr.EmailAddresses, want) || len(csr.Extensions) != 1 {
+		t.Fatal("CSR did not preserve the ordered email SAN identities")
+	}
+	var names []asn1.RawValue
+	if rest, err := asn1.Unmarshal(csr.Extensions[0].Value, &names); err != nil || len(rest) != 0 || len(names) != len(want) {
+		t.Fatal("invalid email SAN DER")
+	}
+	for index, name := range names {
+		if name.Class != 2 || name.Tag != 1 || name.IsCompound || string(name.Bytes) != want[index] {
+			t.Fatalf("email SAN %d changed its original bytes", index)
+		}
+	}
+	private, _ := parseX509PrivateResult(t, result.PrivateBytes())
+	spki, err := x509.MarshalPKIXPublicKey(private.(crypto.Signer).Public())
+	if err != nil || !bytes.Equal(spki, csr.RawSubjectPublicKeyInfo) {
+		t.Fatal("CSR/private key mismatch")
+	}
+}
+
 func TestGenerateX509CSRPreservesIPvFutureURI(t *testing.T) {
 	const wantURI = "example://[v1.future]/path"
 	tests := []struct {
@@ -281,6 +317,18 @@ func TestGenerateX509CSRRejectsInvalidIdentityBeforeRandomness(t *testing.T) {
 		{name: "DNS empty label", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{DNSNames: []string{"service..example"}}}},
 		{name: "DNS wildcard is not a label", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{DNSNames: []string{"*.example.test"}}}},
 		{name: "email display name", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{"Operator <ops@example.test>"}}}},
+		{name: "email angle wrapper", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{`<ops@example.test>`}}}},
+		{name: "email quoted angle wrapper", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{`<"ops team"@example.test>`}}}},
+		{name: "email empty display name", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{`"" <ops@example.test>`}}}},
+		{name: "email external comment", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{`ops@example.test (comment)`}}}},
+		{name: "email quoted external comment", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{`"ops team"@example.test (comment)`}}}},
+		{name: "email comment before domain", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{`"ops team"@(comment)example.test`}}}},
+		{name: "email outside whitespace", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{`"ops team" @example.test`}}}},
+		{name: "email quoted control", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{"\"ops\tteam\"@example.test"}}}},
+		{name: "email quoted non-ASCII", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{`"öps team"@example.test`}}}},
+		{name: "email malformed quoting", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{`"ops"team"@example.test`}}}},
+		{name: "email unterminated escape", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{`"ops\`}}}},
+		{name: "email address list", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{`"ops team"@example.test, other@example.test`}}}},
 		{name: "email non-ASCII", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{EmailAddresses: []string{"öps@example.test"}}}},
 		{name: "IP is not canonical", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{IPAddresses: []string{"2001:DB8::1"}}}},
 		{name: "scoped IP cannot be encoded in a SAN", parameters: X509CSRParameters{Algorithm: X509AlgorithmEd25519, SANs: &X509SANs{IPAddresses: []string{"fe80::1%eth0"}}}},

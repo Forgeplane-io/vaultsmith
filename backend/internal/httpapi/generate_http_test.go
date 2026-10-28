@@ -133,23 +133,71 @@ func generateTestHandler(t *testing.T, generator *recordingMaterialGenerator, ex
 	)
 }
 
-func TestGenerateURISpellingsThroughRESTAndMCP(t *testing.T) {
+func TestGenerateSANSpellingsThroughRESTAndMCP(t *testing.T) {
 	for _, transport := range []string{"REST", "MCP"} {
-		for _, uri := range []string{"HTTPS://example.test/path", "https://example.test/path#", "https://example.test/path"} {
-			t.Run(transport+"/"+uri, func(t *testing.T) {
+		for _, test := range []struct {
+			name    string
+			field   string
+			value   string
+			tag     int
+			invalid bool
+		}{
+			{name: "URI uppercase scheme", field: "uris", value: "HTTPS://example.test/path", tag: 6},
+			{name: "URI empty fragment", field: "uris", value: "https://example.test/path#", tag: 6},
+			{name: "URI bare", field: "uris", value: "https://example.test/path", tag: 6},
+			{name: "email bare", field: "emailAddresses", value: `ops@example.test`, tag: 1},
+			{name: "email redundant quotes", field: "emailAddresses", value: `"ops"@example.test`, tag: 1},
+			{name: "email quoted space", field: "emailAddresses", value: `"ops team"@example.test`, tag: 1},
+			{name: "email escaped quote", field: "emailAddresses", value: `"ops\"team"@example.test`, tag: 1},
+			{name: "email escaped backslash", field: "emailAddresses", value: `"ops\\team"@example.test`, tag: 1},
+			{name: "email quoted at", field: "emailAddresses", value: `"ops@team"@example.test`, tag: 1},
+			{name: "email escaped letter", field: "emailAddresses", value: `"o\ps"@example.test`, tag: 1},
+			{name: "email literal parentheses", field: "emailAddresses", value: `"ops(team)"@example.test`, tag: 1},
+			{name: "email quoted angle wrapper", field: "emailAddresses", value: `<"ops team"@example.test>`, invalid: true},
+			{name: "email quoted external comment", field: "emailAddresses", value: `"ops team"@example.test (comment)`, invalid: true},
+		} {
+			t.Run(transport+"/"+test.name, func(t *testing.T) {
 				executor := &generateTestExecutor{}
-				parameters := `{"algorithm":"ed25519","sans":{"uris":["` + uri + `"]}}`
+				parameters := mustJSON(t, map[string]any{
+					"algorithm": "ed25519",
+					"sans":      map[string][]string{test.field: {test.value}},
+				})
 				handler := generateTestHandler(t, nil, executor, nil)
 				request := httptest.NewRequest(http.MethodPost, "/api/v1/generate", strings.NewReader(`{"kind":"x509_csr","profileId":"dev","parameters":`+parameters+`}`))
 				request.Header.Set("Content-Type", "application/json")
 				if transport == "MCP" {
 					handler = mcpGenerateOffHandler(t, nil, executor, nil)
-					request = newMCPGenerateRequest("generate_x509_csr", `{"profileId":"dev","algorithm":"ed25519","sans":{"uris":["`+uri+`"]}}`)
+					request = newMCPGenerateRequest("generate_x509_csr", `{"profileId":"dev",`+parameters[1:])
 				}
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(response, request)
+				if test.invalid {
+					if len(executor.plaintext) != 0 {
+						t.Fatal("invalid email SAN performed encryption")
+					}
+					if transport == "REST" {
+						if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) {
+							t.Fatal("invalid email SAN did not return the REST invalid_request error")
+						}
+					} else {
+						var envelope struct {
+							Result struct {
+								IsError           bool            `json:"isError"`
+								StructuredContent json.RawMessage `json:"structuredContent"`
+							} `json:"result"`
+						}
+						if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &envelope) != nil ||
+							!envelope.Result.IsError || len(envelope.Result.StructuredContent) != 0 {
+							t.Fatal("invalid email SAN did not return an MCP tool error without output")
+						}
+					}
+					return
+				}
 				if response.Code != http.StatusOK {
 					t.Fatalf("status = %d", response.Code)
+				}
+				if len(executor.plaintext) != 1 || strings.Contains(response.Body.String(), "PRIVATE KEY") {
+					t.Fatal("Generate did not seal exactly one private key or exposed private PEM")
 				}
 				var payload map[string]any
 				if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
@@ -196,8 +244,8 @@ func TestGenerateURISpellingsThroughRESTAndMCP(t *testing.T) {
 					t.Fatal("expected SAN extension")
 				}
 				var names []asn1.RawValue
-				if rest, err := asn1.Unmarshal(csr.Extensions[0].Value, &names); err != nil || len(rest) != 0 || len(names) != 1 || names[0].Class != 2 || names[0].Tag != 6 || names[0].IsCompound || string(names[0].Bytes) != uri {
-					t.Fatal("URI SAN bytes changed")
+				if rest, err := asn1.Unmarshal(csr.Extensions[0].Value, &names); err != nil || len(rest) != 0 || len(names) != 1 || names[0].Class != 2 || names[0].Tag != test.tag || names[0].IsCompound || string(names[0].Bytes) != test.value {
+					t.Fatal("SAN identity bytes changed")
 				}
 				t.Log("Generate -> Vault decryption -> exact SAN DER, signature and SPKI verified")
 			})
