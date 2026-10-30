@@ -92,7 +92,7 @@ valkey:
     requestedSize: 1Gi
   auth:
     enabled: true
-    # The parent chart creates this Secret and preserves its password on upgrade.
+    # By default the parent creates this Secret; server-connected Helm can reuse it.
     usersExistingSecret: '{{ include "valkey.fullname" . }}-auth'
     aclUsers:
       default:

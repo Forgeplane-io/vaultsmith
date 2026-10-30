@@ -160,7 +160,7 @@ secret:
   existingSecret: vaultsmith-passwords
 ```
 
-Create the referenced application Secret and policy ConfigMap before installing. Each `passwordSecretKey` must exist in `secret.existingSecret`. The bundled Valkey service and password Secret are created by the chart. Set `valkey.enabled: false` and configure `auth.redis.address` and its credentials when using an external Redis-compatible service.
+Create the referenced application Secret and policy ConfigMap before installing. Each `passwordSecretKey` must exist in `secret.existingSecret`. The bundled Valkey service and, by default, its password Secret are created by the chart. Set `valkey.enabled: false` and configure `auth.redis.address` and its credentials when using an external Redis-compatible service.
 
 Use a distinct `auth.redis.keyPrefix` (`REDIS_KEY_PREFIX`) for each deployment
 sharing an external Redis database, including separate environments. The chart's
@@ -168,6 +168,35 @@ external-Redis default remains `vaultsmith:`; it is not a unique deployment
 namespace. Release-local bundled Valkey reduces namespace collisions. Namespace
 isolation is defense in depth, not a substitute for the browser-session
 issuer/client/resource binding. Do not share a namespace between relying parties.
+
+### Bundled Valkey password
+
+The default generated Secret uses Helm `lookup` to reuse its password during a
+server-connected upgrade. Client-side rendering, including GitOps rendering that
+cannot look up the live Secret, generates a new password on each render. For that
+workflow, create a separately managed Secret in the release namespace with the
+password under the `default` key, then set its literal name. Use a
+cryptographically random, nonempty alphanumeric password with no trailing
+newline: the bundled Valkey init script transforms some other byte sequences.
+Choose a Secret name that is not interpreted as a non-string YAML scalar.
+
+```yaml
+valkey:
+  auth:
+    usersExistingSecret: vaultsmith-valkey-stable
+```
+
+The chart then references that Secret from Vaultsmith and Valkey without
+creating it. Ensure the Secret and key are ready before deploying. When migrating
+from a chart-generated Secret, use a separately named Secret and plan its
+ownership and rollback: Helm or a GitOps controller may remove the old generated
+Secret once it is no longer rendered. Its value must match the running Valkey
+credential unless a coordinated credential rotation is planned.
+
+Updating the Secret does not automatically rotate the running credentials:
+Vaultsmith reads its password from an environment variable and Valkey builds its
+ACL at pod initialization. Plan a coordinated restart and a recovery path; a
+mismatch can make Vaultsmith unavailable and may interrupt active sessions.
 
 ### Proof values and keyring Secret
 
