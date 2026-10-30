@@ -74,7 +74,7 @@
           "type": "object",
           "properties": {
             "enabled": { "const": true },
-            "usersExistingSecret": { "const": "{{ include \"valkey.fullname\" . }}-auth" },
+            "usersExistingSecret": { "type": "string", "minLength": 1 },
             "aclConfig": { "const": "" },
             "aclUsers": {
               "type": "object",

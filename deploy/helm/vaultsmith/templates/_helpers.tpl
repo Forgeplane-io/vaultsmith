@@ -27,7 +27,11 @@
 {{- end }}
 
 {{- define "vaultsmith.valkeyAuthSecretName" -}}
+{{- if eq .Values.valkey.auth.usersExistingSecret `{{ include "valkey.fullname" . }}-auth` -}}
 {{- printf "%s-auth" (include "vaultsmith.valkeyFullname" .) -}}
+{{- else -}}
+{{- .Values.valkey.auth.usersExistingSecret -}}
+{{- end -}}
 {{- end }}
 
 {{- define "vaultsmith.redisAddress" -}}
@@ -112,7 +116,11 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- if not .Values.valkey.auth.enabled }}{{ fail "valkey.auth.enabled must remain true when the bundled Valkey chart is enabled" }}{{ end }}
 {{- if ne .Values.valkey.deploymentStrategy "Recreate" }}{{ fail "valkey.deploymentStrategy must be Recreate for the bundled standalone Valkey chart" }}{{ end }}
-{{- if ne .Values.valkey.auth.usersExistingSecret `{{ include "valkey.fullname" . }}-auth` }}{{ fail "valkey.auth.usersExistingSecret is managed by the parent chart" }}{{ end }}
+{{- $secretName := .Values.valkey.auth.usersExistingSecret }}
+{{- if ne $secretName `{{ include "valkey.fullname" . }}-auth` }}
+{{- if or (gt (len $secretName) 253) (not (regexMatch `^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` $secretName)) }}{{ fail "valkey.auth.usersExistingSecret must be a literal Kubernetes Secret name" }}{{ end }}
+{{- if not (kindIs "string" (index (fromYaml (printf "name: %s" $secretName)) "name")) }}{{ fail "valkey.auth.usersExistingSecret must render as a YAML string; choose a non-ambiguous name" }}{{ end }}
+{{- end }}
 {{- if ne (len .Values.valkey.auth.aclUsers) 1 }}{{ fail "valkey.auth.aclUsers must contain exactly the managed default user" }}{{ end }}
 {{- if not (hasKey .Values.valkey.auth.aclUsers "default") }}{{ fail "valkey.auth.aclUsers.default is required for the bundled Valkey chart" }}{{ end }}
 {{- if hasKey .Values.valkey.auth.aclUsers.default "password" }}{{ fail "valkey.auth.aclUsers.default.password must not be set; the parent Secret owns the password" }}{{ end }}

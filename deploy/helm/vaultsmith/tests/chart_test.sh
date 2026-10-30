@@ -300,6 +300,36 @@ assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'- name: REDIS_PASS
 assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'strategy:\n    type: Recreate' 'persistent bundled Valkey does not use Recreate strategy'
 assert_contains_block "$TMP_DIR/bundled-native-render.yaml" $'app.kubernetes.io/name: "valkey"\n              app.kubernetes.io/instance: "vaultsmith"\n      ports:\n        - protocol: TCP\n          port: 6379' 'bundled Valkey NetworkPolicy egress is missing'
 
+stable_secret_args=(
+  --set valkey.auth.usersExistingSecret=vaultsmith-valkey-stable
+)
+render -f "$TMP_DIR/bundled-native.yaml" "${stable_secret_args[@]}" > "$TMP_DIR/stable-valkey-render.yaml"
+render -f "$TMP_DIR/bundled-native.yaml" "${stable_secret_args[@]}" > "$TMP_DIR/stable-valkey-render-again.yaml"
+cmp -s "$TMP_DIR/stable-valkey-render.yaml" "$TMP_DIR/stable-valkey-render-again.yaml" || fail 'externally managed Valkey Secret render is not deterministic'
+assert_contains_block "$TMP_DIR/stable-valkey-render.yaml" $'- name: REDIS_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  name: "vaultsmith-valkey-stable"\n                  key: "default"\n                  optional: false' 'Vaultsmith does not use the externally managed Valkey Secret'
+assert_contains_block "$TMP_DIR/stable-valkey-render.yaml" $'- name: valkey-users-secret\n          secret:\n            secretName: vaultsmith-valkey-stable' 'bundled Valkey does not use the externally managed Secret'
+if grep -Fq '# Source: vaultsmith/templates/valkey-secret.yaml' "$TMP_DIR/stable-valkey-render.yaml"; then
+  fail 'chart unexpectedly creates a bundled Valkey Secret when one is externally managed'
+fi
+render -f "$TMP_DIR/off-default.yaml" "${stable_secret_args[@]}" > "$TMP_DIR/stable-valkey-off-render.yaml"
+assert_contains_block "$TMP_DIR/stable-valkey-off-render.yaml" $'- name: valkey-users-secret\n          secret:\n            secretName: vaultsmith-valkey-stable' 'off mode does not use the externally managed Valkey Secret'
+if grep -Fq '# Source: vaultsmith/templates/valkey-secret.yaml' "$TMP_DIR/stable-valkey-off-render.yaml"; then
+  fail 'off mode unexpectedly creates a bundled Valkey Secret when one is externally managed'
+fi
+for schema in enabled skipped; do
+  schema_arg=''
+  if [[ "$schema" == skipped ]]; then schema_arg=--skip-schema-validation; fi
+  assert_render_fails_with 'valkey.auth.usersExistingSecret must be a literal Kubernetes Secret name' -f "$TMP_DIR/bundled-native.yaml" ${schema_arg:+'--skip-schema-validation'} --set-string 'valkey.auth.usersExistingSecret=\{\{ .Release.Name \}\}'
+  assert_render_fails_with 'valkey.auth.usersExistingSecret must be a literal Kubernetes Secret name' -f "$TMP_DIR/off-default.yaml" ${schema_arg:+'--skip-schema-validation'} --set valkey.auth.usersExistingSecret=Invalid_Name
+  for scalar_name in true null 123 on; do
+    assert_render_fails_with 'valkey.auth.usersExistingSecret must render as a YAML string' -f "$TMP_DIR/bundled-native.yaml" ${schema_arg:+'--skip-schema-validation'} --set-string "valkey.auth.usersExistingSecret=$scalar_name"
+  done
+  assert_render_fails_with 'auth.redis.password.existingSecret must be empty when the bundled Valkey chart is enabled' -f "$TMP_DIR/bundled-native.yaml" ${schema_arg:+'--skip-schema-validation'} "${stable_secret_args[@]}" --set auth.redis.password.existingSecret=other
+done
+
+render -f "$TMP_DIR/native.yaml" --set auth.redis.password.existingSecret=external-redis --set auth.redis.password.key=external-password > "$TMP_DIR/external-redis-secret-render.yaml"
+assert_contains_block "$TMP_DIR/external-redis-secret-render.yaml" $'- name: REDIS_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  name: "external-redis"\n                  key: "external-password"\n                  optional: false' 'external Redis Secret reference changed'
+
 fullname_collision_error='set fullnameOverride to a distinct name'
 release_name=vaultsmith-valkey assert_render_fails_with "$fullname_collision_error" -f "$TMP_DIR/bundled-native.yaml"
 release_name=vaultsmith-valkey assert_render_fails_with "$fullname_collision_error" -f "$TMP_DIR/off-default.yaml"
@@ -337,8 +367,6 @@ assert_render_fails_with 'auth/redis/address' -f "$TMP_DIR/bundled-native.yaml" 
 assert_render_fails_with "$external_address_error" -f "$TMP_DIR/bundled-native.yaml" --set valkey.enabled=false --skip-schema-validation
 assert_render_fails_with 'valkey/auth/enabled' -f "$TMP_DIR/valid.yaml" --set valkey.auth.enabled=false
 assert_render_fails_with 'valkey.auth.enabled must remain true when the bundled Valkey chart is enabled' -f "$TMP_DIR/valid.yaml" --set valkey.auth.enabled=false --skip-schema-validation
-assert_render_fails_with 'valkey/auth/usersExistingSecret' -f "$TMP_DIR/valid.yaml" --set valkey.auth.usersExistingSecret=other
-assert_render_fails_with 'valkey.auth.usersExistingSecret is managed by the parent chart' -f "$TMP_DIR/valid.yaml" --set valkey.auth.usersExistingSecret=other --skip-schema-validation
 assert_render_fails_with 'valkey/auth/aclUsers/default/passwordKey' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.default.passwordKey=other
 assert_render_fails_with 'valkey.auth.aclUsers.default.passwordKey must be default for the bundled Valkey chart' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.default.passwordKey=other --skip-schema-validation
 assert_render_fails_with 'valkey/auth/aclUsers' -f "$TMP_DIR/valid.yaml" --set valkey.auth.aclUsers.extra.permissions='~* +@read'

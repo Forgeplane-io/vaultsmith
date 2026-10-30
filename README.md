@@ -40,7 +40,7 @@ helm upgrade --install vaultsmith \
   -f /path/to/vaultsmith-values.yaml
 ```
 
-Use `auth.mode: native` for a deployed instance. The chart includes the official Valkey chart and generates its password Secret by default, so you do not need to provision Redis or Valkey separately. Native mode still requires OIDC, a CSRF Secret, a Casbin policy, and profile-password Secrets. If NetworkPolicy is enabled, allow DNS and OIDC egress explicitly; the chart adds egress to the bundled Valkey pods. Set `valkey.enabled: false` only when using an external Redis-compatible service, then configure `auth.redis.address` and its credentials.
+Use `auth.mode: native` for a deployed instance. The chart includes the official Valkey chart and generates its password Secret by default, so you do not need to provision Redis or Valkey separately. For client-rendered GitOps, provide an externally managed Valkey password Secret as described in the [deployment guide](docs/deployment.md#bundled-valkey-password). Native mode still requires OIDC, a CSRF Secret, a Casbin policy, and profile-password Secrets. If NetworkPolicy is enabled, allow DNS and OIDC egress explicitly; the chart adds egress to the bundled Valkey pods. Set `valkey.enabled: false` only when using an external Redis-compatible service, then configure `auth.redis.address` and its credentials.
 
 Proofs are disabled by default. To enable them, create a Secret managed by your secret workflow with the fixed `keyring.json` data key, then set only `proofs.enabled: true` and `proofs.existingSecret`. The chart mounts the keyring read-only at a fixed path; `PUBLIC_BASE_URL` remains the issuer source. See [`docs/attestations.md`](docs/attestations.md) for the key lifecycle and operator runbook.
 
