@@ -9,7 +9,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/casbin/casbin/v2 v2.135.0
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/go-jose/go-jose/v4 v4.1.6
+	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/go-redsync/redsync/v4 v4.18.1
 	github.com/gomodule/redigo v1.9.3
 	github.com/gowebpki/jcs v1.0.2 // Apache-2.0
